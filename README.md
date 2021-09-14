@@ -5,7 +5,7 @@ Currently only supports YAML format (uses [serde_yaml](https://github.com/dtolna
 
 ## Examples
 
-### Sample **config.yaml** file
+### Sample *config.yaml* file
 ```yaml
 app:
   port: 1000

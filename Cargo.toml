@@ -1,0 +1,18 @@
+[package]
+name = "trail-config"
+version = "0.1.0"
+edition = "2018"
+authors = ["Robert Lampreht <robert.lampreht@gmail.com>"]
+description = ""
+readme = "README.md"
+keywords = ["config", "conf", "cfg", "yml", "yaml", "trail"]
+license = "MIT"
+repository = "https://github.com/rbt-dev/trail-config.git"
+
+[lib]
+name = "trail_config"
+path = "src/lib.rs"
+
+[dependencies]
+serde_yaml = "0.8.21"
+strfmt = "0.1.6"

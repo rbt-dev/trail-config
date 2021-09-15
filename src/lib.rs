@@ -31,8 +31,11 @@ impl Config {
         }
     }
 
-    pub fn environment(self) -> Option<String> {
-        self.environment
+    pub fn environment(&self) -> Option<&str> {
+        match &self.environment {
+            Some(v) => Some(v),
+            None => None
+        }
     }
 
     pub fn get(&self, path: &str) -> Option<Value> {

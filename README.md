@@ -56,7 +56,7 @@ assert_eq!("1000", port);
 
 ### With environment variable
 ```rust
-let config = Config::new("config.{env}.yaml", "/", Some(String::from("dev"))).unwrap(); // loads config.dev.yaml
+let config = Config::new("config.{env}.yaml", "/", Some("dev")).unwrap(); // loads config.dev.yaml
 assert_eq!("dev", config.environment().unwrap());
 ```
 

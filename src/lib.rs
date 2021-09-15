@@ -17,8 +17,8 @@ impl Default for Config {
 }
 
 impl Config {
-    pub fn new(filename: &str, sep: &str, env: Option<String>) -> Result<Config, Box<dyn Error>> {
-        let file = Self::get_file(filename, &env);
+    pub fn new(filename: &str, sep: &str, env: Option<&str>) -> Result<Config, Box<dyn Error>> {
+        let (file, env) = Self::get_file(filename, env);
 
         match Self::load(&file) {
             Ok(yaml) => Ok(Config {
@@ -100,15 +100,14 @@ impl Config {
         }
     }
 
-    fn get_file(filename: &str, env: &Option<String>) -> String {
+    fn get_file(filename: &str, env: Option<&str>) -> (String, Option<String>) {
         match env {
             Some(v) => {
                 let mut vars = HashMap::new();
                 vars.insert(String::from("env"), v);
-
-                strfmt(filename, &vars).unwrap()
+                (strfmt(filename, &vars).unwrap(), Some(v.to_string()))
             },
-            None => String::from(filename)
+            None => (String::from(filename), None)
         }
     }
 

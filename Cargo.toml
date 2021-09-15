@@ -1,11 +1,11 @@
 [package]
 name = "trail-config"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2018"
 authors = ["Robert Lampreht <robert.lampreht@gmail.com>"]
-description = ""
+description = "Simple library to help with reading (and formatting) values from config files"
 readme = "README.md"
-keywords = ["config", "conf", "cfg", "yml", "yaml", "trail"]
+keywords = ["config", "conf", "cfg", "yaml", "trail"]
 license = "MIT"
 repository = "https://github.com/rbt-dev/trail-config.git"
 

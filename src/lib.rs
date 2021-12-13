@@ -39,31 +39,24 @@ impl Config {
     }
 
     pub fn get(&self, path: &str) -> Option<Value> {
-        let mut content = &self.content.clone();
-        let parts = path.split(&self.separator).collect::<Vec<&str>>();
-    
-        for item in parts.iter() {
-            match content.get(item) {
-                Some(v) => { content = v; },
-                None => return None
-            }
-        }
-        
-        Some(content.clone())
+        Self::get_leaf(&self.content, path, &self.separator)
     }
 
     pub fn str(&self, path: &str) -> String {
-        let mut content = &self.content.clone();
-        let parts = path.split(&self.separator).collect::<Vec<&str>>();
-    
-        for item in parts.iter() {
-            match content.get(item) {
-                Some(v) => { content = v; },
-                None => return String::new()
-            }
+        let content = Self::get_leaf(&self.content, path, &self.separator);
+
+        match content {
+            Some(v) => Self::to_string(&v),
+            None => String::new()
         }
+    }
+    pub fn list(&self, path: &str) -> Vec<String> {        
+        let content = Self::get_leaf(&self.content, path, &self.separator);
         
-        Self::to_string(content)
+        match content {
+            Some(v) => Self::to_list(&v),
+            None => vec![]
+        }
     }
 
     pub fn fmt(&self, format: &str, path: &str) -> String {
@@ -103,6 +96,19 @@ impl Config {
         }
     }
 
+    fn get_leaf(mut content: &Value, path: &str, separator: &str) -> Option<Value> {
+        let parts = path.split(separator).collect::<Vec<&str>>();
+    
+        for item in parts.iter() {
+            match content.get(item) {
+                Some(v) => { content = v; },
+                None => return None
+            }
+        }
+
+        return Some(content.clone());
+    }
+
     fn get_file(filename: &str, env: Option<&str>) -> (String, Option<String>) {
         match env {
             Some(v) => {
@@ -127,6 +133,13 @@ impl Config {
             Value::Number(v) => v.to_string(),
             Value::Bool(v) => v.to_string(),
             _ => String::new()
+        }
+    }
+
+    fn to_list(value: &Value) -> Vec<String> {
+        match value {
+            Value::Sequence(v) => v.iter().map(Self::to_string).collect::<Vec<String>>(),
+            _ => vec![]
         }
     }
 }

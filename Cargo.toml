@@ -1,6 +1,6 @@
 [package]
 name = "trail-config"
-version = "0.1.3"
+version = "0.1.4"
 edition = "2018"
 authors = ["Robert Lampreht <robert.lampreht@gmail.com>"]
 description = "Simple library to help with reading (and formatting) values from config files"

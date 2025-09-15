@@ -1,6 +1,6 @@
 [package]
 name = "trail-config"
-version = "0.1.5"
+version = "0.2.0"
 edition = "2018"
 authors = ["Robert Lampreht <robert.lampreht@gmail.com>"]
 description = "Simple library to help with reading (and formatting) values from config files"
@@ -14,5 +14,5 @@ name = "trail_config"
 path = "src/lib.rs"
 
 [dependencies]
-serde_yaml = "0.9.33"
+serde_yaml_bw = "2.2.0"
 strfmt = "0.2.4"

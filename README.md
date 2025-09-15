@@ -1,7 +1,7 @@
 # Trail Config
 
 Simple [Rust](https://www.rust-lang.org/) library to help with reading (and formatting) values from config files.\
-Currently only supports YAML format (uses [serde_yaml](https://github.com/dtolnay/serde-yaml) library).
+Supports YAML format (uses [serde_yaml_bw](https://github.com/bourumir-wyngs/serde-yaml-bw) library).
 
 ## Examples
 

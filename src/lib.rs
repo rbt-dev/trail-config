@@ -1,5 +1,5 @@
 use std::{collections::HashMap, error::Error, fs};
-use serde_yaml::{Value, from_str};
+use serde_yaml_bw::{Value, from_str};
 use strfmt::strfmt;
 
 #[derive(Debug, Clone)]
@@ -38,6 +38,10 @@ impl Config {
         }
     }
 
+    pub fn get_filename(&self) -> &str {
+        &self.filename
+    }
+
     pub fn get(&self, path: &str) -> Option<Value> {
         Self::get_leaf(&self.content, path, &self.separator)
     }
@@ -50,7 +54,8 @@ impl Config {
             None => String::new()
         }
     }
-    pub fn list(&self, path: &str) -> Vec<String> {        
+
+    pub fn list(&self, path: &str) -> Vec<String> {
         let content = Self::get_leaf(&self.content, path, &self.separator);
         
         match content {
@@ -96,6 +101,17 @@ impl Config {
         }
     }
 
+    pub fn load_yaml(yaml: &str, sep: &str) -> Result<Config, Box<dyn Error>> {
+        let parsed = from_str(&yaml)?;
+
+        Ok(Config {
+            content: parsed,
+            filename: String::new(),
+            separator: sep.to_string(),
+            environment: None
+        })
+    }
+
     fn get_leaf(mut content: &Value, path: &str, separator: &str) -> Option<Value> {
         let parts = path.split(separator).collect::<Vec<&str>>();
     
@@ -129,9 +145,9 @@ impl Config {
     
     fn to_string(value: &Value) -> String {
         match value {
-            Value::String(v) => v.to_string(),
-            Value::Number(v) => v.to_string(),
-            Value::Bool(v) => v.to_string(),
+            Value::String(v, _) => v.to_string(),
+            Value::Number(v, _) => v.to_string(),
+            Value::Bool(v, _) => v.to_string(),
             _ => String::new()
         }
     }
@@ -141,5 +157,78 @@ impl Config {
             Value::Sequence(v) => v.iter().map(Self::to_string).collect::<Vec<String>>(),
             _ => vec![]
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{from_str, Config, Value};
+    use serde_yaml_bw::Number;
+
+    const YAML: &str = "
+db:
+    redis:
+        server: 127.0.0.1
+        port: 6379
+        key_expiry: 3600
+    sql:
+        driver: SQL Server
+        server: 127.0.0.1
+        database: my_db
+        username: user
+        password: Pa$$w0rd!
+sources:
+    - one
+    - two
+    - three
+";
+
+    #[test]
+    fn fmt_test()  {
+        let parsed: Config = Config::load_yaml(YAML, "/").unwrap();
+        let formatted = parsed.fmt("{}:{}", "db/sql/database+username");
+
+        assert_eq!(formatted, String::from("my_db:user"));
+    }
+
+    #[test]
+    fn get_leaf_test()  {
+        let parsed: Value = from_str(YAML).unwrap();
+        let value1 = Config::get_leaf(&parsed, "db/redis/port", "/");
+        let value2 = Config::get_leaf(&parsed, "db/redis/username", "/");
+        
+        assert_eq!(value1, Some(Value::Number(Number::from(6379), None)));
+        assert_eq!(value2, None);
+    }
+
+    #[test]
+    fn get_file_test() {
+        let (file, env) = Config::get_file("config_{env}.yaml", Some("dev"));
+
+        assert_eq!(env,  Some(String::from("dev")));
+        assert_eq!(file, "config_dev.yaml");
+    }
+
+    #[test]
+    fn to_string_test() {
+        let parsed: Value = from_str(YAML).unwrap();
+        let value = Config::get_leaf(&parsed, "db/redis/port", "/").unwrap();
+        let str_value = Config::to_string(&value);
+
+        assert_eq!(str_value, "6379");
+    }
+
+    #[test]
+    fn to_list_test()  {
+        let parsed: Value = from_str(YAML).unwrap();
+        let value = Config::get_leaf(&parsed, "sources", "/").unwrap();
+        let list = Config::to_list(&value);
+
+        let mut vec = Vec::new();        
+        vec.push(String::from("one"));
+        vec.push(String::from("two"));
+        vec.push(String::from("three"));
+
+        assert_eq!(list, vec);
     }
 }

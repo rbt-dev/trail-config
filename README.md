@@ -11,6 +11,7 @@ Supports YAML format (uses [serde_yaml_bw](https://github.com/bourumir-wyngs/ser
 - 📝 String formatting and interpolation
 - ✅ Comprehensive error handling with custom `ConfigError` type
 - 📋 Type conversion for strings, numbers, booleans, and sequences
+- 🔐 Escape sequence support for keys containing separators
 
 ## Examples
 
@@ -159,6 +160,40 @@ To prevent unexpected behavior, Trail Config validates inputs:
 - **Empty Paths**: Paths like `""` are safely handled (return `None` or empty values).
 - **Leading/Trailing Separators**: Handled gracefully (e.g., `/db/redis/port/` works correctly).
 - **Filename Templates**: Must have valid format strings. Invalid templates like `"config_{invalid"` return `FormatError`.
+
+## Escape Sequences
+
+Keys containing the separator character can be accessed using escape sequences:
+
+- `\/` - Escaped separator (includes separator in the key name)
+- `\\` - Escaped backslash (includes backslash in the key name)
+
+### Example with Special Characters in Keys
+
+```yaml
+database:
+  "host/port": localhost:5432
+  "user\pass": myuser/mypass
+```
+
+```rust
+let config = Config::load_yaml(yaml, "/").unwrap();
+
+// Access key containing the separator (/)
+let value = config.get("database/host\\/port");
+assert_eq!(config.str("database/host\\/port"), "localhost:5432");
+
+// Access key containing a backslash
+let value = config.get("database/user\\\\pass");
+assert_eq!(config.str("database/user\\\\pass"), "myuser/mypass");
+```
+
+### Escape Sequence Rules
+
+- Use `\` before the separator character to include it literally in the key
+- Use `\\` to include a literal backslash
+- Works with any separator: `/`, `::`, etc.
+- Example with `::` separator: `"a::b\\::c::d"` navigates to keys `["a", "b::c", "d"]`
 
 ### Example: Default Configuration Behavior
 

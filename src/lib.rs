@@ -361,7 +361,7 @@ impl Config {
             return None;
         }
 
-        let parts = path.split(separator).collect::<Vec<&str>>();
+        let parts = Self::parse_path(path, separator);
     
         for item in parts.iter() {
             if item.is_empty() {
@@ -375,6 +375,65 @@ impl Config {
         }
 
         return Some(content.clone());
+    }
+
+    /// Parses a path with escape sequence support.
+    /// 
+    /// Allows keys containing the separator by escaping them:
+    /// - `\/` becomes a literal separator character in the key
+    /// - `\\` becomes a literal backslash in the key
+    /// 
+    /// # Example
+    /// With separator `/`, path `database/host\\/port` navigates to:
+    /// 1. Key "database"
+    /// 2. Key "host/port" (the separator is escaped)
+    fn parse_path(path: &str, separator: &str) -> Vec<String> {
+        let mut parts = Vec::new();
+        let mut current = String::new();
+        let mut chars = path.chars().peekable();
+        let sep_first_char = separator.chars().next().unwrap_or('/');
+
+        while let Some(ch) = chars.next() {
+            if ch == '\\' {
+                if let Some(&next) = chars.peek() {
+                    if next == '\\' {
+                        // Escaped backslash
+                        current.push('\\');
+                        chars.next();
+                    } else if next == sep_first_char {
+                        // Escaped separator
+                        current.push(next);
+                        chars.next();
+                    } else {
+                        // Keep backslash as-is
+                        current.push(ch);
+                    }
+                } else {
+                    current.push(ch);
+                }
+            } else if ch == sep_first_char {
+                // Check if this is the actual separator (for multi-char separators)
+                let remaining: String = chars.clone().collect();
+                let expected_rest = &separator[1..];
+                if remaining.starts_with(expected_rest) {
+                    // This is the real separator
+                    parts.push(current.clone());
+                    current.clear();
+                    // Consume the rest of the separator
+                    for _ in 1..separator.len() {
+                        chars.next();
+                    }
+                } else {
+                    // Just a matching char, not the full separator
+                    current.push(ch);
+                }
+            } else {
+                current.push(ch);
+            }
+        }
+
+        parts.push(current);
+        parts
     }
 
     fn get_file(filename: &str, env: Option<&str>) -> Result<(String, Option<String>), ConfigError> {
@@ -772,5 +831,100 @@ sources:
         // Empty filename will fail, but that's expected for this test
         // In real usage, a valid filename would succeed
         assert!(config.is_err());
+    }
+
+    #[test]
+    fn escaped_separator_in_key() {
+        let yaml = "
+database:
+  host/port: localhost:5432
+  server: db.example.com
+";
+        let config = Config::load_yaml(yaml, "/").unwrap();
+        
+        // Access key with escaped separator
+        let value = config.get("database/host\\/port");
+        assert!(value.is_some());
+        assert_eq!(config.str("database/host\\/port"), "localhost:5432");
+    }
+
+    #[test]
+    fn escaped_backslash_in_key() {
+        let yaml = "
+paths:
+  'file\\path': C:\\Users\\data
+  'normal': value
+";
+        let config = Config::load_yaml(yaml, "/").unwrap();
+        
+        // Access key with escaped backslash (literal backslash in key)
+        let value = config.get("paths/file\\\\path");
+        assert!(value.is_some());
+    }
+
+    #[test]
+    fn mixed_escaped_and_normal_separators() {
+        let yaml = "
+config:
+  app/version: 1.0
+  'db/host:port': localhost:5432
+";
+        let config = Config::load_yaml(yaml, "/").unwrap();
+        
+        // Key with slash requires escaping
+        let value1 = config.get("config/app\\/version");
+        assert!(value1.is_some());
+        assert_eq!(config.str("config/app\\/version"), "1.0");
+        
+        // Escaped separator in second key
+        let value2 = config.get("config/db\\/host:port");
+        assert!(value2.is_some());
+    }
+
+    #[test]
+    fn escape_sequences_in_strict_methods() {
+        let yaml = "
+database:
+  'user/pass': myuser/mypass
+";
+        let config = Config::load_yaml(yaml, "/").unwrap();
+        
+        // Test that escape sequences work with strict methods too
+        let result = config.get_strict("database/user\\/pass");
+        assert!(result.is_ok());
+        
+        let result = config.str_strict("database/user\\/pass");
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "myuser/mypass");
+    }
+
+    #[test]
+    fn parse_path_basic() {
+        let parts = Config::parse_path("a/b/c", "/");
+        assert_eq!(parts, vec!["a", "b", "c"]);
+    }
+
+    #[test]
+    fn parse_path_with_escaped_separator() {
+        let parts = Config::parse_path("a/b\\/c/d", "/");
+        assert_eq!(parts, vec!["a", "b/c", "d"]);
+    }
+
+    #[test]
+    fn parse_path_with_escaped_backslash() {
+        let parts = Config::parse_path("a/b\\\\c/d", "/");
+        assert_eq!(parts, vec!["a", "b\\c", "d"]);
+    }
+
+    #[test]
+    fn parse_path_multiple_escapes() {
+        let parts = Config::parse_path("a\\/b\\/c/d", "/");
+        assert_eq!(parts, vec!["a/b/c", "d"]);
+    }
+
+    #[test]
+    fn parse_path_with_custom_separator() {
+        let parts = Config::parse_path("a::b\\::c::d", "::");
+        assert_eq!(parts, vec!["a", "b::c", "d"]);
     }
 }

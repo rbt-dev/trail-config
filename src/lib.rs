@@ -519,10 +519,10 @@ impl Config {
                     }
                 }
 
-                return match strfmt(&fmt, &vars) {
+                match strfmt(&fmt, &vars) {
                     Ok(r) => Ok(r),
                     Err(e) => Err(ConfigError::FormatError(e.to_string()))
-                };
+                }
             },
             None => Err(ConfigError::PathNotFound(path.to_string()))
         }
@@ -550,7 +550,7 @@ impl Config {
             }
         }
 
-        return Some(content.clone());
+        Some(content.clone())
     }
 
     /// Parses a path with escape sequence support.

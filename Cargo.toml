@@ -14,5 +14,5 @@ name = "trail_config"
 path = "src/lib.rs"
 
 [dependencies]
-serde_yaml_bw = "2.2.0"
+serde_yaml_bw = "2.5.2"
 strfmt = "0.2.4"

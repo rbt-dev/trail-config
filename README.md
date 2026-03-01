@@ -80,6 +80,24 @@ if config.contains("db/redis/port") {
 }
 ```
 
+### Type Conversion (Int, Float, Bool)
+```rust
+let config = Config::default();
+
+// Lenient - returns None if not found or type mismatch
+let port = config.get_int("app/port");
+let timeout = config.get_float("app/timeout");
+let debug = config.get_bool("app/debug");
+
+// Strict - returns Result with error details
+match config.get_int_strict("db/redis/port") {
+    Ok(port) => println!("Connecting to port {}", port),
+    Err(trail_config::ConfigError::PathNotFound(path)) => eprintln!("Missing: {}", path),
+    Err(trail_config::ConfigError::FormatError(msg)) => eprintln!("Invalid type: {}", msg),
+    Err(e) => eprintln!("Error: {}", e),
+}
+```
+
 ## Error Handling
 
 Trail Config uses a custom `ConfigError` enum for precise error handling:
@@ -123,6 +141,9 @@ match Config::new("config.yaml", "/", None) {
 - `str(path)` - Get string representation of value, returns empty string if not found
 - `list(path)` - Get sequence as `Vec<String>`, returns empty vec if not found
 - `fmt(format, path)` - Format multiple values, returns empty string on any error
+- `get_int(path)` - Get value as `i64`, returns `None` if not found or type mismatch
+- `get_float(path)` - Get value as `f64`, returns `None` if not found or type mismatch
+- `get_bool(path)` - Get value as `bool`, returns `None` if not found or type mismatch
 - `contains(path)` - Check if path exists in config
 - `get_filename()` - Get the loaded config filename
 
@@ -134,6 +155,9 @@ For applications requiring explicit error handling:
 - `str_strict(path)` - Returns `Result<String, ConfigError>` - fails with `PathNotFound` if not found
 - `list_strict(path)` - Returns `Result<Vec<String>, ConfigError>` - fails with `PathNotFound` if not found
 - `fmt_strict(format, path)` - Returns `Result<String, ConfigError>` - fails with `PathNotFound` or `FormatError`
+- `get_int_strict(path)` - Returns `Result<i64, ConfigError>` - fails with `PathNotFound` or `FormatError` on type mismatch
+- `get_float_strict(path)` - Returns `Result<f64, ConfigError>` - fails with `PathNotFound` or `FormatError` on type mismatch
+- `get_bool_strict(path)` - Returns `Result<bool, ConfigError>` - fails with `PathNotFound` or `FormatError` on type mismatch
 
 ## Loading Configuration
 

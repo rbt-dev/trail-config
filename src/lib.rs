@@ -248,6 +248,123 @@ impl Config {
         Ok(Self::to_list(&value))
     }
 
+    /// Gets a value as an integer at the specified path
+    ///
+    /// # Arguments
+    /// * `path` - Dot-separated path to the value
+    ///
+    /// # Returns
+    /// Returns `Some(i64)` if the value is a number, `None` otherwise
+    ///
+    /// # Example
+    /// ```
+    /// # use trail_config::Config;
+    /// # let yaml = "app:\n  port: 8080";
+    /// # let config = Config::load_yaml(yaml, "/").unwrap();
+    /// let port = config.get_int("app/port");
+    /// assert_eq!(port, Some(8080));
+    /// ```
+    pub fn get_int(&self, path: &str) -> Option<i64> {
+        self.get_int_strict(path).ok()
+    }
+
+    /// Gets a value as an integer at the specified path, returning an error if not found or not a number
+    ///
+    /// # Arguments
+    /// * `path` - Dot-separated path to the value
+    ///
+    /// # Returns
+    /// Returns `Ok(i64)` if found and is a number, or `Err(ConfigError)` otherwise
+    pub fn get_int_strict(&self, path: &str) -> Result<i64, ConfigError> {
+        let value = Self::get_leaf(&self.content, path, &self.separator)
+            .ok_or_else(|| ConfigError::PathNotFound(path.to_string()))?;
+        
+        match &value {
+            Value::Number(num, _) => {
+                num.as_i64()
+                    .ok_or_else(|| ConfigError::FormatError(format!("Cannot convert {} to i64", num)))
+            },
+            _ => Err(ConfigError::FormatError(format!("Value at {} is not a number", path)))
+        }
+    }
+
+    /// Gets a value as a floating-point number at the specified path
+    ///
+    /// # Arguments
+    /// * `path` - Dot-separated path to the value
+    ///
+    /// # Returns
+    /// Returns `Some(f64)` if the value is a number, `None` otherwise
+    ///
+    /// # Example
+    /// ```
+    /// # use trail_config::Config;
+    /// # let yaml = "app:\n  timeout: 3.14";
+    /// # let config = Config::load_yaml(yaml, "/").unwrap();
+    /// let timeout = config.get_float("app/timeout");
+    /// assert!(timeout.is_some());
+    /// ```
+    pub fn get_float(&self, path: &str) -> Option<f64> {
+        self.get_float_strict(path).ok()
+    }
+
+    /// Gets a value as a floating-point number at the specified path, returning an error if not found or not a number
+    ///
+    /// # Arguments
+    /// * `path` - Dot-separated path to the value
+    ///
+    /// # Returns
+    /// Returns `Ok(f64)` if found and is a number, or `Err(ConfigError)` otherwise
+    pub fn get_float_strict(&self, path: &str) -> Result<f64, ConfigError> {
+        let value = Self::get_leaf(&self.content, path, &self.separator)
+            .ok_or_else(|| ConfigError::PathNotFound(path.to_string()))?;
+        
+        match &value {
+            Value::Number(num, _) => {
+                num.as_f64()
+                    .ok_or_else(|| ConfigError::FormatError(format!("Cannot convert {} to f64", num)))
+            },
+            _ => Err(ConfigError::FormatError(format!("Value at {} is not a number", path)))
+        }
+    }
+
+    /// Gets a value as a boolean at the specified path
+    ///
+    /// # Arguments
+    /// * `path` - Dot-separated path to the value
+    ///
+    /// # Returns
+    /// Returns `Some(bool)` if the value is a boolean, `None` otherwise
+    ///
+    /// # Example
+    /// ```
+    /// # use trail_config::Config;
+    /// # let yaml = "app:\n  debug: true";
+    /// # let config = Config::load_yaml(yaml, "/").unwrap();
+    /// let debug = config.get_bool("app/debug");
+    /// assert_eq!(debug, Some(true));
+    /// ```
+    pub fn get_bool(&self, path: &str) -> Option<bool> {
+        self.get_bool_strict(path).ok()
+    }
+
+    /// Gets a value as a boolean at the specified path, returning an error if not found or not a boolean
+    ///
+    /// # Arguments
+    /// * `path` - Dot-separated path to the value
+    ///
+    /// # Returns
+    /// Returns `Ok(bool)` if found and is a boolean, or `Err(ConfigError)` otherwise
+    pub fn get_bool_strict(&self, path: &str) -> Result<bool, ConfigError> {
+        let value = Self::get_leaf(&self.content, path, &self.separator)
+            .ok_or_else(|| ConfigError::PathNotFound(path.to_string()))?;
+        
+        match &value {
+            Value::Bool(b, _) => Ok(*b),
+            _ => Err(ConfigError::FormatError(format!("Value at {} is not a boolean", path)))
+        }
+    }
+
     /// Formats a string template with values from the config
     ///
     /// # Arguments
@@ -495,7 +612,162 @@ sources:
     - one
     - two
     - three
+app:
+    debug: true
+    max_retries: 5
+    timeout: 2.5
 ";
+
+    #[test]
+    fn get_int_success() {
+        let config = Config::load_yaml(YAML, "/").unwrap();
+        
+        let port = config.get_int("db/redis/port");
+        assert_eq!(port, Some(6379));
+
+        let max_retries = config.get_int("app/max_retries");
+        assert_eq!(max_retries, Some(5));
+    }
+
+    #[test]
+    fn get_int_not_found() {
+        let config = Config::load_yaml(YAML, "/").unwrap();
+        
+        let value = config.get_int("db/nonexistent");
+        assert_eq!(value, None);
+    }
+
+    #[test]
+    fn get_int_strict_success() {
+        let config = Config::load_yaml(YAML, "/").unwrap();
+        
+        let result = config.get_int_strict("db/redis/port");
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 6379);
+    }
+
+    #[test]
+    fn get_int_strict_not_found() {
+        let config = Config::load_yaml(YAML, "/").unwrap();
+        
+        let result = config.get_int_strict("db/nonexistent");
+        assert!(result.is_err());
+        match result {
+            Err(ConfigError::PathNotFound(_)) => (),
+            _ => panic!("Expected PathNotFound"),
+        }
+    }
+
+    #[test]
+    fn get_int_strict_wrong_type() {
+        let config = Config::load_yaml(YAML, "/").unwrap();
+        
+        let result = config.get_int_strict("db/redis/server");
+        assert!(result.is_err());
+        match result {
+            Err(ConfigError::FormatError(_)) => (),
+            _ => panic!("Expected FormatError"),
+        }
+    }
+
+    #[test]
+    fn get_float_success() {
+        let config = Config::load_yaml(YAML, "/").unwrap();
+        
+        let timeout = config.get_float("app/timeout");
+        assert!(timeout.is_some());
+        assert!((timeout.unwrap() - 2.5).abs() < 0.001);
+    }
+
+    #[test]
+    fn get_float_not_found() {
+        let config = Config::load_yaml(YAML, "/").unwrap();
+        
+        let value = config.get_float("app/missing_timeout");
+        assert_eq!(value, None);
+    }
+
+    #[test]
+    fn get_float_strict_success() {
+        let config = Config::load_yaml(YAML, "/").unwrap();
+        
+        let result = config.get_float_strict("app/timeout");
+        assert!(result.is_ok());
+        assert!((result.unwrap() - 2.5).abs() < 0.001);
+    }
+
+    #[test]
+    fn get_float_strict_not_found() {
+        let config = Config::load_yaml(YAML, "/").unwrap();
+        
+        let result = config.get_float_strict("app/missing");
+        assert!(result.is_err());
+        match result {
+            Err(ConfigError::PathNotFound(_)) => (),
+            _ => panic!("Expected PathNotFound"),
+        }
+    }
+
+    #[test]
+    fn get_float_strict_wrong_type() {
+        let config = Config::load_yaml(YAML, "/").unwrap();
+        
+        let result = config.get_float_strict("app/debug");
+        assert!(result.is_err());
+        match result {
+            Err(ConfigError::FormatError(_)) => (),
+            _ => panic!("Expected FormatError"),
+        }
+    }
+
+    #[test]
+    fn get_bool_success() {
+        let config = Config::load_yaml(YAML, "/").unwrap();
+        
+        let debug = config.get_bool("app/debug");
+        assert_eq!(debug, Some(true));
+    }
+
+    #[test]
+    fn get_bool_not_found() {
+        let config = Config::load_yaml(YAML, "/").unwrap();
+        
+        let value = config.get_bool("app/missing_bool");
+        assert_eq!(value, None);
+    }
+
+    #[test]
+    fn get_bool_strict_success() {
+        let config = Config::load_yaml(YAML, "/").unwrap();
+        
+        let result = config.get_bool_strict("app/debug");
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), true);
+    }
+
+    #[test]
+    fn get_bool_strict_not_found() {
+        let config = Config::load_yaml(YAML, "/").unwrap();
+        
+        let result = config.get_bool_strict("app/missing");
+        assert!(result.is_err());
+        match result {
+            Err(ConfigError::PathNotFound(_)) => (),
+            _ => panic!("Expected PathNotFound"),
+        }
+    }
+
+    #[test]
+    fn get_bool_strict_wrong_type() {
+        let config = Config::load_yaml(YAML, "/").unwrap();
+        
+        let result = config.get_bool_strict("app/max_retries");
+        assert!(result.is_err());
+        match result {
+            Err(ConfigError::FormatError(_)) => (),
+            _ => panic!("Expected FormatError"),
+        }
+    }
 
     #[test]
     fn fmt_test()  {

@@ -140,6 +140,65 @@ impl Config {
         &self.filename
     }
 
+    /// Reloads the configuration from disk
+    ///
+    /// This allows you to update the config without creating a new Config instance.
+    /// Useful for detecting configuration changes at runtime (hot reload).
+    ///
+    /// # Returns
+    /// Returns `Ok(())` on success, or `Err(ConfigError)` if the file cannot be read or is invalid YAML
+    ///
+    /// # Errors
+    /// Returns `ConfigError::IoError` if the file is missing or cannot be read
+    /// Returns `ConfigError::YamlError` if the YAML cannot be parsed
+    ///
+    /// # Example
+    /// ```no_run
+    /// # use trail_config::Config;
+    /// let mut config = Config::default();
+    /// // ... use config ...
+    /// // Later, reload updated config from disk
+    /// config.reload().expect("Failed to reload config");
+    /// ```
+    pub fn reload(&mut self) -> Result<(), ConfigError> {
+        if self.filename.is_empty() {
+            return Err(ConfigError::FormatError("Cannot reload: config was loaded from YAML string, not a file".to_string()));
+        }
+        
+        let yaml = Self::load(&self.filename)?;
+        self.content = yaml;
+        Ok(())
+    }
+
+    /// Reloads the configuration from a different file
+    ///
+    /// Changes the config's filename and reloads from the new file.
+    /// The separator and environment settings remain the same.
+    ///
+    /// # Arguments
+    /// * `filename` - New config file to load
+    ///
+    /// # Returns
+    /// Returns `Ok(())` on success, or `Err(ConfigError)` if the file cannot be read or is invalid YAML
+    ///
+    /// # Errors
+    /// Returns `ConfigError::IoError` if the file is missing or cannot be read
+    /// Returns `ConfigError::YamlError` if the YAML cannot be parsed
+    ///
+    /// # Example
+    /// ```no_run
+    /// # use trail_config::Config;
+    /// let mut config = Config::default();
+    /// // Switch to loading from a different config file
+    /// config.reload_from("other_config.yaml").expect("Failed to load");
+    /// ```
+    pub fn reload_from(&mut self, filename: &str) -> Result<(), ConfigError> {
+        let yaml = Self::load(filename)?;
+        self.filename = filename.to_string();
+        self.content = yaml;
+        Ok(())
+    }
+
     /// Gets a value at the specified path
     ///
     /// # Arguments
@@ -1198,5 +1257,139 @@ database:
     fn parse_path_with_custom_separator() {
         let parts = Config::parse_path("a::b\\::c::d", "::");
         assert_eq!(parts, vec!["a", "b::c", "d"]);
+    }
+
+    #[test]
+    fn reload_from_same_file() {
+        use std::fs::{self, File};
+        use std::io::Write;
+        
+        // Create a temporary test file
+        let test_file = "test_reload_config.yaml";
+        let mut file = File::create(test_file).unwrap();
+        writeln!(file, "app:\n  port: 8080\n  debug: false").unwrap();
+        drop(file);
+        
+        // Load initial config
+        let mut config = Config::new(test_file, "/", None).unwrap();
+        assert_eq!(config.str("app/port"), "8080");
+        assert_eq!(config.str("app/debug"), "false");
+        
+        // Modify the file
+        let mut file = File::create(test_file).unwrap();
+        writeln!(file, "app:\n  port: 9090\n  debug: true").unwrap();
+        drop(file);
+        
+        // Reload the config
+        config.reload().unwrap();
+        assert_eq!(config.str("app/port"), "9090");
+        assert_eq!(config.str("app/debug"), "true");
+        
+        // Cleanup
+        fs::remove_file(test_file).ok();
+    }
+
+    #[test]
+    fn reload_from_different_file() {
+        use std::fs::{self, File};
+        use std::io::Write;
+        
+        let file1 = "test_reload_file1.yaml";
+        let file2 = "test_reload_file2.yaml";
+        
+        // Create first file
+        let mut file = File::create(file1).unwrap();
+        writeln!(file, "config:\n  name: first\n  value: 100").unwrap();
+        drop(file);
+        
+        // Create second file
+        let mut file = File::create(file2).unwrap();
+        writeln!(file, "config:\n  name: second\n  value: 200").unwrap();
+        drop(file);
+        
+        // Load from first file
+        let mut config = Config::new(file1, "/", None).unwrap();
+        assert_eq!(config.str("config/name"), "first");
+        assert_eq!(config.str("config/value"), "100");
+        assert_eq!(config.get_filename(), file1);
+        
+        // Reload from second file
+        config.reload_from(file2).unwrap();
+        assert_eq!(config.str("config/name"), "second");
+        assert_eq!(config.str("config/value"), "200");
+        assert_eq!(config.get_filename(), file2);
+        
+        // Cleanup
+        fs::remove_file(file1).ok();
+        fs::remove_file(file2).ok();
+    }
+
+    #[test]
+    fn reload_preserves_separator() {
+        use std::fs::{self, File};
+        use std::io::Write;
+        
+        let test_file = "test_reload_sep.yaml";
+        let mut file = File::create(test_file).unwrap();
+        writeln!(file, "db:\n  host: localhost\n  port: 5432").unwrap();
+        drop(file);
+        
+        let mut config = Config::new(test_file, "::", None).unwrap();
+        assert_eq!(config.str("db::host"), "localhost");
+        
+        // Modify file
+        let mut file = File::create(test_file).unwrap();
+        writeln!(file, "db:\n  host: remote\n  port: 3306").unwrap();
+        drop(file);
+        
+        config.reload().unwrap();
+        
+        // Separator should still be "::"
+        assert_eq!(config.str("db::host"), "remote");
+        
+        // Cleanup
+        fs::remove_file(test_file).ok();
+    }
+
+    #[test]
+    fn reload_from_string_config_fails() {
+        let yaml = "test: value";
+        let mut config = Config::load_yaml(yaml, "/").unwrap();
+        
+        let result = config.reload();
+        assert!(result.is_err());
+        match result {
+            Err(ConfigError::FormatError(msg)) => {
+                assert!(msg.contains("YAML string"));
+            },
+            _ => panic!("Expected FormatError"),
+        }
+    }
+
+    #[test]
+    fn reload_from_invalid_yaml_fails() {
+        use std::fs::{self, File};
+        use std::io::Write;
+        
+        let test_file = "test_reload_invalid.yaml";
+        let mut file = File::create(test_file).unwrap();
+        writeln!(file, "valid:\n  yaml: content").unwrap();
+        drop(file);
+        
+        let mut config = Config::new(test_file, "/", None).unwrap();
+        
+        // Overwrite with invalid YAML
+        let mut file = File::create(test_file).unwrap();
+        writeln!(file, "invalid: [unclosed").unwrap();
+        drop(file);
+        
+        let result = config.reload();
+        assert!(result.is_err());
+        
+        // Original config still intact
+        assert_eq!(config.str("valid/yaml"), "content");
+        
+        // Cleanup
+        fs::remove_file(test_file).ok();
     }
 }

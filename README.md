@@ -12,6 +12,7 @@ Supports YAML format (uses [serde_yaml_bw](https://github.com/bourumir-wyngs/ser
 - ✅ Comprehensive error handling with custom `ConfigError` type
 - 📋 Type conversion for strings, numbers, booleans, and sequences
 - 🔐 Escape sequence support for keys containing separators
+- 🔄 Hot reload support for detecting configuration changes at runtime
 
 ## Examples
 
@@ -98,6 +99,17 @@ match config.get_int_strict("db/redis/port") {
 }
 ```
 
+### Hot Reload
+```rust
+let mut config = Config::default();
+
+// Reload config from the same file
+config.reload().expect("Failed to reload config");
+
+// Or reload from a different file
+config.reload_from("other_config.yaml").expect("Failed to load different config");
+```
+
 ## Error Handling
 
 Trail Config uses a custom `ConfigError` enum for precise error handling:
@@ -146,6 +158,8 @@ match Config::new("config.yaml", "/", None) {
 - `get_bool(path)` - Get value as `bool`, returns `None` if not found or type mismatch
 - `contains(path)` - Check if path exists in config
 - `get_filename()` - Get the loaded config filename
+- `reload()` - Reload configuration from the currently loaded file (hot reload)
+- `reload_from(filename)` - Reload configuration from a different file
 
 ### Strict Methods (Return errors for missing values)
 
@@ -248,6 +262,32 @@ match config.fmt_strict("{}:{}", "server/host+port") {
     Err(ConfigError::PathNotFound(path)) => eprintln!("Missing config: {}", path),
     Err(ConfigError::FormatError(msg)) => eprintln!("Format error: {}", msg),
     Err(e) => eprintln!("Error: {}", e),
+}
+```
+
+### Example: Hot Reload in a Server Loop
+
+```rust
+use trail_config::{Config, ConfigError};
+use std::thread;
+use std::time::Duration;
+
+fn main() {
+    let mut config = Config::load_required("config.yaml", "/", None)
+        .expect("Failed to load config");
+    
+    loop {
+        // Check for config updates periodically
+        if let Ok(_) = config.reload() {
+            println!("Configuration reloaded successfully");
+            // Re-apply config changes
+            let timeout = config.get_int("app/timeout").unwrap_or(30);
+            println!("New timeout: {} seconds", timeout);
+        }
+        
+        // Main application logic here
+        thread::sleep(Duration::from_secs(5));
+    }
 }
 ```
 

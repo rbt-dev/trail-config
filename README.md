@@ -107,15 +107,16 @@ match Config::new("config.yaml", "/", None) {
 
 - `IoError(io::Error)` - File I/O errors (file not found, permission denied, etc.)
 - `YamlError(String)` - YAML parsing errors
-- `PathNotFound(String)` - Path not found in configuration (for future use)
-- `FormatError(String)` - String formatting errors (for future use)
+- `PathNotFound(String)` - Configuration path not found in document
+- `FormatError(String)` - String formatting or configuration errors (e.g., invalid filename template, empty separator)
 
 ## API Reference
 
 ### Main Methods (Lenient - return empty/None on missing values)
 
-- `Config::new(filename, separator, env)` - Create config from file with optional environment substitution
-- `Config::default()` - Load `config.yaml` with `/` separator
+- `Config::new(filename, separator, env)` - Create config from file with optional environment substitution (returns error if file missing)
+- `Config::load_required(filename, separator, env)` - **Production use**: Load config file, returns error if file is missing or invalid
+- `Config::default()` - Try to load `config.yaml` with `/` separator, gracefully falls back to empty config if missing
 - `Config::load_yaml(yaml_str, separator)` - Parse YAML string directly
 - `get(path)` - Get value as `serde_yaml::Value`, returns `None` if not found
 - `str(path)` - Get string representation of value, returns empty string if not found
@@ -133,12 +134,47 @@ For applications requiring explicit error handling:
 - `list_strict(path)` - Returns `Result<Vec<String>, ConfigError>` - fails with `PathNotFound` if not found
 - `fmt_strict(format, path)` - Returns `Result<String, ConfigError>` - fails with `PathNotFound` or `FormatError`
 
+## Loading Configuration
+
+Trail Config provides different methods for different use cases:
+
+### For Production Code
+Use `Config::load_required()` when the configuration file **must** exist:
+```rust
+use trail_config::{Config, ConfigError};
+
+let config = Config::load_required("config.yaml", "/", None)?;
+// Will error if file is missing, invalid YAML, or permission denied
+```
+
+### For Testing/Optional Configs
+Use `Config::default()` or `Config::new()` when missing config is acceptable:
+```rust
+let config = Config::default(); // Never panics, gracefully handles missing file
+```
+
+To prevent unexpected behavior, Trail Config validates inputs:
+
+- **Path Separator**: Cannot be empty. Using an empty separator will return `FormatError`.
+- **Empty Paths**: Paths like `""` are safely handled (return `None` or empty values).
+- **Leading/Trailing Separators**: Handled gracefully (e.g., `/db/redis/port/` works correctly).
+- **Filename Templates**: Must have valid format strings. Invalid templates like `"config_{invalid"` return `FormatError`.
+
+### Example: Default Configuration Behavior
+
+```rust
+let config = Config::default();
+// Tries to load config.yaml if it exists
+// Falls back to empty config if file is missing or invalid YAML
+// Never panics
+```
+
 ### Example: Using Strict Methods
 
 ```rust
 use trail_config::{Config, ConfigError};
 
-let config = Config::default()?;
+let config = Config::default();
 
 // Strict method - returns error if path doesn't exist
 match config.str_strict("database/host") {

@@ -154,6 +154,73 @@ app:
   debug: true
 ```
 
+## String Formatting
+
+Combine multiple config values into a formatted string without separate calls using the `fmt()` method:
+
+### Basic Formatting Example
+
+Instead of loading each value separately:
+
+```rust
+let host = config.str("database/host");
+let port = config.str("database/port");
+let connection = format!("{}:{}", host, port);  // Separate calls
+```
+
+Use `fmt()` to combine them in one call:
+
+```rust
+let connection = config.fmt("{}:{}", "database/host+port");
+```
+
+The `+` in the path tells `fmt()` to combine multiple attributes at the same level.
+
+### How It Works
+
+The `fmt()` method takes:
+1. **format** - A format string with `{}` placeholders (one per value)
+2. **path** - A path ending with attributes joined by `+` (e.g., `db/redis/server+port`)
+
+It navigates to the parent (`database`), then extracts and formats the specified attributes (`host` and `port`).
+
+### Lenient vs Strict Formatting
+
+Both APIs are available:
+
+```rust
+let config = Config::default();
+
+// Lenient - returns empty string if any value is missing
+let connection = config.fmt("{}:{}", "database/host+port");
+
+// Strict - returns error if any value is missing
+match config.fmt_strict("{}:{}", "database/host+port") {
+    Ok(conn) => println!("Connecting to {}", conn),
+    Err(e) => eprintln!("Config error: {}", e),
+}
+```
+
+### Multi-Value Formatting
+
+Format more than two values with additional `+` separators:
+
+```rust
+// YAML structure
+// databasse:
+//   host: localhost
+//   port: 5432
+//   name: myapp_db
+//   username: admin
+
+// Format all four values
+let db_url = config.fmt(
+    "postgresql://{}@{}:{}/{}",
+    "database/username+host+port+name"
+);
+// Result: "postgresql://admin@localhost:5432/myapp_db"
+```
+
 ## Error Handling
 
 Trail Config uses a custom `ConfigError` enum for precise error handling:
@@ -232,6 +299,9 @@ config.reload()?; // Updates content from disk
 config.reload_from("other_config.yaml")?;
 ```
 
+> **Note:** If a reload fails (e.g. the file is temporarily invalid or missing), the existing
+> configuration is preserved unchanged. The error is returned, but the config remains valid and usable.
+
 ### Server Loop Example
 
 ```rust
@@ -309,7 +379,8 @@ Trail Config validates inputs automatically and returns `FormatError` for invali
 | Input | Constraint | Error |
 |-------|-----------|-------|
 | Path Separator | Cannot be empty | Returns `FormatError` |
-| File Paths | Empty filename treated as no file | Returns `IoError` |
+| File Paths (`load_required`) | Empty filename explicitly rejected | Returns `IoError` |
+| File Paths (`new`) | Empty filename passed to OS | Returns `IoError` |
 | Paths | Empty paths safely handled | Returns `None` or empty |
 | Separators (leading/trailing) | Handled gracefully | No error |
 | Filename Templates | Must be valid format strings | Returns `FormatError` |
@@ -320,6 +391,10 @@ Examples:
 // Empty separator - error
 let result = Config::new("config.yaml", "", None);
 assert!(result.is_err()); // FormatError
+
+// load_required rejects empty filename upfront
+let result = Config::load_required("", "/", None);
+assert!(result.is_err()); // IoError (InvalidInput)
 
 // Missing file with load_required - error
 let result = Config::load_required("missing.yaml", "/", None);

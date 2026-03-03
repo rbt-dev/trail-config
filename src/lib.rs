@@ -125,6 +125,12 @@ impl Config {
     ///     .expect("Failed to load required config.yaml");
     /// ```
     pub fn load_required(filename: &str, sep: &str, env: Option<&str>) -> Result<Config, ConfigError> {
+        if filename.is_empty() {
+            return Err(ConfigError::IoError(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "load_required: filename cannot be empty",
+            )));
+        }
         Self::new(filename, sep, env)
     }
 
@@ -151,6 +157,11 @@ impl Config {
     /// # Errors
     /// Returns `ConfigError::IoError` if the file is missing or cannot be read
     /// Returns `ConfigError::YamlError` if the YAML cannot be parsed
+    ///
+    /// # Note
+    /// If reloading fails (e.g. the file contains invalid YAML or has been deleted), the
+    /// existing configuration is preserved unchanged. The error is returned but the config
+    /// remains valid and usable.
     ///
     /// # Example
     /// ```no_run
@@ -563,6 +574,13 @@ impl Config {
     /// With separator `/`, path `database/host\\/port` navigates to:
     /// 1. Key "database"
     /// 2. Key "host/port" (the separator is escaped)
+    ///
+    /// # Note on multi-character separators
+    /// Escape detection is based on the *first character* of the separator only.
+    /// For example, with separator `::`, the escape `\:` will be treated as an
+    /// escaped separator even if the second `:` is absent. This means separators
+    /// that share a first character with another valid separator may behave
+    /// unexpectedly in escape sequences.
     fn parse_path(path: &str, separator: &str) -> Vec<String> {
         let mut parts = Vec::new();
         let mut current = String::new();
@@ -1155,13 +1173,16 @@ app:
     }
 
     #[test]
-    fn load_required_success_from_yaml() {
-        // Test that load_required works when data is valid
+    fn load_required_rejects_empty_filename() {
+        // load_required enforces a non-empty filename, unlike Config::new
         let config = Config::load_required("", "/", None);
         
-        // Empty filename will fail, but that's expected for this test
-        // In real usage, a valid filename would succeed
+        // Empty filename is rejected with IoError
         assert!(config.is_err());
+        match config {
+            Err(ConfigError::IoError(_)) => (),
+            _ => panic!("Expected IoError for empty filename"),
+        }
     }
 
     #[test]

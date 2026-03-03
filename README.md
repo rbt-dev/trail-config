@@ -299,6 +299,9 @@ config.reload()?; // Updates content from disk
 config.reload_from("other_config.yaml")?;
 ```
 
+> **Note:** If a reload fails (e.g. the file is temporarily invalid or missing), the existing
+> configuration is preserved unchanged. The error is returned, but the config remains valid and usable.
+
 ### Server Loop Example
 
 ```rust
@@ -376,7 +379,8 @@ Trail Config validates inputs automatically and returns `FormatError` for invali
 | Input | Constraint | Error |
 |-------|-----------|-------|
 | Path Separator | Cannot be empty | Returns `FormatError` |
-| File Paths | Empty filename treated as no file | Returns `IoError` |
+| File Paths (`load_required`) | Empty filename explicitly rejected | Returns `IoError` |
+| File Paths (`new`) | Empty filename passed to OS | Returns `IoError` |
 | Paths | Empty paths safely handled | Returns `None` or empty |
 | Separators (leading/trailing) | Handled gracefully | No error |
 | Filename Templates | Must be valid format strings | Returns `FormatError` |
@@ -387,6 +391,10 @@ Examples:
 // Empty separator - error
 let result = Config::new("config.yaml", "", None);
 assert!(result.is_err()); // FormatError
+
+// load_required rejects empty filename upfront
+let result = Config::load_required("", "/", None);
+assert!(result.is_err()); // IoError (InvalidInput)
 
 // Missing file with load_required - error
 let result = Config::load_required("missing.yaml", "/", None);

@@ -11,7 +11,7 @@ fn merge_required_overlay_overrides_base() {
     drop(file);
 
     let base = Config::load_yaml("app:\n  port: 8080\n  debug: false", "/").unwrap();
-    let config = base.merge_required(overlay_file).unwrap();
+    let config = base.merge_required(overlay_file, None).unwrap();
 
     assert_eq!(config.str("app/port"), "9090");
     assert_eq!(config.str("app/debug"), "false");
@@ -30,7 +30,7 @@ fn merge_required_deep_preserves_siblings() {
     drop(file);
 
     let base = Config::load_yaml("db:\n  host: localhost\n  port: 5432\n  name: mydb", "/").unwrap();
-    let config = base.merge_required(overlay_file).unwrap();
+    let config = base.merge_required(overlay_file, None).unwrap();
 
     assert_eq!(config.str("db/host"), "prodserver");
     assert_eq!(config.str("db/port"), "5432");
@@ -50,7 +50,7 @@ fn merge_required_adds_new_keys() {
     drop(file);
 
     let base = Config::load_yaml("app:\n  port: 8080", "/").unwrap();
-    let config = base.merge_required(overlay_file).unwrap();
+    let config = base.merge_required(overlay_file, None).unwrap();
 
     assert_eq!(config.str("app/port"), "8080");
     assert_eq!(config.get_bool("app/debug"), Some(true));
@@ -69,7 +69,7 @@ fn merge_required_replaces_sequences_wholesale() {
     drop(file);
 
     let base = Config::load_yaml("features:\n  - a\n  - b\n  - c", "/").unwrap();
-    let config = base.merge_required(overlay_file).unwrap();
+    let config = base.merge_required(overlay_file, None).unwrap();
 
     let list = config.list("features");
     assert_eq!(list, vec!["x", "y"]);
@@ -80,7 +80,7 @@ fn merge_required_replaces_sequences_wholesale() {
 #[test]
 fn merge_required_missing_file_returns_error() {
     let base = Config::load_yaml("app:\n  port: 8080", "/").unwrap();
-    let result = base.merge_required("nonexistent_overlay_xyz.yaml");
+    let result = base.merge_required("nonexistent_overlay_xyz.yaml", None);
 
     assert!(result.is_err());
     match result {
@@ -92,7 +92,7 @@ fn merge_required_missing_file_returns_error() {
 #[test]
 fn merge_optional_missing_file_is_identity() {
     let base = Config::load_yaml("app:\n  port: 8080", "/").unwrap();
-    let config = base.merge_optional("nonexistent_overlay_xyz.yaml").unwrap();
+    let config = base.merge_optional("nonexistent_overlay_xyz.yaml", None).unwrap();
 
     assert_eq!(config.str("app/port"), "8080");
 }
@@ -108,7 +108,7 @@ fn merge_optional_present_file_overrides() {
     drop(file);
 
     let base = Config::load_yaml("app:\n  port: 8080\n  debug: false", "/").unwrap();
-    let config = base.merge_optional(overlay_file).unwrap();
+    let config = base.merge_optional(overlay_file, None).unwrap();
 
     assert_eq!(config.str("app/port"), "9090");
     assert_eq!(config.str("app/debug"), "false");
@@ -127,7 +127,7 @@ fn merge_optional_invalid_yaml_returns_error() {
     drop(file);
 
     let base = Config::load_yaml("app:\n  port: 8080", "/").unwrap();
-    let result = base.merge_optional(overlay_file);
+    let result = base.merge_optional(overlay_file, None);
 
     assert!(result.is_err());
     match result {
@@ -155,8 +155,8 @@ fn merge_chaining() {
     drop(f);
 
     let config = Config::load_yaml("app:\n  port: 8080\n  debug: false\n  name: base", "/").unwrap()
-        .merge_required(file1).unwrap()
-        .merge_required(file2).unwrap();
+        .merge_required(file1, None).unwrap()
+        .merge_required(file2, None).unwrap();
 
     assert_eq!(config.str("app/port"), "9090");
     assert_eq!(config.get_bool("app/debug"), Some(true));
@@ -177,9 +177,47 @@ fn merge_preserves_base_separator() {
     drop(file);
 
     let base = Config::load_yaml("app:\n  port: 8080", "::").unwrap();
-    let config = base.merge_required(overlay_file).unwrap();
+    let config = base.merge_required(overlay_file, None).unwrap();
 
     assert_eq!(config.str("app::port"), "9090");
+
+    fs::remove_file(overlay_file).ok();
+}
+
+#[test]
+fn merge_required_with_env_substitution() {
+    use std::fs::{self, File};
+    use std::io::Write;
+
+    let overlay_file = "test_merge_env_prod.yaml";
+    let mut file = File::create(overlay_file).unwrap();
+    writeln!(file, "app:\n  port: 9090").unwrap();
+    drop(file);
+
+    let base = Config::load_yaml("app:\n  port: 8080\n  debug: false", "/").unwrap();
+    let config = base.merge_required("test_merge_env_{env}.yaml", Some("prod")).unwrap();
+
+    assert_eq!(config.str("app/port"), "9090");
+    assert_eq!(config.str("app/debug"), "false");
+
+    fs::remove_file(overlay_file).ok();
+}
+
+#[test]
+fn merge_optional_with_env_substitution() {
+    use std::fs::{self, File};
+    use std::io::Write;
+
+    let overlay_file = "test_merge_opt_env_prod.yaml";
+    let mut file = File::create(overlay_file).unwrap();
+    writeln!(file, "app:\n  debug: true").unwrap();
+    drop(file);
+
+    let base = Config::load_yaml("app:\n  port: 8080\n  debug: false", "/").unwrap();
+    let config = base.merge_optional("test_merge_opt_env_{env}.yaml", Some("prod")).unwrap();
+
+    assert_eq!(config.str("app/port"), "8080");
+    assert_eq!(config.get_bool("app/debug"), Some(true));
 
     fs::remove_file(overlay_file).ok();
 }

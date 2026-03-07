@@ -218,24 +218,30 @@ impl Config {
     /// The overlay filename is recorded so that [`reload`](Config::reload) can re-read and
     /// re-apply it. If the overlay file is missing during a reload, an error is returned.
     ///
+    /// # Arguments
+    /// * `filename` - Path to the overlay file (can contain `{env}` placeholder)
+    /// * `env` - Optional environment name to substitute in filename
+    ///
     /// # Errors
     /// Returns `ConfigError::IoError` if the file is missing or cannot be read
     /// Returns `ConfigError::YamlError` if the file contains invalid YAML
+    /// Returns `ConfigError::FormatError` if the filename template is invalid
     ///
     /// # Example
     /// ```no_run
     /// # use trail_config::{Config, ConfigError};
     /// # fn main() -> Result<(), ConfigError> {
     /// let config = Config::load_required("config.yaml", "/", None)?
-    ///     .merge_required("config.prod.yaml")?
-    ///     .merge_optional("config.local.yaml")?;
+    ///     .merge_required("config.{env}.yaml", Some("prod"))?
+    ///     .merge_optional("config.local.yaml", None)?;
     /// # Ok(())
     /// # }
     /// ```
-    pub fn merge_required(mut self, filename: &str) -> Result<Config, ConfigError> {
-        let yaml = Self::load(filename)?;
+    pub fn merge_required(mut self, filename: &str, env: Option<&str>) -> Result<Config, ConfigError> {
+        let (file, _) = Self::get_file(filename, env)?;
+        let yaml = Self::load(&file)?;
         self.content = Self::merge_values(self.content, yaml);
-        self.overlays.push(OverlaySource::Required(filename.to_string()));
+        self.overlays.push(OverlaySource::Required(file));
         Ok(self)
     }
 
@@ -250,28 +256,34 @@ impl Config {
     /// re-apply it. If the overlay file is missing during a reload, it is silently skipped.
     /// If the file exists but contains invalid YAML, an error is returned.
     ///
+    /// # Arguments
+    /// * `filename` - Path to the overlay file (can contain `{env}` placeholder)
+    /// * `env` - Optional environment name to substitute in filename
+    ///
     /// # Errors
     /// Returns `ConfigError::YamlError` if the file exists but contains invalid YAML
+    /// Returns `ConfigError::FormatError` if the filename template is invalid
     ///
     /// # Example
     /// ```no_run
     /// # use trail_config::{Config, ConfigError};
     /// # fn main() -> Result<(), ConfigError> {
     /// let config = Config::load_required("config.yaml", "/", None)?
-    ///     .merge_required("config.prod.yaml")?
-    ///     .merge_optional("config.local.yaml")?;
+    ///     .merge_required("config.{env}.yaml", Some("prod"))?
+    ///     .merge_optional("config.local.yaml", None)?;
     /// # Ok(())
     /// # }
     /// ```
-    pub fn merge_optional(mut self, filename: &str) -> Result<Config, ConfigError> {
-        match Self::load(filename) {
+    pub fn merge_optional(mut self, filename: &str, env: Option<&str>) -> Result<Config, ConfigError> {
+        let (file, _) = Self::get_file(filename, env)?;
+        match Self::load(&file) {
             Ok(yaml) => {
                 self.content = Self::merge_values(self.content, yaml);
             },
             Err(ConfigError::IoError(ref e)) if e.kind() == io::ErrorKind::NotFound => {},
             Err(e) => return Err(e),
         }
-        self.overlays.push(OverlaySource::Optional(filename.to_string()));
+        self.overlays.push(OverlaySource::Optional(file));
         Ok(self)
     }
 
@@ -317,8 +329,8 @@ impl Config {
     /// # use trail_config::{Config, ConfigError};
     /// # fn main() -> Result<(), ConfigError> {
     /// let mut config = Config::load_required("config.yaml", "/", None)?
-    ///     .merge_required("config.prod.yaml")?
-    ///     .merge_optional("config.local.yaml")?;
+    ///     .merge_required("config.prod.yaml", None)?
+    ///     .merge_optional("config.local.yaml", None)?;
     /// // Later, reload all files from disk
     /// config.reload()?;
     /// # Ok(())

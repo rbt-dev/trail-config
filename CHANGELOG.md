@@ -11,21 +11,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Breaking:** `Config::new` is now private. Replace usages with `Config::load_optional` (same signature, same behaviour) or `Config::load_required` if the file must exist.
 - **Breaking:** `fmt(format, path)` and `fmt_strict(format, path)` now take an explicit `base: &str` and `keys: &[&str]` instead of a single path with `+`-joined leaf keys. The base path and the leaf keys are now separate arguments, removing the need for a special `+` delimiter and making the API consistent with the rest of the library. Error messages for missing keys now report the full path (e.g. `db/redis/nonexistent`) rather than the raw input string.
 - `strfmt` dependency removed — string formatting and filename template substitution are now handled with standard Rust `str::replace` / `str::replacen`. No API changes.
+- `reload()` now re-reads the base file and re-applies all overlays registered via `merge_required` and `merge_optional`, in the original order. Required overlays that are missing return an error; optional overlays that are missing are silently skipped. If reloading fails the existing configuration is preserved unchanged.
 
 ### Fixed
 - `Config::default()` is now documented as a shorthand for `Config::load_optional("config.yaml", "/", None)`.
 - `parse_path` escape detection now correctly requires the *full* separator to follow a backslash before treating it as an escaped separator. Previously, with a multi-character separator like `::`, a lone `\:` would incorrectly match. The escape syntax `\<sep>` (e.g. `\::` for `::`) now works correctly for all separator lengths.
 - `fmt_strict` (and `fmt`) now use `parse_path` for path traversal instead of a raw `split`, so escaped separators in path segments work correctly.
+- `parse_path` now uses `separator.chars().count()` instead of `separator.len()` when advancing the iterator past a matched separator, fixing incorrect path splitting for multi-byte Unicode separators.
 
 ### Added
 - `load_optional(filename, sep, env)` — a new public constructor for loading optional config files. Returns `Ok` with an empty config if the file is not found, but still returns `Err` for other failures (invalid YAML, permission denied, bad separator) so that a present-but-broken config file is not silently ignored. Replaces the former `Config::new`.
 - `load_or_create(filename, sep, env, defaults)` — loads a config file if it exists, or writes the provided default YAML string to disk and returns it as the active config if it doesn't. The defaults string is written as-is, preserving formatting and comments. If the file exists its content is used and the defaults are discarded entirely. Errors on invalid YAML in either the file or the defaults string, or on write failure.
-- `merge(overlay: Config) -> Config` — deep-merges another config on top of `self`, returning a new `Config`. Overlay values take precedence over base values. Mappings are merged recursively so sibling keys are preserved; sequences are replaced wholesale. The returned config inherits the separator and filename of the base. Calls can be chained: `base.merge(env).merge(local)`.
-- `get_as<T>(path)` — deserializes a config subtree at the given path into any `T: DeserializeOwned`, returning `None` on missing path or deserialization failure
-- `get_as_strict<T>(path)` — same as `get_as` but returns `Result<T, ConfigError>`, with `PathNotFound` if the path is missing or `YamlError` if deserialization fails
-- `serde` added as an explicit dependency (with `derive` feature) so users can use `#[derive(Deserialize)]` without adding `serde` themselves
-- Regression test `parse_path_escape_requires_full_separator` covering the multi-character separator escape bug
-- Test `fmt_strict_with_escaped_separator_in_path` covering escaped separators in `fmt` paths
+- `merge_required(filename: &str, env: Option<&str>) -> Result<Config, ConfigError>` — deep-merges an overlay file on top of `self`. Accepts an optional `{env}` placeholder in the filename, consistent with the load methods. The resolved filename is recorded; if the file is missing during a `reload()` an error is returned.
+- `merge_optional(filename: &str, env: Option<&str>) -> Result<Config, ConfigError>` — same as `merge_required` but silently skips the overlay if the file is missing, both at merge time and during `reload()`. Returns `Err` if the file exists but contains invalid YAML.
+- `deserialize<T>() -> Option<T>` — deserializes the entire config into a typed struct, returning `None` on failure.
+- `deserialize_strict<T>() -> Result<T, ConfigError>` — same as `deserialize` but returns `YamlError` on failure.
+- `get_as<T>(path)` — deserializes a config subtree at the given path into any `T: DeserializeOwned`, returning `None` on missing path or deserialization failure.
+- `get_as_strict<T>(path)` — same as `get_as` but returns `Result<T, ConfigError>`, with `PathNotFound` if the path is missing or `YamlError` if deserialization fails.
+- `serde` added as an explicit dependency (with `derive` feature) so users can use `#[derive(Deserialize)]` without adding `serde` themselves.
+- Regression test `parse_path_escape_requires_full_separator` covering the multi-character separator escape bug.
+- Test `fmt_strict_with_escaped_separator_in_path` covering escaped separators in `fmt` paths.
 
 ### Migration guide
 
@@ -54,7 +59,7 @@ config.fmt("{}:{}", "db/redis", &["server", "port"]);
 config.fmt("postgresql://{}@{}:{}/{}", "database", &["username", "host", "port", "name"]);
 ```
 
-## [0.3.1] - 2026-04-03
+## [0.3.1] - 2026-03-04
 
 ### Added
 - `load_required` now explicitly rejects empty filenames with `IoError(InvalidInput)` before attempting file I/O

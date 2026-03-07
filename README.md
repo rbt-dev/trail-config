@@ -10,7 +10,7 @@ A Rust library for reading YAML config files with path-based access, typed and s
 - 📝 String formatting and interpolation
 - ✅ Comprehensive error handling with custom `ConfigError` type
 - 📋 Type conversion for strings, numbers, booleans, and sequences
-- 🏗️ Struct deserialization — map any config subtree directly into a typed Rust struct
+- 🏗️ Struct deserialization — map the entire config or any subtree directly into a typed Rust struct
 - 🔐 Escape sequence support for keys containing separators
 - 🔄 Hot reload support for detecting configuration changes at runtime
 - 🔀 Deep merge support for layering environment-specific config overlays
@@ -121,7 +121,9 @@ Both styles share the same path syntax and navigate nested YAML using separators
 | `get_bool(path)` | `Option<bool>` | Boolean value |
 | `get_bool_strict(path)` | `Result<bool, ConfigError>` | Boolean, errors if missing or wrong type |
 | `get_as<T>(path)` | `Option<T>` | Deserialize subtree into typed struct |
-| `get_as_strict<T>(path)` | `Result<T, ConfigError>` | Deserialize, errors if missing or type mismatch |
+| `get_as_strict<T>(path)` | `Result<T, ConfigError>` | Deserialize subtree, errors if missing or type mismatch |
+| `deserialize<T>()` | `Option<T>` | Deserialize entire config into typed struct |
+| `deserialize_strict<T>()` | `Result<T, ConfigError>` | Deserialize entire config, errors on type mismatch |
 
 ### Formatting
 
@@ -263,7 +265,7 @@ app:
 
 ## Struct Deserialization
 
-Use `get_as` or `get_as_strict` to deserialize an entire config subtree directly into a typed Rust struct. This is more concise than reading fields one by one, and lets the compiler verify you haven't missed any required fields.
+Use `deserialize` / `deserialize_strict` to map the **entire config** into a typed Rust struct, or `get_as` / `get_as_strict` to deserialize a subtree at a specific path. Both approaches are more concise than reading fields one by one, and let the compiler verify you haven't missed any required fields.
 
 Any struct that derives `serde::Deserialize` can be used:
 
@@ -272,11 +274,9 @@ use serde::Deserialize;
 use trail_config::Config;
 
 #[derive(Deserialize)]
-struct DatabaseConfig {
-    host: String,
-    port: u16,
-    username: String,
-    password: String,
+struct FullConfig {
+    app: AppConfig,
+    database: DatabaseConfig,
 }
 
 #[derive(Deserialize)]
@@ -286,16 +286,25 @@ struct AppConfig {
     timeout: f64,
 }
 
+#[derive(Deserialize)]
+struct DatabaseConfig {
+    host: String,
+    port: u16,
+    username: String,
+    password: String,
+}
+
 let config = Config::load_required("config.yaml", "/", None)?;
 
-// Lenient — returns None if path is missing or struct doesn't match
-let db: Option<DatabaseConfig> = config.get_as("database");
+// Deserialize the entire config at once
+let full: FullConfig = config.deserialize_strict()?;
 
-// Strict — returns a descriptive error on failure
-let app: AppConfig = config.get_as_strict("app")?;
+// Or deserialize just a subtree
+let db: DatabaseConfig = config.get_as_strict("database")?; // Strict — returns a descriptive error on failure
+let db: Option<DatabaseConfig> = config.get_as("database"); // Lenient — returns None if path is missing or struct doesn't match
 ```
 
-`get_as_strict` returns `PathNotFound` if the path doesn't exist, or `YamlError` if the subtree can't be deserialized into `T` (e.g. a required field is missing or has the wrong type).
+`deserialize_strict` returns `YamlError` if the config can't be deserialized into `T`. `get_as_strict` additionally returns `PathNotFound` if the path doesn't exist.
 
 Sample YAML:
 
@@ -407,17 +416,19 @@ let value = config.str("a::b\\::c::d");
 Detect and apply configuration changes at runtime without restarting:
 
 ```rust
-let mut config = Config::load_required("config.yaml", "/", None)?;
+let mut config = Config::load_required("config.yaml", "/", None)?
+    .merge_required("config.prod.yaml", None)?
+    .merge_optional("config.local.yaml", None)?;
 
-// Reload from the same file
-config.reload()?; // Updates content from disk
+// Reloads base file and re-applies all overlays in order.
+// Required overlays that are missing return an error;
+// optional overlays that are missing are silently skipped.
+// If reload fails, the existing configuration is preserved unchanged.
+config.reload()?;
 
-// Or switch to a different config file
+// Or switch to a different config file (clears overlay chain)
 config.reload_from("other_config.yaml")?;
 ```
-
-> **Note:** If a reload fails (e.g. the file is temporarily invalid or missing), the existing
-> configuration is preserved unchanged. The error is returned, but the config remains valid and usable.
 
 ### Server loop example
 
@@ -428,7 +439,9 @@ use std::time::Duration;
 
 fn main() {
     let mut config = Config::load_required("config.yaml", "/", None)
-        .expect("Failed to load config");
+        .expect("Failed to load config")
+        .merge_optional("config.local.yaml", None)
+        .expect("Failed to merge local config");
 
     loop {
         // Check for config updates every 5 seconds
@@ -449,18 +462,18 @@ fn main() {
 
 ## Merging Configs
 
-Use `merge()` to layer configs on top of each other. Values in the overlay take precedence
-over the base; nested mappings are merged recursively so sibling keys are preserved.
-Sequences are replaced wholesale. The base config's separator is preserved.
+Use `merge_required` / `merge_optional` to layer configs on top of each other. Values in the overlay take precedence over the base; nested mappings are merged recursively so sibling keys are preserved. Sequences are replaced wholesale. The base config's separator is preserved.
+
+The overlay filenames are recorded so that `reload()` can re-read and re-apply them in order — required overlays that are missing on reload return an error, optional overlays that are missing are silently skipped.
 
 ```rust
 use trail_config::Config;
 
 let env = std::env::var("APP_ENV").unwrap_or_else(|_| "development".to_string());
 
-let config = Config::load_required("config.yaml", "/", None)?
-    .merge(Config::load_optional("config.{env}.yaml", "/", Some(&env))?)
-    .merge(Config::load_optional("config.local.yaml", "/", None)?);
+let mut config = Config::load_required("config.yaml", "/", None)?
+    .merge_required("config.{env}.yaml", Some(&env))?
+    .merge_optional("config.local.yaml", None)?;
 ```
 
 Given these files:
@@ -570,7 +583,8 @@ use std::env;
 let env = env::var("APP_ENV").unwrap_or_else(|_| "development".to_string());
 
 let config = Config::load_required("config.yaml", "/", None)?
-    .merge(Config::load_optional("config.{env}.yaml", "/", Some(&env))?);
+    .merge_required("config.{env}.yaml", Some(&env))?
+    .merge_optional("config.local.yaml", None)?;
 
 let db_url = config.str_strict("database/url")?;
 let log_level = config.str("logging/level");

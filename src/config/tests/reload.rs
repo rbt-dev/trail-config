@@ -135,7 +135,7 @@ fn reload_re_applies_required_overlay() {
     drop(f);
 
     let mut config = Config::load_required(base_file, "/", None).unwrap()
-        .merge_required(overlay_file).unwrap();
+        .merge_required(overlay_file, None).unwrap();
 
     assert_eq!(config.str("app/port"), "9090");
     assert_eq!(config.str("app/debug"), "false");
@@ -175,7 +175,7 @@ fn reload_skips_missing_optional_overlay() {
     drop(f);
 
     let mut config = Config::load_required(base_file, "/", None).unwrap()
-        .merge_optional(overlay_file).unwrap();
+        .merge_optional(overlay_file, None).unwrap();
 
     assert_eq!(config.str("app/port"), "9090");
 
@@ -211,7 +211,7 @@ fn reload_fails_if_required_overlay_deleted() {
     drop(f);
 
     let mut config = Config::load_required(base_file, "/", None).unwrap()
-        .merge_required(overlay_file).unwrap();
+        .merge_required(overlay_file, None).unwrap();
 
     fs::remove_file(overlay_file).ok();
 

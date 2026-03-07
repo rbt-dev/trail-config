@@ -15,6 +15,7 @@ A Rust library for reading YAML config files with path-based access, typed and s
 - 🔄 Hot reload support for detecting configuration changes at runtime
 - 🔀 Deep merge support for layering environment-specific config overlays
 - 🆕 Auto-create config files from in-code defaults on first run
+- 🧵 Thread-safe `ConfigHandle` for sharing config across threads
 
 ## Quick Start
 
@@ -411,6 +412,61 @@ let config = Config::load_yaml(yaml, "::").unwrap();
 let value = config.str("a::b\\::c::d");
 ```
 
+## Thread-Safe Shared Config
+
+Use `ConfigHandle` to share a `Config` across threads and reload it at runtime without restarting. It wraps `Config` in an `Arc<RwLock<...>>` — cloning the handle is cheap, and all clones refer to the same underlying config.
+
+```rust
+use trail_config::{Config, ConfigHandle};
+
+let handle = ConfigHandle::new(
+    Config::load_required("config.yaml", "/", None)?
+);
+
+// Cheap to clone — share across threads
+let handle2 = handle.clone();
+
+// Convenience methods for common accessors
+let port = handle.get_int("app/port");
+let debug = handle.get_bool("app/debug");
+
+// Full Config access via read guard
+let db: DatabaseConfig = handle.read().get_as_strict("database")?;
+
+// Reload from disk — write-locks for the duration, re-applies all overlays
+handle.reload()?;
+// All clones immediately see the updated values
+```
+
+### Background reload example
+
+```rust
+use trail_config::{Config, ConfigHandle};
+use std::{thread, time::Duration};
+
+let handle = ConfigHandle::new(
+    Config::load_required("config.yaml", "/", None)?
+        .merge_optional("config.local.yaml", None)?
+);
+
+// Spawn a background thread to reload every 30 seconds
+let reload_handle = handle.clone();
+thread::spawn(move || {
+    loop {
+        thread::sleep(Duration::from_secs(30));
+        if let Err(e) = reload_handle.reload() {
+            eprintln!("Config reload failed: {}", e);
+        }
+    }
+});
+
+// Main thread reads are never blocked except during the brief reload swap
+loop {
+    let timeout = handle.get_int("app/timeout").unwrap_or(30);
+    // ...
+}
+```
+
 ## Hot Reload
 
 Detect and apply configuration changes at runtime without restarting:
@@ -458,6 +514,59 @@ fn main() {
         thread::sleep(Duration::from_secs(5));
     }
 }
+```
+
+## Thread Safety
+
+`Config` is not `Send + Sync` on its own. Use `ConfigHandle` to share a config across threads — it wraps `Config` in an `Arc<RwLock<...>>` so it can be cloned freely and reloaded at runtime.
+
+```rust
+use trail_config::{Config, ConfigHandle};
+
+let handle = ConfigHandle::new(
+    Config::load_required("config.yaml", "/", None)?
+);
+
+// Cheap to clone — all clones share the same underlying config
+let handle2 = handle.clone();
+
+// Convenience methods for common accessors
+let port = handle.str("app/port");
+let debug = handle.get_bool("app/debug");
+
+// Full access via read guard
+let host = handle.read().str_strict("database/host")?;
+
+// Reload from disk (re-applies all overlays), visible to all clones
+handle.reload()?;
+```
+
+### Background reload loop
+
+```rust
+use trail_config::{Config, ConfigHandle};
+use std::{thread, time::Duration};
+
+let handle = ConfigHandle::new(
+    Config::load_required("config.yaml", "/", None)
+        .expect("Failed to load config")
+);
+
+// Share with the main application
+let app_handle = handle.clone();
+
+// Reload in the background every 5 seconds
+thread::spawn(move || {
+    loop {
+        thread::sleep(Duration::from_secs(5));
+        if let Err(e) = handle.reload() {
+            eprintln!("Config reload failed: {}", e);
+        }
+    }
+});
+
+// Main thread reads are never blocked except during the brief reload swap
+let port = app_handle.get_int("app/port").unwrap_or(8080);
 ```
 
 ## Merging Configs

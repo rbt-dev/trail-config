@@ -29,6 +29,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `get_as<T>(path)` — deserializes a config subtree at the given path into any `T: DeserializeOwned`, returning `None` on missing path or deserialization failure.
 - `get_as_strict<T>(path)` — same as `get_as` but returns `Result<T, ConfigError>`, with `PathNotFound` if the path is missing or `YamlError` if deserialization fails.
 - `serde` added as an explicit dependency (with `derive` feature) so users can use `#[derive(Deserialize)]` without adding `serde` themselves.
+- `ConfigHandle` — a thread-safe, cloneable handle to a `Config`, wrapping it in `Arc<RwLock<...>>` for safe sharing across threads.
+  - `ConfigHandle::new(config)` — wraps an existing `Config`
+  - `From<Config>` — allows `config.into()` as a shorthand
+  - `clone()` — cheap clone; all clones share the same underlying config
+  - `read()` — acquires a shared read lock and returns a guard giving full access to the inner `Config`
+  - `reload()` — acquires a write lock and reloads from disk, re-applying all overlays; returns the same errors as `Config::reload()`
+  - Convenience pass-through methods for the most common accessors: `str`, `get_int`, `get_float`, `get_bool`, `contains`
+  - A poisoned lock is recovered transparently via `into_inner()` on both reads and writes — the config data remains valid since `Config::reload()` only commits changes at the very end
 - Regression test `parse_path_escape_requires_full_separator` covering the multi-character separator escape bug.
 - Test `fmt_strict_with_escaped_separator_in_path` covering escaped separators in `fmt` paths.
 

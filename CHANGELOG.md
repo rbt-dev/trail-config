@@ -39,7 +39,7 @@ let config = Config::load_optional("config.{env}.yaml", "/", Some("dev"))?;
 let config = Config::load_required("config.yaml", "/", None)?;
 ```
 
-## [0.3.1] - Unreleased
+## [0.3.1] - 2026-04-03
 
 ### Added
 - `load_required` now explicitly rejects empty filenames with `IoError(InvalidInput)` before attempting file I/O
@@ -49,7 +49,7 @@ let config = Config::load_required("config.yaml", "/", None)?;
 ### Fixed
 - Improved test coverage for `load_required` with empty filename — test now asserts the correct `IoError` variant instead of just checking `is_err()`
 
-## [0.3.0] - Unreleased
+## [0.3.0] - 2026-03-01
 
 ### Added
 - `ConfigError` — a custom error enum replacing `Box<dyn Error>` across the entire public API, with four variants:
@@ -83,7 +83,7 @@ let config = Config::load_required("config.yaml", "/", None)?;
 - **Breaking:** All public methods that previously returned `Result<_, Box<dyn Error>>` now return `Result<_, ConfigError>`
 - Empty separator now returns a `FormatError` rather than panicking or producing incorrect results
 
-## [0.2.0] - Unreleased
+## [0.2.0] - 2025-09-15
 
 ### Added
 - `get_filename()` — returns the filename of the loaded config file
@@ -94,13 +94,13 @@ let config = Config::load_required("config.yaml", "/", None)?;
 - Switched YAML dependency from `serde_yaml` to `serde_yaml_bw 2.2.0`
 - Updated `to_string` to handle the new `serde_yaml_bw` value variants that carry an additional tag field (`String(v, _)`, `Number(v, _)`, `Bool(v, _)`)
 
-## [0.1.5] - Unreleased
+## [0.1.5] - 2024-06-26
 
 ### Changed
 - Updated `serde_yaml` from `0.8.21` to `0.9.33`
 - Updated `strfmt` from `0.1.6` to `0.2.4`
 
-## [0.1.4] - Unreleased
+## [0.1.4] - 2021-12-13
 
 ### Added
 - `list(path)` — retrieves a YAML sequence as `Vec<String>`, returning an empty vector if the path is missing or not a sequence
@@ -110,18 +110,18 @@ let config = Config::load_required("config.yaml", "/", None)?;
 ### Changed
 - `get` and `str` now delegate to `get_leaf` instead of duplicating path traversal logic
 
-## [0.1.3] - Unreleased
+## [0.1.3] - 2021-09-15
 
 ### Changed
 - **Breaking:** `environment()` now takes `&self` instead of consuming `self`, and returns `Option<&str>` instead of `Option<String>`
 
-## [0.1.2] - Unreleased
+## [0.1.2] - 2021-09-15
 
 ### Changed
 - **Breaking:** `new(filename, sep, env)` now accepts `env: Option<&str>` instead of `Option<String>`, reducing unnecessary allocations at the call site
 - `get_file` now returns a tuple `(String, Option<String>)` so the resolved environment name is preserved on the `Config` struct
 
-## [0.1.1] - Unreleased
+## [0.1.1] - 2021-09-15
 
 ### Changed
 - Added package `description` field in `Cargo.toml`

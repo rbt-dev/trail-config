@@ -600,7 +600,7 @@ impl Config {
     /// Parses a path with escape sequence support.
     /// 
     /// Allows keys containing the separator by escaping them:
-    /// - `\/` becomes a literal separator character in the key
+    /// - `\<sep>` becomes a literal separator in the key (e.g. `\/` for `/`, `\::` for `::`)
     /// - `\\` becomes a literal backslash in the key
     /// 
     /// # Example
@@ -608,12 +608,10 @@ impl Config {
     /// 1. Key "database"
     /// 2. Key "host/port" (the separator is escaped)
     ///
-    /// # Note on multi-character separators
-    /// Escape detection is based on the *first character* of the separator only.
-    /// For example, with separator `::`, the escape `\:` will be treated as an
-    /// escaped separator even if the second `:` is absent. This means separators
-    /// that share a first character with another valid separator may behave
-    /// unexpectedly in escape sequences.
+    /// With separator `::`, path `a::b\\::c::d` navigates to:
+    /// 1. Key "a"
+    /// 2. Key "b::c" (the full separator is escaped)
+    /// 3. Key "d"
     fn parse_path(path: &str, separator: &str) -> Vec<String> {
         let mut parts = Vec::new();
         let mut current = String::new();
@@ -622,17 +620,21 @@ impl Config {
 
         while let Some(ch) = chars.next() {
             if ch == '\\' {
-                if let Some(&next) = chars.peek() {
+                // Check if the full separator follows (escaped separator)
+                let remaining: String = chars.clone().collect();
+                if remaining.starts_with(separator) {
+                    // Escaped separator — consume it and push it literally
+                    current.push_str(separator);
+                    for _ in 0..separator.chars().count() {
+                        chars.next();
+                    }
+                } else if let Some(&next) = chars.peek() {
                     if next == '\\' {
                         // Escaped backslash
                         current.push('\\');
                         chars.next();
-                    } else if next == sep_first_char {
-                        // Escaped separator
-                        current.push(next);
-                        chars.next();
                     } else {
-                        // Keep backslash as-is
+                        // Lone backslash — keep as-is
                         current.push(ch);
                     }
                 } else {
@@ -1332,6 +1334,15 @@ database:
     fn parse_path_with_custom_separator() {
         let parts = Config::parse_path("a::b\\::c::d", "::");
         assert_eq!(parts, vec!["a", "b::c", "d"]);
+    }
+
+    #[test]
+    fn parse_path_escape_requires_full_separator() {
+        // With separator "::", a lone "\:" should NOT be treated as an escaped separator —
+        // only the full "\::" should be. Previously this was a known bug.
+        let parts = Config::parse_path("a::b\:c::d", "::");
+        // "\:" is not a valid escape, backslash kept as-is, ":" is just a literal char
+        assert_eq!(parts, vec!["a", "b\:c", "d"]);
     }
 
     #[test]

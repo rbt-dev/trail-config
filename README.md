@@ -350,7 +350,7 @@ Keys containing the path separator can be accessed using escape sequences.
 
 ### Syntax
 
-- `\/` - Include literal separator in the key
+- `\<sep>` - Include a literal separator in the key (e.g. `\/` for `/`, `\::` for `::`)
 - `\\` - Include literal backslash in the key
 - Works with any separator: `/`, `::`, `->`, etc.
 

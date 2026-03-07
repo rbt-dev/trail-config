@@ -48,6 +48,8 @@ impl Default for Config {
     /// If `config.yaml` is found and valid, it will be loaded. If the file doesn't exist
     /// or fails to parse, this returns an empty config without panicking.
     ///
+    /// Shorthand for `Config::load_optional("config.yaml", "/", None)`.
+    ///
     /// # Example
     /// ```
     /// # use trail_config::Config;
@@ -55,7 +57,7 @@ impl Default for Config {
     /// // Always succeeds - never panics
     /// ```
     fn default() -> Self {
-        Self::new("config.yaml", "/", None)
+        Self::load_optional("config.yaml", "/", None)
             .unwrap_or_else(|_| Config {
                 content: Value::Null(None),
                 filename: String::new(),
@@ -66,7 +68,10 @@ impl Default for Config {
 }
 
 impl Config {
-    /// Creates a new Config from a YAML file.
+    /// Loads a Config from a YAML file, returning an error if the file is missing or invalid.
+    ///
+    /// Use this in production code where a missing config file is a critical error.
+    /// For optional config files, use [`load_optional`](Config::load_optional) or [`default`](Config::default).
     ///
     /// # Arguments
     /// * `filename` - Path to the config file (can contain `{env}` placeholder)
@@ -74,12 +79,79 @@ impl Config {
     /// * `env` - Optional environment name to substitute in filename
     ///
     /// # Returns
-    /// Returns `Ok(Config)` on success, or `Err(ConfigError)` on failure
+    /// Returns `Ok(Config)` if the file is found and valid YAML, or `Err(ConfigError)` otherwise
     ///
     /// # Errors
-    /// Returns `ConfigError::IoError` if the file cannot be read
+    /// Returns `ConfigError::IoError` if the file is missing, empty filename, or cannot be read
     /// Returns `ConfigError::YamlError` if the YAML cannot be parsed
-    pub fn new(filename: &str, sep: &str, env: Option<&str>) -> Result<Config, ConfigError> {
+    /// Returns `ConfigError::FormatError` if the separator is empty or filename template is invalid
+    ///
+    /// # Example
+    /// ```no_run
+    /// # use trail_config::Config;
+    /// let config = Config::load_required("config.yaml", "/", None)
+    ///     .expect("Failed to load required config.yaml");
+    /// ```
+    pub fn load_required(filename: &str, sep: &str, env: Option<&str>) -> Result<Config, ConfigError> {
+        if filename.is_empty() {
+            return Err(ConfigError::IoError(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "load_required: filename cannot be empty",
+            )));
+        }
+        Self::load_internal(filename, sep, env)
+    }
+
+    /// Loads a Config from a YAML file, treating a missing file as an empty config.
+    ///
+    /// Use this when the config file is optional. If the file doesn't exist, returns
+    /// `Ok` with an empty config. If the file *does* exist but is invalid (bad YAML,
+    /// permission denied), returns `Err` — a present-but-broken config file is likely
+    /// a mistake worth surfacing.
+    ///
+    /// For a file that must exist, use [`load_required`](Config::load_required).
+    ///
+    /// # Arguments
+    /// * `filename` - Path to the config file (can contain `{env}` placeholder)
+    /// * `sep` - Path separator for accessing nested values
+    /// * `env` - Optional environment name to substitute in filename
+    ///
+    /// # Returns
+    /// Returns `Ok(Config)` on success or if the file is not found
+    ///
+    /// # Errors
+    /// Returns `ConfigError::IoError` if the file exists but cannot be read (e.g. permission denied)
+    /// Returns `ConfigError::YamlError` if the file exists but contains invalid YAML
+    /// Returns `ConfigError::FormatError` if the separator is empty or filename template is invalid
+    ///
+    /// # Example
+    /// ```no_run
+    /// # use trail_config::{Config, ConfigError};
+    /// # fn main() -> Result<(), ConfigError> {
+    /// // Load an environment-specific override file -- fine if it doesn't exist
+    /// let config = Config::load_optional("config.dev.yaml", "/", None)?;
+    ///
+    /// // With custom separator
+    /// let config = Config::load_optional("config.yaml", "::", None)?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn load_optional(filename: &str, sep: &str, env: Option<&str>) -> Result<Config, ConfigError> {
+        match Self::load_internal(filename, sep, env) {
+            Ok(config) => Ok(config),
+            Err(ConfigError::IoError(ref e)) if e.kind() == io::ErrorKind::NotFound => {
+                Ok(Config {
+                    content: Value::Null(None),
+                    filename: String::new(),
+                    separator: sep.to_string(),
+                    environment: env.map(|s| s.to_string()),
+                })
+            },
+            Err(e) => Err(e),
+        }
+    }
+
+    fn load_internal(filename: &str, sep: &str, env: Option<&str>) -> Result<Config, ConfigError> {
         // Validate separator
         if sep.is_empty() {
             return Err(ConfigError::FormatError("Separator cannot be empty".to_string()));
@@ -98,47 +170,8 @@ impl Config {
         }
     }
 
-    /// Creates a new Config from a required YAML file.
-    ///
-    /// This method is intended for production environments where a missing configuration
-    /// file is a critical error. Unlike `default()` which gracefully falls back to an
-    /// empty config, this method will return an error if the file is missing or invalid.
-    ///
-    /// # Arguments
-    /// * `filename` - Path to the config file (can contain `{env}` placeholder)
-    /// * `sep` - Path separator for accessing nested values
-    /// * `env` - Optional environment name to substitute in filename
-    ///
-    /// # Returns
-    /// Returns `Ok(Config)` if the file is found and valid YAML, or `Err(ConfigError)` otherwise
-    ///
-    /// # Errors
-    /// Returns `ConfigError::IoError` if the file is missing or cannot be read (permission denied, etc.)
-    /// Returns `ConfigError::YamlError` if the YAML cannot be parsed
-    /// Returns `ConfigError::FormatError` if the separator is empty or filename template is invalid
-    ///
-    /// # Example
-    /// ```no_run
-    /// # use trail_config::Config;
-    /// // In production, require config.yaml to exist
-    /// let config = Config::load_required("config.yaml", "/", None)
-    ///     .expect("Failed to load required config.yaml");
-    /// ```
-    pub fn load_required(filename: &str, sep: &str, env: Option<&str>) -> Result<Config, ConfigError> {
-        if filename.is_empty() {
-            return Err(ConfigError::IoError(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "load_required: filename cannot be empty",
-            )));
-        }
-        Self::new(filename, sep, env)
-    }
-
     pub fn environment(&self) -> Option<&str> {
-        match &self.environment {
-            Some(v) => Some(v),
-            None => None
-        }
+        self.environment.as_deref()
     }
 
     /// Returns the filename of the loaded config file
@@ -931,14 +964,35 @@ app:
     }
 
     #[test]
-    fn file_not_found_error() {
-        let result = Config::new("nonexistent_file_12345.yaml", "/", None);
-        
+    fn load_optional_missing_file_returns_empty_config() {
+        // Missing file is not an error for load_optional
+        let result = Config::load_optional("nonexistent_file_12345.yaml", "/", None);
+
+        assert!(result.is_ok());
+        let config = result.unwrap();
+        assert!(!config.contains("any/path"));
+        assert_eq!(config.str("any/path"), "");
+    }
+
+    #[test]
+    fn load_optional_invalid_yaml_returns_error() {
+        use std::fs::{self, File};
+        use std::io::Write;
+
+        // A present-but-broken file should still surface an error
+        let test_file = "test_optional_invalid.yaml";
+        let mut file = File::create(test_file).unwrap();
+        writeln!(file, "invalid: [unclosed").unwrap();
+        drop(file);
+
+        let result = Config::load_optional(test_file, "/", None);
         assert!(result.is_err());
         match result {
-            Err(ConfigError::IoError(_)) => (),
-            _ => panic!("Expected IoError for missing file"),
+            Err(ConfigError::YamlError(_)) => (),
+            _ => panic!("Expected YamlError for malformed file"),
         }
+
+        fs::remove_file(test_file).ok();
     }
 
     #[test]
@@ -1091,8 +1145,8 @@ app:
     }
 
     #[test]
-    fn empty_separator_in_new() {
-        let result = Config::new("config.yaml", "", None);
+    fn empty_separator_in_load_optional() {
+        let result = Config::load_optional("config.yaml", "", None);
         
         assert!(result.is_err());
         match result {
@@ -1174,7 +1228,7 @@ app:
 
     #[test]
     fn load_required_rejects_empty_filename() {
-        // load_required enforces a non-empty filename, unlike Config::new
+        // load_required enforces a non-empty filename, unlike Config::load_optional
         let config = Config::load_required("", "/", None);
         
         // Empty filename is rejected with IoError
@@ -1292,7 +1346,7 @@ database:
         drop(file);
         
         // Load initial config
-        let mut config = Config::new(test_file, "/", None).unwrap();
+        let mut config = Config::load_optional(test_file, "/", None).unwrap();
         assert_eq!(config.str("app/port"), "8080");
         assert_eq!(config.str("app/debug"), "false");
         
@@ -1329,7 +1383,7 @@ database:
         drop(file);
         
         // Load from first file
-        let mut config = Config::new(file1, "/", None).unwrap();
+        let mut config = Config::load_optional(file1, "/", None).unwrap();
         assert_eq!(config.str("config/name"), "first");
         assert_eq!(config.str("config/value"), "100");
         assert_eq!(config.get_filename(), file1);
@@ -1355,7 +1409,7 @@ database:
         writeln!(file, "db:\n  host: localhost\n  port: 5432").unwrap();
         drop(file);
         
-        let mut config = Config::new(test_file, "::", None).unwrap();
+        let mut config = Config::load_optional(test_file, "::", None).unwrap();
         assert_eq!(config.str("db::host"), "localhost");
         
         // Modify file
@@ -1397,7 +1451,7 @@ database:
         writeln!(file, "valid:\n  yaml: content").unwrap();
         drop(file);
         
-        let mut config = Config::new(test_file, "/", None).unwrap();
+        let mut config = Config::load_optional(test_file, "/", None).unwrap();
         
         // Overwrite with invalid YAML
         let mut file = File::create(test_file).unwrap();

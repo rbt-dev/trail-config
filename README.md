@@ -35,9 +35,15 @@ match config.str_strict("database/host") {
 
 ## Loading Configuration
 
-Trail Config provides different loading strategies for different use cases:
+Trail Config exposes three constructors with a clear, symmetric design:
 
-### Production Code (Strict)
+| Constructor | File required? | Use case |
+|---|---|---|
+| `Config::load_required(filename, sep, env)` | Yes — errors if missing | Production: config must exist |
+| `Config::load_optional(filename, sep, env)` | No — returns empty config if missing | Optional or environment-specific files |
+| `Config::default()` | No | Shorthand for `load_optional("config.yaml", "/", None)` |
+
+### Required config (production)
 
 Use `Config::load_required()` when the configuration file **must** exist:
 
@@ -45,27 +51,34 @@ Use `Config::load_required()` when the configuration file **must** exist:
 use trail_config::Config;
 
 let config = Config::load_required("config.yaml", "/", None)?;
-// Will error if file is missing, invalid YAML, or permission denied
+// Errors if file is missing, invalid YAML, or permission denied
 ```
 
-### Testing/Optional Configs (Lenient)
+### Optional config
 
-Use `Config::default()` when missing config is acceptable:
+Use `Config::load_optional()` for custom filenames or separators when the file may not exist:
+
+```rust
+use trail_config::Config;
+
+// With custom separator
+let config = Config::load_optional("config.yaml", "::", None)?;
+
+// With environment substitution
+let config = Config::load_optional("config.{env}.yaml", "/", Some("dev"))?;
+```
+
+### Default (shorthand)
+
+Use `Config::default()` when `config.yaml` with `/` separator is acceptable and the file is optional:
 
 ```rust
 let config = Config::default(); // Never panics, gracefully handles missing config.yaml
 ```
 
-### Custom Loading
+### From a YAML string
 
 ```rust
-// With custom separator
-let config = Config::new("config.yaml", "::", None)?;
-
-// With environment substitution
-let config = Config::new("config.{env}.yaml", "/", Some("dev"))?; // Loads config.dev.yaml
-
-// From YAML string
 let config = Config::load_yaml("app:\n  port: 8080", "/")?;
 ```
 
@@ -380,7 +393,7 @@ Trail Config validates inputs automatically and returns `FormatError` for invali
 |-------|-----------|-------|
 | Path Separator | Cannot be empty | Returns `FormatError` |
 | File Paths (`load_required`) | Empty filename explicitly rejected | Returns `IoError` |
-| File Paths (`new`) | Empty filename passed to OS | Returns `IoError` |
+| File Paths (`load_optional`) | Empty filename passed to OS | Returns `IoError` |
 | Paths | Empty paths safely handled | Returns `None` or empty |
 | Separators (leading/trailing) | Handled gracefully | No error |
 | Filename Templates | Must be valid format strings | Returns `FormatError` |
@@ -389,7 +402,7 @@ Examples:
 
 ```rust
 // Empty separator - error
-let result = Config::new("config.yaml", "", None);
+let result = Config::load_optional("config.yaml", "", None);
 assert!(result.is_err()); // FormatError
 
 // load_required rejects empty filename upfront
@@ -400,8 +413,8 @@ assert!(result.is_err()); // IoError (InvalidInput)
 let result = Config::load_required("missing.yaml", "/", None);
 assert!(result.is_err()); // IoError
 
-// Missing file with default - ok, empty config
-let config = Config::default();
+// Missing file with load_optional - ok, returns empty config
+let config = Config::load_optional("missing.yaml", "/", None)?;
 assert!(config.str("any/path") == ""); // Graceful fallback
 ```
 

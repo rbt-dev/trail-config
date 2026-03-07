@@ -14,6 +14,7 @@ Supports YAML format (uses [serde_yaml_bw](https://github.com/bourumir-wyngs/ser
 - 🔐 Escape sequence support for keys containing separators
 - 🔄 Hot reload support for detecting configuration changes at runtime
 - 🔀 Deep merge support for layering environment-specific config overlays
+- 🆕 Auto-create config files from in-code defaults on first run
 
 ## Quick Start
 
@@ -42,6 +43,7 @@ Trail Config exposes three constructors with a clear, symmetric design:
 |---|---|---|
 | `Config::load_required(filename, sep, env)` | Yes — errors if missing | Production: config must exist |
 | `Config::load_optional(filename, sep, env)` | No — returns empty config if missing | Optional or environment-specific files |
+| `Config::load_or_create(filename, sep, env, defaults)` | No — creates from defaults if missing | First-run config generation |
 | `Config::default()` | No | Shorthand for `load_optional("config.yaml", "/", None)` |
 
 ### Required config (production)
@@ -432,6 +434,49 @@ assert!(result.is_err()); // IoError
 // Missing file with load_optional - ok, returns empty config
 let config = Config::load_optional("missing.yaml", "/", None)?;
 assert!(config.str("any/path") == ""); // Graceful fallback
+```
+
+## Auto-Creating Config Files
+
+Use `load_or_create` to handle first-run scenarios where no config file exists yet.
+If the file is present its content is used as-is; if not, the provided default YAML
+string is written to disk and returned as the active config. Either way the app gets
+a fully usable config.
+
+```rust
+use trail_config::Config;
+
+const DEFAULTS: &str = r#"
+app:
+  port: 8080
+  debug: false
+database:
+  host: localhost
+  port: 5432
+"#;
+
+let config = Config::load_or_create("config.yaml", "/", None, DEFAULTS)?;
+```
+
+On first run `config.yaml` is created with the contents of `DEFAULTS`. On subsequent
+runs the file is loaded normally and `DEFAULTS` is ignored — so users can edit the
+file freely without their changes being overwritten.
+
+The defaults string is written as-is, preserving formatting and any comments you
+include:
+
+```rust
+const DEFAULTS: &str = r#"
+# Application settings
+app:
+  port: 8080       # HTTP port
+  debug: false     # Set to true for verbose logging
+
+# Database connection
+database:
+  host: localhost
+  port: 5432
+"#;
 ```
 
 ## Merging Configs

@@ -151,6 +151,57 @@ impl Config {
         }
     }
 
+    /// Loads a Config from a YAML file, creating it from a default YAML string if it doesn't exist.
+    ///
+    /// If the file exists, its content is loaded and returned — the `defaults` string is
+    /// discarded. If the file does not exist, `defaults` is written to disk and returned as
+    /// the active config, so the app behaves identically whether or not the file was present.
+    ///
+    /// The `defaults` string is written as-is, preserving formatting and comments.
+    ///
+    /// # Arguments
+    /// * `filename` - Path to the config file (can contain `{env}` placeholder)
+    /// * `sep` - Path separator for accessing nested values
+    /// * `env` - Optional environment name to substitute in filename
+    /// * `defaults` - YAML string to write and use if the file does not exist
+    ///
+    /// # Returns
+    /// Returns `Ok(Config)` with the file content, or the defaults if the file was created
+    ///
+    /// # Errors
+    /// Returns `ConfigError::IoError` if the file exists but cannot be read, or if writing fails
+    /// Returns `ConfigError::YamlError` if the file or defaults string contains invalid YAML
+    /// Returns `ConfigError::FormatError` if the separator is empty or filename template is invalid
+    ///
+    /// # Example
+    /// ```no_run
+    /// # use trail_config::{Config, ConfigError};
+    /// # fn main() -> Result<(), ConfigError> {
+    /// const DEFAULTS: &str = r#"
+    /// app:
+    ///   port: 8080
+    ///   debug: false
+    /// database:
+    ///   host: localhost
+    ///   port: 5432
+    /// "#;
+    ///
+    /// let config = Config::load_or_create("config.yaml", "/", None, DEFAULTS)?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn load_or_create(filename: &str, sep: &str, env: Option<&str>, defaults: &str) -> Result<Config, ConfigError> {
+        match Self::load_internal(filename, sep, env) {
+            Ok(config) => Ok(config),
+            Err(ConfigError::IoError(ref e)) if e.kind() == io::ErrorKind::NotFound => {
+                let (file, _) = Self::get_file(filename, env)?;
+                fs::write(&file, defaults)?;
+                Self::load_yaml(defaults, sep)
+            },
+            Err(e) => Err(e),
+        }
+    }
+
     fn load_internal(filename: &str, sep: &str, env: Option<&str>) -> Result<Config, ConfigError> {
         // Validate separator
         if sep.is_empty() {
@@ -1045,6 +1096,98 @@ app:
     }
 
     #[test]
+    fn load_or_create_creates_file_when_missing() {
+        use std::fs;
+
+        const DEFAULTS: &str = "app:
+  port: 8080
+  debug: false
+";
+        let test_file = "test_load_or_create_new.yaml";
+        fs::remove_file(test_file).ok(); // ensure it doesn't exist
+
+        let result = Config::load_or_create(test_file, "/", None, DEFAULTS);
+
+        assert!(result.is_ok());
+        let config = result.unwrap();
+        assert_eq!(config.str("app/port"), "8080");
+        assert_eq!(config.get_bool("app/debug"), Some(false));
+
+        // File should have been written to disk
+        assert!(fs::metadata(test_file).is_ok());
+        let written = fs::read_to_string(test_file).unwrap();
+        assert_eq!(written, DEFAULTS);
+
+        fs::remove_file(test_file).ok();
+    }
+
+    #[test]
+    fn load_or_create_loads_existing_file() {
+        use std::fs::{self, File};
+        use std::io::Write;
+
+        const DEFAULTS: &str = "app:
+  port: 8080
+";
+        let test_file = "test_load_or_create_existing.yaml";
+
+        // Write a different config to disk
+        let mut file = File::create(test_file).unwrap();
+        writeln!(file, "app:
+  port: 9090").unwrap();
+        drop(file);
+
+        let config = Config::load_or_create(test_file, "/", None, DEFAULTS).unwrap();
+
+        // Should use file content, not defaults
+        assert_eq!(config.str("app/port"), "9090");
+
+        fs::remove_file(test_file).ok();
+    }
+
+    #[test]
+    fn load_or_create_invalid_defaults_returns_error() {
+        use std::fs;
+
+        let test_file = "test_load_or_create_invalid.yaml";
+        fs::remove_file(test_file).ok();
+
+        let result = Config::load_or_create(test_file, "/", None, "invalid: [unclosed");
+
+        assert!(result.is_err());
+        match result {
+            Err(ConfigError::YamlError(_)) => (),
+            _ => panic!("Expected YamlError for invalid defaults"),
+        }
+
+        // File was written before parse attempt — clean up
+        fs::remove_file(test_file).ok();
+    }
+
+    #[test]
+    fn load_or_create_invalid_existing_file_returns_error() {
+        use std::fs::{self, File};
+        use std::io::Write;
+
+        let test_file = "test_load_or_create_broken.yaml";
+        let mut file = File::create(test_file).unwrap();
+        writeln!(file, "invalid: [unclosed").unwrap();
+        drop(file);
+
+        let result = Config::load_or_create(test_file, "/", None, "app:
+  port: 8080
+");
+
+        assert!(result.is_err());
+        match result {
+            Err(ConfigError::YamlError(_)) => (),
+            _ => panic!("Expected YamlError for broken existing file"),
+        }
+
+        fs::remove_file(test_file).ok();
+    }
+
+    #[test]
     fn invalid_yaml_formats() {
         let test_cases = vec![
             "invalid: {unclosed",      // unclosed mapping
@@ -1184,7 +1327,6 @@ sections:
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), "127.0.0.1:6379");
     }
-
     #[test]
     fn fmt_strict_missing_path() {
         let config = Config::load_yaml(YAML, "/").unwrap();

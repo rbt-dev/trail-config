@@ -234,6 +234,21 @@ let db_url = config.fmt(
 // Result: "postgresql://admin@localhost:5432/myapp_db"
 ```
 
+### Escape Sequences in fmt Paths
+
+Escape sequences work in `fmt` paths the same way they do in regular paths. If a key contains the separator, escape it with `\`:
+
+```rust
+// YAML structure
+// sections:
+//   "db/redis":        <- key contains a literal slash
+//     server: 127.0.0.1
+//     port: 6379
+
+let connection = config.fmt("{}:{}", "sections/db\/redis/server+port");
+// Result: "127.0.0.1:6379"
+```
+
 ## Error Handling
 
 Trail Config uses a custom `ConfigError` enum for precise error handling:

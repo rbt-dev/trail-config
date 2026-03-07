@@ -537,11 +537,11 @@ impl Config {
     /// ```
     pub fn fmt_strict(&self, format: &str, path: &str) -> Result<String, ConfigError> {
         let mut content = &self.content;
-        let mut parts = path.split(&self.separator).collect::<Vec<&str>>();
+        let mut parts = Self::parse_path(path, &self.separator);
         let last = parts.pop();
-    
+
         for item in parts.iter() {
-            match content.get(item) {
+            match content.get(item.as_str()) {
                 Some(v) => { content = v; },
                 None => return Err(ConfigError::PathNotFound(path.to_string()))
             }
@@ -1118,6 +1118,22 @@ app:
         let config = Config::load_yaml(YAML, "/").unwrap();
         let result = config.fmt_strict("{}:{}", "db/redis/server+port");
         
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "127.0.0.1:6379");
+    }
+
+    #[test]
+    fn fmt_strict_with_escaped_separator_in_path() {
+        let yaml = "
+sections:
+  "db/redis":
+    server: 127.0.0.1
+    port: 6379
+";
+        let config = Config::load_yaml(yaml, "/").unwrap();
+        // "db/redis" is a key containing a literal slash — escape it in the path
+        let result = config.fmt_strict("{}:{}", "sections/db\/redis/server+port");
+
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), "127.0.0.1:6379");
     }

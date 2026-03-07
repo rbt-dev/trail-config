@@ -9,9 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - `parse_path` escape detection now correctly requires the *full* separator to follow a backslash before treating it as an escaped separator. Previously, with a multi-character separator like `::`, a lone `\:` would incorrectly match. The escape syntax `\<sep>` (e.g. `\::` for `::`) now works correctly for all separator lengths.
+- `fmt_strict` (and `fmt`) now use `parse_path` for path traversal instead of a raw `split`, so escaped separators in path segments work correctly.
 
 ### Added
 - Regression test `parse_path_escape_requires_full_separator` covering the multi-character separator escape bug
+- Test `fmt_strict_with_escaped_separator_in_path` covering escaped separators in `fmt` paths
 
 ## [0.4.0] - Unreleased
 

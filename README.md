@@ -115,7 +115,7 @@ Lenient methods return `None` or empty values for missing paths or type mismatch
 
 ### Formatting
 
-- `fmt(format, path)` → `String` - Format multiple values (empty on any error)
+- `fmt(format, base, keys)` → `String` - Format multiple values (empty on any error)
 
 ### Configuration Metadata
 
@@ -134,7 +134,7 @@ Strict methods return `Result<T, ConfigError>` for explicit error handling.
 - `get_strict(path)` - Get value, fails with `PathNotFound` if missing
 - `str_strict(path)` - Get string, fails with `PathNotFound` if missing
 - `list_strict(path)` - Get sequence, fails with `PathNotFound` if missing
-- `fmt_strict(format, path)` - Format values, fails with `PathNotFound` or `FormatError`
+- `fmt_strict(format, base, keys)` - Format values, fails with `PathNotFound` or `FormatError`
 - `get_int_strict(path)` - Get integer, fails with `PathNotFound` or `FormatError` on type mismatch
 - `get_float_strict(path)` - Get float, fails with `PathNotFound` or `FormatError` on type mismatch
 - `get_bool_strict(path)` - Get boolean, fails with `PathNotFound` or `FormatError` on type mismatch
@@ -187,18 +187,17 @@ let connection = format!("{}:{}", host, port);  // Separate calls
 Use `fmt()` to combine them in one call:
 
 ```rust
-let connection = config.fmt("{}:{}", "database/host+port");
+let connection = config.fmt("{}:{}", "database", &["host", "port"]);
 ```
-
-The `+` in the path tells `fmt()` to combine multiple attributes at the same level.
 
 ### How It Works
 
 The `fmt()` method takes:
 1. **format** - A format string with `{}` placeholders (one per value)
-2. **path** - A path ending with attributes joined by `+` (e.g., `db/redis/server+port`)
+2. **base** - A path to the parent node containing the keys (e.g., `"db/redis"`)
+3. **keys** - A slice of key names under the base path, one per `{}` placeholder
 
-It navigates to the parent (`database`), then extracts and formats the specified attributes (`host` and `port`).
+It navigates to the base path, then extracts and formats the specified keys in order.
 
 ### Lenient vs Strict Formatting
 
@@ -208,10 +207,10 @@ Both APIs are available:
 let config = Config::default();
 
 // Lenient - returns empty string if any value is missing
-let connection = config.fmt("{}:{}", "database/host+port");
+let connection = config.fmt("{}:{}", "database", &["host", "port"]);
 
 // Strict - returns error if any value is missing
-match config.fmt_strict("{}:{}", "database/host+port") {
+match config.fmt_strict("{}:{}", "database", &["host", "port"]) {
     Ok(conn) => println!("Connecting to {}", conn),
     Err(e) => eprintln!("Config error: {}", e),
 }
@@ -219,11 +218,11 @@ match config.fmt_strict("{}:{}", "database/host+port") {
 
 ### Multi-Value Formatting
 
-Format more than two values with additional `+` separators:
+Format more than two values by adding more keys to the slice:
 
 ```rust
 // YAML structure
-// databasse:
+// database:
 //   host: localhost
 //   port: 5432
 //   name: myapp_db
@@ -232,14 +231,15 @@ Format more than two values with additional `+` separators:
 // Format all four values
 let db_url = config.fmt(
     "postgresql://{}@{}:{}/{}",
-    "database/username+host+port+name"
+    "database",
+    &["username", "host", "port", "name"]
 );
 // Result: "postgresql://admin@localhost:5432/myapp_db"
 ```
 
-### Escape Sequences in fmt Paths
+### Escape Sequences in fmt Base Path
 
-Escape sequences work in `fmt` paths the same way they do in regular paths. If a key contains the separator, escape it with `\`:
+Escape sequences work in the base path the same way they do in regular paths. If a key contains the separator, escape it with `\`:
 
 ```rust
 // YAML structure
@@ -248,7 +248,7 @@ Escape sequences work in `fmt` paths the same way they do in regular paths. If a
 //     server: 127.0.0.1
 //     port: 6379
 
-let connection = config.fmt("{}:{}", "sections/db\/redis/server+port");
+let connection = config.fmt("{}:{}", r"sections/db\/redis", &["server", "port"]);
 // Result: "127.0.0.1:6379"
 ```
 

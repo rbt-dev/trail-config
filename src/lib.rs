@@ -570,7 +570,8 @@ impl Config {
     ///
     /// # Arguments
     /// * `format` - Format string with `{}` placeholders
-    /// * `path` - Dot-separated path with multiple attributes joined by `+` (e.g., "db/redis/server+port")
+    /// * `base` - Base path to the parent node containing the keys (e.g., "db/redis")
+    /// * `keys` - Slice of key names under the base path, one per `{}` placeholder
     ///
     /// # Returns
     /// Returns the formatted string, or empty string if any referenced value is not found
@@ -580,11 +581,11 @@ impl Config {
     /// # use trail_config::Config;
     /// # let yaml = "db:\n  redis:\n    server: 127.0.0.1\n    port: 6379";
     /// # let config = Config::load_yaml(yaml, "/").unwrap();
-    /// let result = config.fmt("{}:{}", "db/redis/server+port");
+    /// let result = config.fmt("{}:{}", "db/redis", &["server", "port"]);
     /// assert_eq!(result, "127.0.0.1:6379");
     /// ```
-    pub fn fmt(&self, format: &str, path: &str) -> String {
-        self.fmt_strict(format, path).unwrap_or_else(|_| String::new())
+    pub fn fmt(&self, format: &str, base: &str, keys: &[&str]) -> String {
+        self.fmt_strict(format, base, keys).unwrap_or_else(|_| String::new())
     }
 
     /// Parses a YAML string into a Config object
@@ -620,7 +621,8 @@ impl Config {
     ///
     /// # Arguments
     /// * `format` - Format string with `{}` placeholders
-    /// * `path` - Dot-separated path with multiple attributes joined by `+` (e.g., "db/redis/server+port")
+    /// * `base` - Base path to the parent node containing the keys (e.g., "db/redis")
+    /// * `keys` - Slice of key names under the base path, one per `{}` placeholder
     ///
     /// # Returns
     /// Returns `Ok(String)` with the formatted result, or `Err(ConfigError)` if any value is not found or formatting fails
@@ -630,44 +632,35 @@ impl Config {
     /// # use trail_config::Config;
     /// # let yaml = "db:\n  redis:\n    server: 127.0.0.1\n    port: 6379";
     /// # let config = Config::load_yaml(yaml, "/").unwrap();
-    /// let result = config.fmt_strict("{}:{}", "db/redis/server+port").unwrap();
+    /// let result = config.fmt_strict("{}:{}", "db/redis", &["server", "port"]).unwrap();
     /// assert_eq!(result, "127.0.0.1:6379");
     /// ```
-    pub fn fmt_strict(&self, format: &str, path: &str) -> Result<String, ConfigError> {
+    pub fn fmt_strict(&self, format: &str, base: &str, keys: &[&str]) -> Result<String, ConfigError> {
         let mut content = &self.content;
-        let mut parts = Self::parse_path(path, &self.separator);
-        let last = parts.pop();
+        let parts = Self::parse_path(base, &self.separator);
 
         for item in parts.iter() {
+            if item.is_empty() { continue; }
             match content.get(item.as_str()) {
                 Some(v) => { content = v; },
-                None => return Err(ConfigError::PathNotFound(path.to_string()))
+                None => return Err(ConfigError::PathNotFound(base.to_string()))
             }
         }
 
-        match last {
-            Some(v) => {
-                let attributes = v.split('+').collect::<Vec<&str>>();
-                let mut fmt = format.to_string();
-                let mut vars = HashMap::new();
+        let mut fmt = format.to_string();
+        let mut vars = HashMap::new();
 
-                for item in attributes.iter() {
-                    match content.get(item) {
-                        Some(v) => {
-                            fmt = fmt.replacen("{}", &format!("{{{}}}", item), 1);
-                            vars.insert(item.to_string(), Self::to_string(v));
-                        },
-                        None => return Err(ConfigError::PathNotFound(path.to_string()))
-                    }
-                }
-
-                match strfmt(&fmt, &vars) {
-                    Ok(r) => Ok(r),
-                    Err(e) => Err(ConfigError::FormatError(e.to_string()))
-                }
-            },
-            None => Err(ConfigError::PathNotFound(path.to_string()))
+        for key in keys.iter() {
+            match content.get(*key) {
+                Some(v) => {
+                    fmt = fmt.replacen("{}", &format!("{{{}}}", key), 1);
+                    vars.insert(key.to_string(), Self::to_string(v));
+                },
+                None => return Err(ConfigError::PathNotFound(format!("{}/{}", base, key)))
+            }
         }
+
+        strfmt(&fmt, &vars).map_err(|e| ConfigError::FormatError(e.to_string()))
     }
 
     fn get_leaf(mut content: &Value, path: &str, separator: &str) -> Option<Value> {
@@ -982,7 +975,7 @@ app:
     #[test]
     fn fmt_test()  {
         let parsed: Config = Config::load_yaml(YAML, "/").unwrap();
-        let formatted = parsed.fmt("{}:{}", "db/sql/database+username");
+        let formatted = parsed.fmt("{}:{}", "db/sql", &["database", "username"]);
 
         assert_eq!(formatted, String::from("my_db:user"));
     }
@@ -1306,7 +1299,7 @@ app:
     #[test]
     fn fmt_strict_success() {
         let config = Config::load_yaml(YAML, "/").unwrap();
-        let result = config.fmt_strict("{}:{}", "db/redis/server+port");
+        let result = config.fmt_strict("{}:{}", "db/redis", &["server", "port"]);
         
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), "127.0.0.1:6379");
@@ -1321,8 +1314,8 @@ sections:
     port: 6379
 "#;
         let config = Config::load_yaml(yaml, "/").unwrap();
-        // "db/redis" is a key containing a literal slash — escape it in the path
-        let result = config.fmt_strict("{}:{}", r"sections/db\/redis/server+port");
+        // "db/redis" is a key containing a literal slash — escape it in the base path
+        let result = config.fmt_strict("{}:{}", r"sections/db\/redis", &["server", "port"]);
 
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), "127.0.0.1:6379");
@@ -1330,7 +1323,7 @@ sections:
     #[test]
     fn fmt_strict_missing_path() {
         let config = Config::load_yaml(YAML, "/").unwrap();
-        let result = config.fmt_strict("{}:{}", "db/redis/nonexistent+port");
+        let result = config.fmt_strict("{}:{}", "db/nonexistent", &["server", "port"]);
         
         assert!(result.is_err());
         match result {
@@ -1342,7 +1335,7 @@ sections:
     #[test]
     fn fmt_strict_missing_attribute() {
         let config = Config::load_yaml(YAML, "/").unwrap();
-        let result = config.fmt_strict("{}:{}", "db/redis/server+nonexistent");
+        let result = config.fmt_strict("{}:{}", "db/redis", &["server", "nonexistent"]);
         
         assert!(result.is_err());
         match result {

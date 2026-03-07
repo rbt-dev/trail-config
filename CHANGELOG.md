@@ -7,7 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.4.0] - Unreleased
 
+### Changed
+- **Breaking:** `Config::new` is now private. Replace usages with `Config::load_optional` (same signature, same behaviour) or `Config::load_required` if the file must exist.
+- **Breaking:** `fmt(format, path)` and `fmt_strict(format, path)` now take an explicit `base: &str` and `keys: &[&str]` instead of a single path with `+`-joined leaf keys. The base path and the leaf keys are now separate arguments, removing the need for a special `+` delimiter and making the API consistent with the rest of the library. Error messages for missing keys now report the full path (e.g. `db/redis/nonexistent`) rather than the raw input string.
+
 ### Fixed
+- `Config::default()` is now documented as a shorthand for `Config::load_optional("config.yaml", "/", None)`.
 - `parse_path` escape detection now correctly requires the *full* separator to follow a backslash before treating it as an escaped separator. Previously, with a multi-character separator like `::`, a lone `\:` would incorrectly match. The escape syntax `\<sep>` (e.g. `\::` for `::`) now works correctly for all separator lengths.
 - `fmt_strict` (and `fmt`) now use `parse_path` for path traversal instead of a raw `split`, so escaped separators in path segments work correctly.
 
@@ -17,10 +22,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `load_optional(filename, sep, env)` — a new public constructor for loading optional config files. Returns `Ok` with an empty config if the file is not found, but still returns `Err` for other failures (invalid YAML, permission denied, bad separator) so that a present-but-broken config file is not silently ignored. Replaces the former `Config::new`.
 - Regression test `parse_path_escape_requires_full_separator` covering the multi-character separator escape bug
 - Test `fmt_strict_with_escaped_separator_in_path` covering escaped separators in `fmt` paths
-
-### Changed
-- **Breaking:** `Config::new` is now private. Replace usages with `Config::load_optional` (same signature, same behaviour) or `Config::load_required` if the file must exist.
-- `Config::default()` is now documented as a shorthand for `Config::load_optional("config.yaml", "/", None)`.
 
 ### Migration guide
 
@@ -37,6 +38,16 @@ let config = Config::load_optional("config.{env}.yaml", "/", Some("dev"))?;
 
 // Or, if the file must exist
 let config = Config::load_required("config.yaml", "/", None)?;
+```
+
+```rust
+// Before (0.3.x)
+config.fmt("{}:{}", "db/redis/server+port");
+config.fmt("postgresql://{}@{}:{}/{}", "database/username+host+port+name");
+
+// After (0.4.0)
+config.fmt("{}:{}", "db/redis", &["server", "port"]);
+config.fmt("postgresql://{}@{}:{}/{}", "database", &["username", "host", "port", "name"]);
 ```
 
 ## [0.3.1] - 2026-04-03
@@ -65,7 +76,7 @@ let config = Config::load_required("config.yaml", "/", None)?;
   - `get_strict(path)`
   - `str_strict(path)`
   - `list_strict(path)`
-  - `fmt_strict(format, path)`
+  - `fmt_strict(format, base, keys)`
   - `get_int_strict(path)`
   - `get_float_strict(path)`
   - `get_bool_strict(path)`

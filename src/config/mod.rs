@@ -602,6 +602,60 @@ impl Config {
             .map_err(|e| ConfigError::YamlError(e.to_string()))
     }
 
+    /// Deserializes the entire config into a typed struct
+    ///
+    /// # Example
+    /// ```
+    /// # use trail_config::Config;
+    /// # use serde::Deserialize;
+    /// # let yaml = "app:\n  port: 8080\ndatabase:\n  host: localhost\n  port: 5432";
+    /// # let config = Config::load_yaml(yaml, "/").unwrap();
+    /// #[derive(Deserialize)]
+    /// struct AppConfig {
+    ///     app: AppSettings,
+    ///     database: DatabaseSettings,
+    /// }
+    /// #[derive(Deserialize)]
+    /// struct AppSettings { port: u16 }
+    /// #[derive(Deserialize)]
+    /// struct DatabaseSettings { host: String, port: u16 }
+    ///
+    /// let cfg: Option<AppConfig> = config.deserialize();
+    /// ```
+    pub fn deserialize<T: serde::de::DeserializeOwned>(&self) -> Option<T> {
+        self.deserialize_strict().ok()
+    }
+
+    /// Deserializes the entire config into a typed struct, returning an error if deserialization fails
+    ///
+    /// # Errors
+    /// Returns `ConfigError::YamlError` if the config cannot be deserialized into `T`
+    ///
+    /// # Example
+    /// ```
+    /// # use trail_config::Config;
+    /// # use serde::Deserialize;
+    /// # let yaml = "app:\n  port: 8080\ndatabase:\n  host: localhost\n  port: 5432";
+    /// # let config = Config::load_yaml(yaml, "/").unwrap();
+    /// #[derive(Deserialize)]
+    /// struct AppConfig {
+    ///     app: AppSettings,
+    ///     database: DatabaseSettings,
+    /// }
+    /// #[derive(Deserialize)]
+    /// struct AppSettings { port: u16 }
+    /// #[derive(Deserialize)]
+    /// struct DatabaseSettings { host: String, port: u16 }
+    ///
+    /// let cfg: AppConfig = config.deserialize_strict().unwrap();
+    /// assert_eq!(cfg.app.port, 8080);
+    /// assert_eq!(cfg.database.host, "localhost");
+    /// ```
+    pub fn deserialize_strict<T: serde::de::DeserializeOwned>(&self) -> Result<T, ConfigError> {
+        serde_yaml_bw::from_value(self.content.clone())
+            .map_err(|e| ConfigError::YamlError(e.to_string()))
+    }
+
     /// Formats a string template with values from the config
     ///
     /// # Example
@@ -728,7 +782,7 @@ impl Config {
                 if remaining.starts_with(expected_rest) {
                     parts.push(current.clone());
                     current.clear();
-                    for _ in 1..separator.len() {
+                    for _ in 1..separator.chars().count() {
                         chars.next();
                     }
                 } else {

@@ -77,3 +77,81 @@ fn get_as_nested_struct() {
     assert_eq!(app.max_retries, 5);
     assert!((app.timeout - 2.5).abs() < 0.001);
 }
+
+#[test]
+fn deserialize_strict_full_config() {
+    #[derive(serde::Deserialize, Debug)]
+    struct FullConfig {
+        db: DbConfig,
+        app: AppConfig,
+    }
+    #[derive(serde::Deserialize, Debug)]
+    struct DbConfig {
+        redis: RedisConfig,
+    }
+    #[derive(serde::Deserialize, Debug)]
+    struct RedisConfig {
+        server: String,
+        port: u16,
+        key_expiry: u32,
+    }
+    #[derive(serde::Deserialize, Debug)]
+    struct AppConfig {
+        debug: bool,
+        max_retries: i32,
+        timeout: f64,
+    }
+
+    let config = Config::load_yaml(YAML, "/").unwrap();
+    let full: FullConfig = config.deserialize_strict().unwrap();
+
+    assert_eq!(full.db.redis.server, "127.0.0.1");
+    assert_eq!(full.db.redis.port, 6379);
+    assert_eq!(full.db.redis.key_expiry, 3600);
+    assert_eq!(full.app.debug, true);
+    assert_eq!(full.app.max_retries, 5);
+    assert!((full.app.timeout - 2.5).abs() < 0.001);
+}
+
+#[test]
+fn deserialize_strict_type_mismatch() {
+    #[derive(serde::Deserialize)]
+    #[allow(dead_code)]
+    struct Wrong { totally_made_up_field: String }
+
+    let config = Config::load_yaml(YAML, "/").unwrap();
+    let result = config.deserialize_strict::<Wrong>();
+
+    assert!(result.is_err());
+    match result {
+        Err(ConfigError::YamlError(_)) => (),
+        _ => panic!("Expected YamlError"),
+    }
+}
+
+#[test]
+fn deserialize_lenient_returns_none_on_mismatch() {
+    #[derive(serde::Deserialize)]
+    #[allow(dead_code)]
+    struct Wrong { totally_made_up_field: String }
+
+    let config = Config::load_yaml(YAML, "/").unwrap();
+    let result = config.deserialize::<Wrong>();
+
+    assert!(result.is_none());
+}
+
+#[test]
+fn deserialize_strict_empty_config() {
+    #[derive(serde::Deserialize, Debug, PartialEq)]
+    struct NonEmpty { required_field: String }
+
+    let config = Config::load_yaml("", "/").unwrap();
+    let result = config.deserialize_strict::<NonEmpty>();
+
+    assert!(result.is_err());
+    match result {
+        Err(ConfigError::YamlError(_)) => (),
+        _ => panic!("Expected YamlError for empty config"),
+    }
+}

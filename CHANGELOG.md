@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - **Breaking:** `Config::new` is now private. Replace usages with `Config::load_optional` (same signature, same behaviour) or `Config::load_required` if the file must exist.
 - **Breaking:** `fmt(format, path)` and `fmt_strict(format, path)` now take an explicit `base: &str` and `keys: &[&str]` instead of a single path with `+`-joined leaf keys. The base path and the leaf keys are now separate arguments, removing the need for a special `+` delimiter and making the API consistent with the rest of the library. Error messages for missing keys now report the full path (e.g. `db/redis/nonexistent`) rather than the raw input string.
+- `strfmt` dependency removed — string formatting and filename template substitution are now handled with standard Rust `str::replace` / `str::replacen`. No API changes.
 
 ### Fixed
 - `Config::default()` is now documented as a shorthand for `Config::load_optional("config.yaml", "/", None)`.

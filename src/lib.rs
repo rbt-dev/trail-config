@@ -1,6 +1,5 @@
-use std::{collections::HashMap, error::Error, fmt, fs, io};
+use std::{error::Error, fmt, fs, io};
 use serde_yaml_bw::{Value, from_str};
-use strfmt::strfmt;
 
 /// Custom error type for Trail Config operations
 #[derive(Debug)]
@@ -708,20 +707,18 @@ impl Config {
             }
         }
 
-        let mut fmt = format.to_string();
-        let mut vars = HashMap::new();
+        let mut result = format.to_string();
 
         for key in keys.iter() {
             match content.get(*key) {
                 Some(v) => {
-                    fmt = fmt.replacen("{}", &format!("{{{}}}", key), 1);
-                    vars.insert(key.to_string(), Self::to_string(v));
+                    result = result.replacen("{}", &Self::to_string(v), 1);
                 },
                 None => return Err(ConfigError::PathNotFound(format!("{}/{}", base, key)))
             }
         }
 
-        strfmt(&fmt, &vars).map_err(|e| ConfigError::FormatError(e.to_string()))
+        Ok(result)
     }
 
     fn get_leaf(mut content: &Value, path: &str, separator: &str) -> Option<Value> {
@@ -820,11 +817,11 @@ impl Config {
     fn get_file(filename: &str, env: Option<&str>) -> Result<(String, Option<String>), ConfigError> {
         match env {
             Some(v) => {
-                let mut vars = HashMap::new();
-                vars.insert(String::from("env"), v);
-                let file = strfmt(filename, &vars)
-                    .map_err(|e| ConfigError::FormatError(format!("Invalid filename template: {}", e)))?;
-                Ok((file, Some(v.to_string())))
+                if filename.contains("{env}") {
+                    Ok((filename.replace("{env}", v), Some(v.to_string())))
+                } else {
+                    Err(ConfigError::FormatError(format!("Invalid filename template: '{{env}}' placeholder not found in \"{}\"", filename)))
+                }
             },
             None => Ok((String::from(filename), None))
         }
@@ -1063,12 +1060,13 @@ app:
 
     #[test]
     fn get_file_invalid_template() {
-        let result = Config::get_file("config_{invalid.yaml", Some("dev"));
+        // env is provided but filename has no {env} placeholder
+        let result = Config::get_file("config.yaml", Some("dev"));
 
         assert!(result.is_err());
         match result {
             Err(ConfigError::FormatError(_)) => (),
-            _ => panic!("Expected FormatError for invalid template"),
+            _ => panic!("Expected FormatError for missing {{env}} placeholder"),
         }
     }
 
@@ -1705,7 +1703,7 @@ database:
         assert!(result.is_err());
         match result {
             Err(ConfigError::FormatError(msg)) => {
-                assert!(msg.contains("YAML string"));
+                assert!(msg.contains("no file path"));
             },
             _ => panic!("Expected FormatError"),
         }
@@ -1864,6 +1862,7 @@ database:
     #[test]
     fn get_as_strict_path_not_found() {
         #[derive(serde::Deserialize)]
+        #[allow(dead_code)]
         struct Dummy { value: String }
 
         let config = Config::load_yaml(YAML, "/").unwrap();
@@ -1879,6 +1878,7 @@ database:
     #[test]
     fn get_as_strict_type_mismatch() {
         #[derive(serde::Deserialize, Debug)]
+        #[allow(dead_code)]
         struct Wrong { totally_made_up_field: String }
 
         let config = Config::load_yaml(YAML, "/").unwrap();
@@ -1895,6 +1895,7 @@ database:
     #[test]
     fn get_as_lenient_returns_none_on_missing() {
         #[derive(serde::Deserialize)]
+        #[allow(dead_code)]
         struct Dummy { value: String }
 
         let config = Config::load_yaml(YAML, "/").unwrap();

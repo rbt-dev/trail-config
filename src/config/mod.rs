@@ -3,11 +3,18 @@ use serde_yaml_bw::{Value, from_str};
 use crate::error::ConfigError;
 
 #[derive(Debug, Clone)]
+enum OverlaySource {
+    Required(String),
+    Optional(String),
+}
+
+#[derive(Debug, Clone)]
 pub struct Config {
     content: Value,
     filename: String,
     separator: String,
-    environment: Option<String>
+    environment: Option<String>,
+    overlays: Vec<OverlaySource>,
 }
 
 impl Default for Config {
@@ -30,7 +37,8 @@ impl Default for Config {
                 content: Value::Null(None),
                 filename: String::new(),
                 separator: "/".to_string(),
-                environment: None
+                environment: None,
+                overlays: Vec::new(),
             })
     }
 }
@@ -113,6 +121,7 @@ impl Config {
                     filename: String::new(),
                     separator: sep.to_string(),
                     environment: env.map(|s| s.to_string()),
+                    overlays: Vec::new(),
                 })
             },
             Err(e) => Err(e),
@@ -182,7 +191,8 @@ impl Config {
                 content: yaml,
                 filename: file,
                 separator: sep.to_string(),
-                environment: env
+                environment: env,
+                overlays: Vec::new(),
             }),
             Err(e) => Err(e)
         }
@@ -198,32 +208,71 @@ impl Config {
         &self.filename
     }
 
-    /// Merges another `Config` into this one, returning a new `Config`.
+    /// Merges a required overlay file into this config, returning a new `Config`.
     ///
-    /// Values in `overlay` take precedence over values in `self`. The merge is deep —
+    /// Values in the overlay take precedence over values in `self`. The merge is deep —
     /// nested mappings are merged recursively so individual leaf values can be overridden
     /// without clobbering sibling keys. Sequences are replaced wholesale rather than
     /// merged element-by-element.
     ///
-    /// The returned `Config` inherits the separator and filename of `self`. Calls can be
-    /// chained to apply multiple overlays in order:
+    /// The overlay filename is recorded so that [`reload`](Config::reload) can re-read and
+    /// re-apply it. If the overlay file is missing during a reload, an error is returned.
     ///
+    /// # Errors
+    /// Returns `ConfigError::IoError` if the file is missing or cannot be read
+    /// Returns `ConfigError::YamlError` if the file contains invalid YAML
+    ///
+    /// # Example
     /// ```no_run
     /// # use trail_config::{Config, ConfigError};
     /// # fn main() -> Result<(), ConfigError> {
     /// let config = Config::load_required("config.yaml", "/", None)?
-    ///     .merge(Config::load_optional("config.prod.yaml", "/", None)?)
-    ///     .merge(Config::load_optional("config.local.yaml", "/", None)?);
+    ///     .merge_required("config.prod.yaml")?
+    ///     .merge_optional("config.local.yaml")?;
     /// # Ok(())
     /// # }
     /// ```
-    pub fn merge(self, overlay: Config) -> Config {
-        Config {
-            content: Self::merge_values(self.content, overlay.content),
-            filename: self.filename,
-            separator: self.separator,
-            environment: self.environment,
+    pub fn merge_required(mut self, filename: &str) -> Result<Config, ConfigError> {
+        let yaml = Self::load(filename)?;
+        self.content = Self::merge_values(self.content, yaml);
+        self.overlays.push(OverlaySource::Required(filename.to_string()));
+        Ok(self)
+    }
+
+    /// Merges an optional overlay file into this config, returning a new `Config`.
+    ///
+    /// Values in the overlay take precedence over values in `self`. The merge is deep —
+    /// nested mappings are merged recursively so individual leaf values can be overridden
+    /// without clobbering sibling keys. Sequences are replaced wholesale rather than
+    /// merged element-by-element.
+    ///
+    /// The overlay filename is recorded so that [`reload`](Config::reload) can re-read and
+    /// re-apply it. If the overlay file is missing during a reload, it is silently skipped.
+    /// If the file exists but contains invalid YAML, an error is returned.
+    ///
+    /// # Errors
+    /// Returns `ConfigError::YamlError` if the file exists but contains invalid YAML
+    ///
+    /// # Example
+    /// ```no_run
+    /// # use trail_config::{Config, ConfigError};
+    /// # fn main() -> Result<(), ConfigError> {
+    /// let config = Config::load_required("config.yaml", "/", None)?
+    ///     .merge_required("config.prod.yaml")?
+    ///     .merge_optional("config.local.yaml")?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn merge_optional(mut self, filename: &str) -> Result<Config, ConfigError> {
+        match Self::load(filename) {
+            Ok(yaml) => {
+                self.content = Self::merge_values(self.content, yaml);
+            },
+            Err(ConfigError::IoError(ref e)) if e.kind() == io::ErrorKind::NotFound => {},
+            Err(e) => return Err(e),
         }
+        self.overlays.push(OverlaySource::Optional(filename.to_string()));
+        Ok(self)
     }
 
     fn merge_values(base: Value, overlay: Value) -> Value {
@@ -245,39 +294,62 @@ impl Config {
         }
     }
 
-    /// Reloads the configuration from disk
+    /// Reloads the configuration from disk, re-applying all overlays in order.
     ///
-    /// This allows you to update the config without creating a new Config instance.
-    /// Useful for detecting configuration changes at runtime (hot reload).
+    /// Re-reads the base file and each overlay file that was added via
+    /// [`merge_required`](Config::merge_required) or [`merge_optional`](Config::merge_optional),
+    /// then re-merges them in the original order. Required overlays that are missing will
+    /// return an error; optional overlays that are missing are silently skipped.
     ///
     /// # Returns
-    /// Returns `Ok(())` on success, or `Err(ConfigError)` if the file cannot be read or is invalid YAML
+    /// Returns `Ok(())` on success, or `Err(ConfigError)` if any required file cannot be read or is invalid YAML
     ///
     /// # Errors
     /// Returns `ConfigError::FormatError` if no file path is associated with this config
-    /// Returns `ConfigError::IoError` if the file is missing or cannot be read
-    /// Returns `ConfigError::YamlError` if the YAML cannot be parsed
+    /// Returns `ConfigError::IoError` if the base file or a required overlay is missing or cannot be read
+    /// Returns `ConfigError::YamlError` if any file contains invalid YAML
     ///
     /// # Note
-    /// If reloading fails (e.g. the file contains invalid YAML or has been deleted), the
-    /// existing configuration is preserved unchanged. The error is returned but the config
-    /// remains valid and usable.
+    /// If reloading fails, the existing configuration is preserved unchanged.
     ///
     /// # Example
     /// ```no_run
-    /// # use trail_config::Config;
-    /// let mut config = Config::default();
-    /// // ... use config ...
-    /// // Later, reload updated config from disk
-    /// config.reload().expect("Failed to reload config");
+    /// # use trail_config::{Config, ConfigError};
+    /// # fn main() -> Result<(), ConfigError> {
+    /// let mut config = Config::load_required("config.yaml", "/", None)?
+    ///     .merge_required("config.prod.yaml")?
+    ///     .merge_optional("config.local.yaml")?;
+    /// // Later, reload all files from disk
+    /// config.reload()?;
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn reload(&mut self) -> Result<(), ConfigError> {
         if self.filename.is_empty() {
             return Err(ConfigError::FormatError("Cannot reload: no file path associated with this config".to_string()));
         }
 
-        let yaml = Self::load(&self.filename)?;
-        self.content = yaml;
+        let mut content = Self::load(&self.filename)?;
+
+        for overlay in &self.overlays {
+            match overlay {
+                OverlaySource::Required(filename) => {
+                    let yaml = Self::load(filename)?;
+                    content = Self::merge_values(content, yaml);
+                },
+                OverlaySource::Optional(filename) => {
+                    match Self::load(filename) {
+                        Ok(yaml) => {
+                            content = Self::merge_values(content, yaml);
+                        },
+                        Err(ConfigError::IoError(ref e)) if e.kind() == io::ErrorKind::NotFound => {},
+                        Err(e) => return Err(e),
+                    }
+                },
+            }
+        }
+
+        self.content = content;
         Ok(())
     }
 
@@ -561,7 +633,8 @@ impl Config {
             content: parsed,
             filename: String::new(),
             separator: sep.to_string(),
-            environment: None
+            environment: None,
+            overlays: Vec::new(),
         })
     }
 

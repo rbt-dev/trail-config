@@ -179,6 +179,53 @@ impl Config {
         &self.filename
     }
 
+    /// Merges another `Config` into this one, returning a new `Config`.
+    ///
+    /// Values in `overlay` take precedence over values in `self`. The merge is deep —
+    /// nested mappings are merged recursively so individual leaf values can be overridden
+    /// without clobbering sibling keys. Sequences are replaced wholesale rather than
+    /// merged element-by-element.
+    ///
+    /// The returned `Config` inherits the separator and filename of `self`. Calls can be
+    /// chained to apply multiple overlays in order:
+    ///
+    /// ```no_run
+    /// # use trail_config::{Config, ConfigError};
+    /// # fn main() -> Result<(), ConfigError> {
+    /// let config = Config::load_required("config.yaml", "/", None)?
+    ///     .merge(Config::load_optional("config.prod.yaml", "/", None)?)
+    ///     .merge(Config::load_optional("config.local.yaml", "/", None)?);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn merge(self, overlay: Config) -> Config {
+        Config {
+            content: Self::merge_values(self.content, overlay.content),
+            filename: self.filename,
+            separator: self.separator,
+            environment: self.environment,
+        }
+    }
+
+    fn merge_values(base: Value, overlay: Value) -> Value {
+        match (base, overlay) {
+            (Value::Mapping(mut base_map), Value::Mapping(overlay_map)) => {
+                for (key, overlay_val) in overlay_map {
+                    let merged = match base_map.remove(&key) {
+                        Some(base_val) => Self::merge_values(base_val, overlay_val),
+                        None => overlay_val,
+                    };
+                    base_map.insert(key, merged);
+                }
+                Value::Mapping(base_map)
+            },
+            // A null overlay (e.g. from an empty Config) is a no-op — preserve the base
+            (base, Value::Null(_)) => base,
+            // Sequences are replaced wholesale; all other types are overridden by overlay
+            (_, overlay) => overlay,
+        }
+    }
+
     /// Reloads the configuration from disk
     ///
     /// This allows you to update the config without creating a new Config instance.
@@ -1124,15 +1171,15 @@ app:
 
     #[test]
     fn fmt_strict_with_escaped_separator_in_path() {
-        let yaml = "
+        let yaml = r#"
 sections:
   "db/redis":
     server: 127.0.0.1
     port: 6379
-";
+"#;
         let config = Config::load_yaml(yaml, "/").unwrap();
         // "db/redis" is a key containing a literal slash — escape it in the path
-        let result = config.fmt_strict("{}:{}", "sections/db\/redis/server+port");
+        let result = config.fmt_strict("{}:{}", r"sections/db\/redis/server+port");
 
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), "127.0.0.1:6379");
@@ -1356,9 +1403,9 @@ database:
     fn parse_path_escape_requires_full_separator() {
         // With separator "::", a lone "\:" should NOT be treated as an escaped separator —
         // only the full "\::" should be. Previously this was a known bug.
-        let parts = Config::parse_path("a::b\:c::d", "::");
+        let parts = Config::parse_path(r"a::b\:c::d", "::");
         // "\:" is not a valid escape, backslash kept as-is, ":" is just a literal char
-        assert_eq!(parts, vec!["a", "b\:c", "d"]);
+        assert_eq!(parts, vec!["a", r"b\:c", "d"]);
     }
 
     #[test]
@@ -1493,5 +1540,111 @@ database:
         
         // Cleanup
         fs::remove_file(test_file).ok();
+    }
+
+    #[test]
+    fn merge_overlay_overrides_base() {
+        let base = Config::load_yaml("app:
+  port: 8080
+  debug: false", "/").unwrap();
+        let overlay = Config::load_yaml("app:
+  port: 9090", "/").unwrap();
+        let config = base.merge(overlay);
+
+        assert_eq!(config.str("app/port"), "9090");      // overridden
+        assert_eq!(config.str("app/debug"), "false");    // preserved
+    }
+
+    #[test]
+    fn merge_deep_preserves_siblings() {
+        let base = Config::load_yaml(
+            "db:
+  host: localhost
+  port: 5432
+  name: mydb", "/").unwrap();
+        let overlay = Config::load_yaml(
+            "db:
+  host: prodserver", "/").unwrap();
+        let config = base.merge(overlay);
+
+        assert_eq!(config.str("db/host"), "prodserver");  // overridden
+        assert_eq!(config.str("db/port"), "5432");        // preserved
+        assert_eq!(config.str("db/name"), "mydb");        // preserved
+    }
+
+    #[test]
+    fn merge_adds_new_keys_from_overlay() {
+        let base = Config::load_yaml("app:
+  port: 8080", "/").unwrap();
+        let overlay = Config::load_yaml("app:
+  debug: true", "/").unwrap();
+        let config = base.merge(overlay);
+
+        assert_eq!(config.str("app/port"), "8080");
+        assert_eq!(config.get_bool("app/debug"), Some(true));
+    }
+
+    #[test]
+    fn merge_replaces_sequences_wholesale() {
+        let base = Config::load_yaml("features:
+  - a
+  - b
+  - c", "/").unwrap();
+        let overlay = Config::load_yaml("features:
+  - x
+  - y", "/").unwrap();
+        let config = base.merge(overlay);
+
+        let list = config.list("features");
+        assert_eq!(list, vec!["x", "y"]);  // replaced, not appended
+    }
+
+    #[test]
+    fn merge_with_empty_overlay_is_identity() {
+        let base = Config::load_yaml("app:
+  port: 8080", "/").unwrap();
+        let empty = Config::default();
+        let config = base.merge(empty);
+
+        assert_eq!(config.str("app/port"), "8080");
+    }
+
+    #[test]
+    fn merge_empty_base_with_overlay() {
+        let base = Config::default();
+        let overlay = Config::load_yaml("app:
+  port: 8080", "/").unwrap();
+        let config = base.merge(overlay);
+
+        assert_eq!(config.str("app/port"), "8080");
+    }
+
+    #[test]
+    fn merge_chaining() {
+        let base    = Config::load_yaml("app:
+  port: 8080
+  debug: false
+  name: base", "/").unwrap();
+        let first   = Config::load_yaml("app:
+  port: 9090", "/").unwrap();
+        let second  = Config::load_yaml("app:
+  debug: true", "/").unwrap();
+        let config = base.merge(first).merge(second);
+
+        assert_eq!(config.str("app/port"), "9090");          // from first overlay
+        assert_eq!(config.get_bool("app/debug"), Some(true)); // from second overlay
+        assert_eq!(config.str("app/name"), "base");           // preserved from base
+    }
+
+    #[test]
+    fn merge_preserves_base_separator() {
+        let base    = Config::load_yaml("app:
+  port: 8080", "::").unwrap();
+        let overlay = Config::load_yaml("app:
+  port: 9090", "/").unwrap();
+        let config = base.merge(overlay);
+
+        // Base separator "::" should be preserved
+        assert_eq!(config.str("app::port"), "9090");
     }
 }

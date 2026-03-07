@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - Unreleased
+
+### Added
+- `merge(overlay: Config) -> Config` — deep-merges another config on top of `self`, returning a new `Config`. Overlay values take precedence over base values. Mappings are merged recursively so sibling keys are preserved; sequences are replaced wholesale. The returned config inherits the separator and filename of the base. Calls can be chained: `base.merge(env).merge(local)`.
+
 ## [0.5.0] - Unreleased
 
 ### Fixed

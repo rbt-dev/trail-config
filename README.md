@@ -13,6 +13,7 @@ Supports YAML format (uses [serde_yaml_bw](https://github.com/bourumir-wyngs/ser
 - 📋 Type conversion for strings, numbers, booleans, and sequences
 - 🔐 Escape sequence support for keys containing separators
 - 🔄 Hot reload support for detecting configuration changes at runtime
+- 🔀 Deep merge support for layering environment-specific config overlays
 
 ## Quick Start
 
@@ -433,6 +434,61 @@ let config = Config::load_optional("missing.yaml", "/", None)?;
 assert!(config.str("any/path") == ""); // Graceful fallback
 ```
 
+## Merging Configs
+
+Use `merge()` to layer configs on top of each other. Values in the overlay take precedence
+over the base; nested mappings are merged recursively so sibling keys are preserved.
+Sequences are replaced wholesale. The base config's separator is preserved.
+
+```rust
+use trail_config::Config;
+
+let env = std::env::var("APP_ENV").unwrap_or_else(|_| "development".to_string());
+
+let config = Config::load_required("config.yaml", "/", None)?
+    .merge(Config::load_optional("config.{env}.yaml", "/", Some(&env))?)
+    .merge(Config::load_optional("config.local.yaml", "/", None)?);
+```
+
+Given these files:
+
+```yaml
+# config.yaml (base)
+app:
+  port: 8080
+  debug: false
+  name: myapp
+database:
+  host: localhost
+  port: 5432
+```
+
+```yaml
+# config.prod.yaml (overlay)
+app:
+  debug: false
+database:
+  host: prodserver
+```
+
+```yaml
+# config.local.yaml (optional personal overrides)
+app:
+  debug: true
+```
+
+The merged result will be:
+
+```yaml
+app:
+  port: 8080        # from base
+  debug: true       # from config.local.yaml (last overlay wins)
+  name: myapp       # from base
+database:
+  host: prodserver  # from config.prod.yaml
+  port: 5432        # from base — sibling preserved
+```
+
 ## Real-World Examples
 
 ### Web Server Configuration
@@ -457,11 +513,10 @@ use trail_config::Config;
 use std::env;
 
 let env = env::var("APP_ENV").unwrap_or_else(|_| "development".to_string());
-let config = Config::load_required(
-    "config.{env}.yaml",
-    "/",
-    Some(&env)
-)?;
+
+// Load base config, then merge environment-specific overrides on top
+let config = Config::load_required("config.yaml", "/", None)?
+    .merge(Config::load_optional("config.{env}.yaml", "/", Some(&env))?);
 
 let db_url = config.str_strict("database/url")?;
 let log_level = config.str("logging/level");

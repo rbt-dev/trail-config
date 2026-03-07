@@ -304,10 +304,10 @@ impl Config {
     /// ```
     pub fn reload(&mut self) -> Result<(), ConfigError> {
         if self.filename.is_empty() {
-            return Err(ConfigError::FormatError("Cannot reload: config was loaded from YAML string, not a file".to_string()));
+            return Err(ConfigError::FormatError("Cannot reload: no file path associated with this config".to_string()));
         }
         
-        let yaml = Self::load(&self.filename)?;
+        let yaml = Self::load(&self.filename)?; // early error exception preserves self.content
         self.content = yaml;
         Ok(())
     }
@@ -564,6 +564,67 @@ impl Config {
             Value::Bool(b, _) => Ok(*b),
             _ => Err(ConfigError::FormatError(format!("Value at {} is not a boolean", path)))
         }
+    }
+
+    /// Deserializes a config subtree at the specified path into a typed struct
+    ///
+    /// # Arguments
+    /// * `path` - Path to the node to deserialize (e.g., "database")
+    ///
+    /// # Returns
+    /// Returns `Some(T)` if the path exists and can be deserialized into `T`, `None` otherwise
+    ///
+    /// # Example
+    /// ```
+    /// # use trail_config::Config;
+    /// # use serde::Deserialize;
+    /// # let yaml = "database:\n  host: localhost\n  port: 5432";
+    /// # let config = Config::load_yaml(yaml, "/").unwrap();
+    /// #[derive(Deserialize)]
+    /// struct DatabaseConfig {
+    ///     host: String,
+    ///     port: u16,
+    /// }
+    ///
+    /// let db: Option<DatabaseConfig> = config.get_as("database");
+    /// ```
+    pub fn get_as<T: serde::de::DeserializeOwned>(&self, path: &str) -> Option<T> {
+        self.get_as_strict(path).ok()
+    }
+
+    /// Deserializes a config subtree at the specified path into a typed struct, returning an error if not found or deserialization fails
+    ///
+    /// # Arguments
+    /// * `path` - Path to the node to deserialize (e.g., "database")
+    ///
+    /// # Returns
+    /// Returns `Ok(T)` on success, or `Err(ConfigError)` if the path is missing or deserialization fails
+    ///
+    /// # Errors
+    /// Returns `ConfigError::PathNotFound` if the path does not exist
+    /// Returns `ConfigError::YamlError` if the value cannot be deserialized into `T`
+    ///
+    /// # Example
+    /// ```
+    /// # use trail_config::Config;
+    /// # use serde::Deserialize;
+    /// # let yaml = "database:\n  host: localhost\n  port: 5432";
+    /// # let config = Config::load_yaml(yaml, "/").unwrap();
+    /// #[derive(Deserialize)]
+    /// struct DatabaseConfig {
+    ///     host: String,
+    ///     port: u16,
+    /// }
+    ///
+    /// let db: DatabaseConfig = config.get_as_strict("database").unwrap();
+    /// assert_eq!(db.host, "localhost");
+    /// assert_eq!(db.port, 5432);
+    /// ```
+    pub fn get_as_strict<T: serde::de::DeserializeOwned>(&self, path: &str) -> Result<T, ConfigError> {
+        let value = Self::get_leaf(&self.content, path, &self.separator)
+            .ok_or_else(|| ConfigError::PathNotFound(path.to_string()))?;
+        serde_yaml_bw::from_value(value)
+            .map_err(|e| ConfigError::YamlError(e.to_string()))
     }
 
     /// Formats a string template with values from the config
@@ -1781,5 +1842,81 @@ database:
 
         // Base separator "::" should be preserved
         assert_eq!(config.str("app::port"), "9090");
+    }
+
+    #[test]
+    fn get_as_strict_success() {
+        #[derive(serde::Deserialize, Debug, PartialEq)]
+        struct RedisConfig {
+            server: String,
+            port: u16,
+            key_expiry: u32,
+        }
+
+        let config = Config::load_yaml(YAML, "/").unwrap();
+        let redis: RedisConfig = config.get_as_strict("db/redis").unwrap();
+
+        assert_eq!(redis.server, "127.0.0.1");
+        assert_eq!(redis.port, 6379);
+        assert_eq!(redis.key_expiry, 3600);
+    }
+
+    #[test]
+    fn get_as_strict_path_not_found() {
+        #[derive(serde::Deserialize)]
+        struct Dummy { value: String }
+
+        let config = Config::load_yaml(YAML, "/").unwrap();
+        let result = config.get_as_strict::<Dummy>("db/nonexistent");
+
+        assert!(result.is_err());
+        match result {
+            Err(ConfigError::PathNotFound(_)) => (),
+            _ => panic!("Expected PathNotFound"),
+        }
+    }
+
+    #[test]
+    fn get_as_strict_type_mismatch() {
+        #[derive(serde::Deserialize, Debug)]
+        struct Wrong { totally_made_up_field: String }
+
+        let config = Config::load_yaml(YAML, "/").unwrap();
+        // "db/redis/port" is a scalar, not a mapping — can't deserialize into a struct
+        let result = config.get_as_strict::<Wrong>("db/redis/port");
+
+        assert!(result.is_err());
+        match result {
+            Err(ConfigError::YamlError(_)) => (),
+            _ => panic!("Expected YamlError"),
+        }
+    }
+
+    #[test]
+    fn get_as_lenient_returns_none_on_missing() {
+        #[derive(serde::Deserialize)]
+        struct Dummy { value: String }
+
+        let config = Config::load_yaml(YAML, "/").unwrap();
+        let result = config.get_as::<Dummy>("nonexistent/path");
+
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn get_as_nested_struct() {
+        #[derive(serde::Deserialize, Debug, PartialEq)]
+        struct AppConfig {
+            debug: bool,
+            max_retries: i32,
+            timeout: f64,
+        }
+
+        let config = Config::load_yaml(YAML, "/").unwrap();
+        let app: AppConfig = config.get_as_strict("app").unwrap();
+
+        assert_eq!(app.debug, true);
+        assert_eq!(app.max_retries, 5);
+        assert!((app.timeout - 2.5).abs() < 0.001);
     }
 }

@@ -15,6 +15,7 @@ Supports YAML format (uses [serde_yaml_bw](https://github.com/bourumir-wyngs/ser
 - 🔄 Hot reload support for detecting configuration changes at runtime
 - 🔀 Deep merge support for layering environment-specific config overlays
 - 🆕 Auto-create config files from in-code defaults on first run
+- 🏗️ Struct deserialization — map any config subtree directly into a typed Rust struct
 
 ## Quick Start
 
@@ -112,6 +113,7 @@ Lenient methods return `None` or empty values for missing paths or type mismatch
 - `get_int(path)` → `Option<i64>` - Get integer value
 - `get_float(path)` → `Option<f64>` - Get floating-point value
 - `get_bool(path)` → `Option<bool>` - Get boolean value
+- `get_as<T>(path)` → `Option<T>` - Deserialize subtree into a typed struct
 
 ### Formatting
 
@@ -138,6 +140,7 @@ Strict methods return `Result<T, ConfigError>` for explicit error handling.
 - `get_int_strict(path)` - Get integer, fails with `PathNotFound` or `FormatError` on type mismatch
 - `get_float_strict(path)` - Get float, fails with `PathNotFound` or `FormatError` on type mismatch
 - `get_bool_strict(path)` - Get boolean, fails with `PathNotFound` or `FormatError` on type mismatch
+- `get_as_strict<T>(path)` - Deserialize subtree into a typed struct, fails with `PathNotFound` or `YamlError`
 
 ## Type Conversion
 
@@ -478,6 +481,57 @@ database:
   port: 5432
 "#;
 ```
+
+## Struct Deserialization
+
+Use `get_as` or `get_as_strict` to deserialize an entire config subtree directly into a typed Rust struct. This is more concise than reading fields one by one, and lets the compiler verify you haven't missed any required fields.
+
+Any struct that derives `serde::Deserialize` can be used:
+
+```rust
+use serde::Deserialize;
+use trail_config::Config;
+
+#[derive(Deserialize)]
+struct DatabaseConfig {
+    host: String,
+    port: u16,
+    username: String,
+    password: String,
+}
+
+#[derive(Deserialize)]
+struct AppConfig {
+    port: u16,
+    debug: bool,
+    timeout: f64,
+}
+
+let config = Config::load_required("config.yaml", "/", None)?;
+
+// Lenient — returns None if path is missing or struct doesn't match
+let db: Option<DatabaseConfig> = config.get_as("database");
+
+// Strict — returns a descriptive error on failure
+let app: AppConfig = config.get_as_strict("app")?;
+```
+
+Sample YAML:
+
+```yaml
+app:
+  port: 8080
+  debug: false
+  timeout: 30.0
+
+database:
+  host: localhost
+  port: 5432
+  username: admin
+  password: secret
+```
+
+`get_as_strict` returns `PathNotFound` if the path doesn't exist, or `YamlError` if the subtree can't be deserialized into `T` (e.g. a required field is missing or has the wrong type).
 
 ## Merging Configs
 

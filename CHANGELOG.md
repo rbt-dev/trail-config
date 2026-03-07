@@ -17,9 +17,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `fmt_strict` (and `fmt`) now use `parse_path` for path traversal instead of a raw `split`, so escaped separators in path segments work correctly.
 
 ### Added
+- `load_optional(filename, sep, env)` — a new public constructor for loading optional config files. Returns `Ok` with an empty config if the file is not found, but still returns `Err` for other failures (invalid YAML, permission denied, bad separator) so that a present-but-broken config file is not silently ignored. Replaces the former `Config::new`.
 - `load_or_create(filename, sep, env, defaults)` — loads a config file if it exists, or writes the provided default YAML string to disk and returns it as the active config if it doesn't. The defaults string is written as-is, preserving formatting and comments. If the file exists its content is used and the defaults are discarded entirely. Errors on invalid YAML in either the file or the defaults string, or on write failure.
 - `merge(overlay: Config) -> Config` — deep-merges another config on top of `self`, returning a new `Config`. Overlay values take precedence over base values. Mappings are merged recursively so sibling keys are preserved; sequences are replaced wholesale. The returned config inherits the separator and filename of the base. Calls can be chained: `base.merge(env).merge(local)`.
-- `load_optional(filename, sep, env)` — a new public constructor for loading optional config files. Returns `Ok` with an empty config if the file is not found, but still returns `Err` for other failures (invalid YAML, permission denied, bad separator) so that a present-but-broken config file is not silently ignored. Replaces the former `Config::new`.
+- `get_as<T>(path)` — deserializes a config subtree at the given path into any `T: DeserializeOwned`, returning `None` on missing path or deserialization failure
+- `get_as_strict<T>(path)` — same as `get_as` but returns `Result<T, ConfigError>`, with `PathNotFound` if the path is missing or `YamlError` if deserialization fails
+- `serde` added as an explicit dependency (with `derive` feature) so users can use `#[derive(Deserialize)]` without adding `serde` themselves
 - Regression test `parse_path_escape_requires_full_separator` covering the multi-character separator escape bug
 - Test `fmt_strict_with_escaped_separator_in_path` covering escaped separators in `fmt` paths
 

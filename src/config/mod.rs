@@ -391,6 +391,7 @@ impl Config {
         let yaml = Self::load(filename)?;
         self.filename = filename.to_string();
         self.content = yaml;
+        self.overlays.clear();
         Ok(())
     }
 

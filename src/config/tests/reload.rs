@@ -227,3 +227,42 @@ fn reload_fails_if_required_overlay_deleted() {
 
     fs::remove_file(base_file).ok();
 }
+
+#[test]
+fn reload_from_does_not_reapply_stale_overlays() {
+    use std::fs::{self, File};
+    use std::io::Write;
+
+    let base = "test_reload_from_base.yaml";
+    let overlay = "test_reload_from_overlay.yaml";
+    let new_file = "test_reload_from_new.yaml";
+
+    let mut f = File::create(base).unwrap();
+    writeln!(f, "app:\n  port: 8080").unwrap();
+    drop(f);
+
+    let mut f = File::create(overlay).unwrap();
+    writeln!(f, "app:\n  port: 9999").unwrap();
+    drop(f);
+
+    let mut f = File::create(new_file).unwrap();
+    writeln!(f, "app:\n  port: 3000").unwrap();
+    drop(f);
+
+    // Load base, merge overlay that overrides port to 9999
+    let mut config = Config::load_required(base, "/", None).unwrap()
+        .merge_required(overlay, None).unwrap();
+    assert_eq!(config.str("app/port"), "9999");
+
+    // Switch to a completely different file
+    config.reload_from(new_file).unwrap();
+    assert_eq!(config.str("app/port"), "3000");
+
+    // Now reload() should NOT re-apply the old overlay on top of new_file
+    config.reload().unwrap();
+    assert_eq!(config.str("app/port"), "3000");
+
+    fs::remove_file(base).ok();
+    fs::remove_file(overlay).ok();
+    fs::remove_file(new_file).ok();
+}

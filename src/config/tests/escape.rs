@@ -70,8 +70,6 @@ database:
   port: 1234
 ";
     let config = Config::load_yaml(yaml, "→").unwrap();
-    println!("TEEEEEEEST!");
-    println!("{:?}", config.str("database→port"));
     assert_eq!(config.str("database→port"), "1234");
 }
 

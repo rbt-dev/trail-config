@@ -790,7 +790,7 @@ impl Config {
                 }
             } else if ch == sep_first_char {
                 let remaining: String = chars.clone().collect();
-                let expected_rest = &separator[1..];
+                let expected_rest = &separator[sep_first_char.len_utf8()..];
                 if remaining.starts_with(expected_rest) {
                     parts.push(current.clone());
                     current.clear();

@@ -61,6 +61,21 @@ database:
 }
 
 #[test]
+fn multibyte_separator_does_not_panic() {
+    // '→' is a 3-byte UTF-8 character (E2 86 92).
+    // parse_path uses &separator[1..] which is a byte slice —
+    // slicing at byte 1 lands inside the multi-byte character and panics.
+    let yaml = "
+database:
+  port: 1234
+";
+    let config = Config::load_yaml(yaml, "→").unwrap();
+    println!("TEEEEEEEST!");
+    println!("{:?}", config.str("database→port"));
+    assert_eq!(config.str("database→port"), "1234");
+}
+
+#[test]
 fn parse_path_basic() {
     let parts = Config::parse_path("a/b/c", "/");
     assert_eq!(parts, vec!["a", "b", "c"]);

@@ -26,3 +26,9 @@ impl From<io::Error> for ConfigError {
         ConfigError::IoError(err)
     }
 }
+
+impl From<yaml_serde::Error> for ConfigError {
+    fn from(err: yaml_serde::Error) -> Self {
+        ConfigError::YamlError(err.to_string())
+    }
+}

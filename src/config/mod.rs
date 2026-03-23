@@ -699,8 +699,7 @@ impl Config {
             return Err(ConfigError::FormatError("Separator cannot be empty".to_string()));
         }
 
-        let parsed = from_str(yaml)
-            .map_err(|e| ConfigError::YamlError(e.to_string()))?;
+        let parsed = from_str(yaml)?;
 
         Ok(Config {
             content: parsed,
@@ -831,8 +830,7 @@ impl Config {
 
     fn load(filename: &str) -> Result<Value, ConfigError> {
         let yaml = fs::read_to_string(filename)?;
-        let parsed = from_str(&yaml)
-            .map_err(|e| ConfigError::YamlError(e.to_string()))?;
+        let parsed = from_str(&yaml)?;
         Ok(parsed)
     }
 

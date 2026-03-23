@@ -190,6 +190,17 @@ match config.str_strict("database/host") {
     Err(e) => eprintln!("Config error: {}", e),
 }
 
+match config.str_strict("database") {
+    Ok(value) => println!("Database: {}", value),
+    Err(ConfigError::FormatError(msg)) => {
+        eprintln!("Not a scalar: {}", msg);
+    }
+    Err(ConfigError::PathNotFound(path)) => {
+        eprintln!("Not found: {}", path);
+    }
+    Err(e) => eprintln!("Unexpected error: {}", e),
+}
+
 match config.get_int_strict("app/port") {
     Ok(port) => println!("Port: {}", port),
     Err(ConfigError::FormatError(msg)) => {

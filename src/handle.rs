@@ -253,3 +253,11 @@ app:
         for t in threads { t.join().unwrap(); }
     }
 }
+
+#[cfg(test)]
+const _: () = {
+    fn _assert_send_sync<T: Send + Sync>() {}
+    fn _check() {
+        _assert_send_sync::<ConfigHandle>();
+    }
+};

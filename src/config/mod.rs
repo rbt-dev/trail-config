@@ -1,5 +1,5 @@
 use std::{fs, io};
-use serde_yaml_bw::{Value, from_str};
+use yaml_serde::{Value, from_str};
 use crate::error::ConfigError;
 
 #[derive(Debug, Clone)]
@@ -34,7 +34,7 @@ impl Default for Config {
     fn default() -> Self {
         Self::load_optional("config.yaml", "/", None)
             .unwrap_or_else(|_| Config {
-                content: Value::Null(None),
+                content: Value::Null,
                 filename: String::new(),
                 separator: "/".to_string(),
                 environment: None,
@@ -117,7 +117,7 @@ impl Config {
             Ok(config) => Ok(config),
             Err(ConfigError::IoError(ref e)) if e.kind() == io::ErrorKind::NotFound => {
                 Ok(Config {
-                    content: Value::Null(None),
+                    content: Value::Null,
                     filename: String::new(),
                     separator: sep.to_string(),
                     environment: env.map(|s| s.to_string()),
@@ -300,7 +300,7 @@ impl Config {
                 Value::Mapping(base_map)
             },
             // A null overlay (e.g. from an empty Config) is a no-op — preserve the base
-            (base, Value::Null(_)) => base,
+            (base, Value::Null) => base,
             // Sequences are replaced wholesale; all other types are overridden by overlay
             (_, overlay) => overlay,
         }
@@ -504,7 +504,7 @@ impl Config {
             .ok_or_else(|| ConfigError::PathNotFound(path.to_string()))?;
 
         match &value {
-            Value::Number(num, _) => {
+            Value::Number(num) => {
                 num.as_i64()
                     .ok_or_else(|| ConfigError::FormatError(format!("Cannot convert {} to i64", num)))
             },
@@ -532,7 +532,7 @@ impl Config {
             .ok_or_else(|| ConfigError::PathNotFound(path.to_string()))?;
 
         match &value {
-            Value::Number(num, _) => {
+            Value::Number(num) => {
                 num.as_f64()
                     .ok_or_else(|| ConfigError::FormatError(format!("Cannot convert {} to f64", num)))
             },
@@ -560,7 +560,7 @@ impl Config {
             .ok_or_else(|| ConfigError::PathNotFound(path.to_string()))?;
 
         match &value {
-            Value::Bool(b, _) => Ok(*b),
+            Value::Bool(b) => Ok(*b),
             _ => Err(ConfigError::FormatError(format!("Value at {} is not a boolean", path)))
         }
     }
@@ -610,7 +610,7 @@ impl Config {
     pub fn get_as_strict<T: serde::de::DeserializeOwned>(&self, path: &str) -> Result<T, ConfigError> {
         let value = Self::get_leaf(&self.content, path, &self.separator)
             .ok_or_else(|| ConfigError::PathNotFound(path.to_string()))?;
-        serde_yaml_bw::from_value(value)
+        yaml_serde::from_value(value)
             .map_err(|e| ConfigError::YamlError(e.to_string()))
     }
 
@@ -664,7 +664,7 @@ impl Config {
     /// assert_eq!(cfg.database.host, "localhost");
     /// ```
     pub fn deserialize_strict<T: serde::de::DeserializeOwned>(&self) -> Result<T, ConfigError> {
-        serde_yaml_bw::from_value(self.content.clone())
+        yaml_serde::from_value(self.content.clone())
             .map_err(|e| ConfigError::YamlError(e.to_string()))
     }
 
@@ -831,9 +831,9 @@ impl Config {
 
     fn to_string(value: &Value) -> String {
         match value {
-            Value::String(v, _) => v.to_string(),
-            Value::Number(v, _) => v.to_string(),
-            Value::Bool(v, _) => v.to_string(),
+            Value::String(v) => v.to_string(),
+            Value::Number(v) => v.to_string(),
+            Value::Bool(v) => v.to_string(),
             _ => String::new()
         }
     }

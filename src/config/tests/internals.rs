@@ -1,4 +1,4 @@
-use serde_yaml_bw::{Value, from_str, Number};
+use yaml_serde::{Value, from_str, Number};
 use super::{Config, ConfigError, YAML};
 
 #[test]
@@ -7,7 +7,7 @@ fn get_leaf_test() {
     let value1 = Config::get_leaf(&parsed, "db/redis/port", "/");
     let value2 = Config::get_leaf(&parsed, "db/redis/username", "/");
 
-    assert_eq!(value1, Some(Value::Number(Number::from(6379), None)));
+    assert_eq!(value1, Some(Value::Number(Number::from(6379))));
     assert_eq!(value2, None);
 }
 

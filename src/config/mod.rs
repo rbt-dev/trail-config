@@ -1,4 +1,4 @@
-use std::{fs, io};
+use std::{env, fs, io};
 use yaml_serde::{Value, from_str};
 use crate::error::ConfigError;
 
@@ -188,7 +188,7 @@ impl Config {
 
         match Self::load(&file) {
             Ok(yaml) => Ok(Config {
-                content: yaml,
+                content: Self::resolve_env_vars(yaml)?,
                 filename: file,
                 separator: sep.to_string(),
                 environment: env,
@@ -240,7 +240,7 @@ impl Config {
     pub fn merge_required(mut self, filename: &str, env: Option<&str>) -> Result<Config, ConfigError> {
         let (file, _) = Self::get_file(filename, env)?;
         let yaml = Self::load(&file)?;
-        self.content = Self::merge_values(self.content, yaml);
+        self.content = Self::resolve_env_vars(Self::merge_values(self.content, yaml))?;
         self.overlays.push(OverlaySource::Required(file));
         Ok(self)
     }
@@ -278,7 +278,7 @@ impl Config {
         let (file, _) = Self::get_file(filename, env)?;
         match Self::load(&file) {
             Ok(yaml) => {
-                self.content = Self::merge_values(self.content, yaml);
+                self.content = Self::resolve_env_vars(Self::merge_values(self.content, yaml))?;
             },
             Err(ConfigError::IoError(ref e)) if e.kind() == io::ErrorKind::NotFound => {},
             Err(e) => return Err(e),
@@ -342,7 +342,7 @@ impl Config {
         }
 
         let mut content = Self::load(&self.filename)?;
-
+        
         for overlay in &self.overlays {
             match overlay {
                 OverlaySource::Required(filename) => {
@@ -361,7 +361,7 @@ impl Config {
             }
         }
 
-        self.content = content;
+        self.content = Self::resolve_env_vars(content)?;
         Ok(())
     }
 
@@ -390,7 +390,7 @@ impl Config {
     pub fn reload_from(&mut self, filename: &str) -> Result<(), ConfigError> {
         let yaml = Self::load(filename)?;
         self.filename = filename.to_string();
-        self.content = yaml;
+        self.content = Self::resolve_env_vars(yaml)?;
         self.overlays.clear();
         Ok(())
     }
@@ -702,7 +702,7 @@ impl Config {
         let parsed = from_str(yaml)?;
 
         Ok(Config {
-            content: parsed,
+            content: Self::resolve_env_vars(parsed)?,
             filename: String::new(),
             separator: sep.to_string(),
             environment: None,
@@ -850,6 +850,83 @@ impl Config {
             Value::Bool(v) => Ok(v.to_string()),
             _ => Err(ConfigError::FormatError(format!("Value at {} is not a scalar", path)))
         }
+    }
+
+    /// Recursively walks the Value tree and resolves `${VAR}` and `${VAR:-default}`
+    /// placeholders in all string values using environment variables.
+    fn resolve_env_vars(value: Value) -> Result<Value, ConfigError> {
+        match value {
+            Value::String(s) => {
+                let resolved = Self::resolve_env_string(&s)?;
+                Ok(Value::String(resolved))
+            },
+            Value::Mapping(map) => {
+                let mut resolved_map = yaml_serde::Mapping::new();
+                for (k, v) in map {
+                    resolved_map.insert(k, Self::resolve_env_vars(v)?);
+                }
+                Ok(Value::Mapping(resolved_map))
+            },
+            Value::Sequence(seq) => {
+                let resolved_seq: Result<Vec<Value>, ConfigError> =
+                    seq.into_iter().map(Self::resolve_env_vars).collect();
+                Ok(Value::Sequence(resolved_seq?))
+            },
+            other => Ok(other),
+        }
+    }
+
+    /// Resolves all `${VAR}` and `${VAR:-default}` placeholders in a single string.
+    fn resolve_env_string(input: &str) -> Result<String, ConfigError> {
+        let mut result = String::with_capacity(input.len());
+        let mut chars = input.chars().peekable();
+
+        while let Some(ch) = chars.next() {
+            if ch == '$' && chars.peek() == Some(&'{') {
+                chars.next(); // consume '{'
+                let mut placeholder = String::new();
+                let mut found_close = false;
+
+                for c in chars.by_ref() {
+                    if c == '}' {
+                        found_close = true;
+                        break;
+                    }
+                    placeholder.push(c);
+                }
+
+                if !found_close {
+                    return Err(ConfigError::FormatError(
+                        format!("Unclosed env var placeholder in: {}", input)
+                    ));
+                }
+
+                let (var_name, default) = match placeholder.find(":-") {
+                    Some(pos) => (&placeholder[..pos], Some(&placeholder[pos + 2..])),
+                    None => (placeholder.as_str(), None),
+                };
+
+                if var_name.is_empty() {
+                    return Err(ConfigError::FormatError(
+                        format!("Empty env var name in: {}", input)
+                    ));
+                }
+
+                match env::var(var_name) {
+                    Ok(val) => result.push_str(&val),
+                    Err(_) => match default {
+                        Some(d) => result.push_str(d),
+                        None => return Err(ConfigError::FormatError(
+                            format!("Environment variable '{}' is not set and no default provided", var_name)
+                        )),
+                    }
+                }
+            } else {
+                result.push(ch);
+            }
+        }
+
+        Ok(result)
     }
 }
 

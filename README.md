@@ -635,6 +635,44 @@ database:
   port: 5432        # from base — sibling preserved
 ```
 
+## Environment Variable Interpolation
+
+Trail Config resolves `${VAR}` placeholders in YAML string values at load time using environment variables. Placeholders can include a default value with `${VAR:-default}`.
+```yaml
+# config.yaml
+database:
+  host: ${DB_HOST:-localhost}
+  port: 5432
+  password: ${DB_PASSWORD}
+app:
+  url: ${APP_PROTO:-https}://${APP_DOMAIN}/api
+```
+```rust
+use trail_config::Config;
+
+// If DB_HOST=prodserver and DB_PASSWORD=secret are set:
+let config = Config::load_required("config.yaml", "/", None)?;
+assert_eq!(config.str("database/host"), "prodserver");
+assert_eq!(config.str("database/password"), "secret");
+assert_eq!(config.str("app/url"), "https://example.com/api");
+```
+
+### Syntax
+
+| Pattern | Behaviour |
+|---|---|
+| `${VAR}` | Replaced with the value of `VAR`. Error if not set. |
+| `${VAR:-default}` | Replaced with the value of `VAR`, or `default` if not set. |
+| `$VAR` | Not a placeholder — left as-is. |
+
+### Resolution timing
+
+Environment variables are resolved at load time and re-resolved on every `reload()` call. This means changes to environment variables are picked up when the config is reloaded.
+
+### Error handling
+
+If a placeholder references an unset variable and no default is provided, loading returns a `ConfigError::FormatError`. Unclosed placeholders (`${VAR`) and empty variable names (`${:-default}`) also return errors.
+
 ## Auto-Creating Config Files
 
 Use `load_or_create` to handle first-run scenarios where no config file exists yet.

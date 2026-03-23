@@ -7,6 +7,7 @@ A Rust library for reading YAML config files with path-based access, typed and s
 - 📖 Simple path-based config value access
 - 🔧 Customizable path separators (`/`, `::`, etc.)
 - 🌍 Environment-specific config files
+- 🌐 Environment variable interpolation with defaults (`${VAR}`, `${VAR:-default}`)
 - 📝 String formatting and interpolation
 - ✅ Comprehensive error handling with custom `ConfigError` type
 - 📋 Type conversion for strings, numbers, booleans, and sequences
@@ -16,6 +17,7 @@ A Rust library for reading YAML config files with path-based access, typed and s
 - 🔀 Deep merge support for layering environment-specific config overlays
 - 🆕 Auto-create config files from in-code defaults on first run
 - 🧵 Thread-safe `ConfigHandle` for sharing config across threads
+- ⚡ `config!` macro for concise loading and merging
 
 ## Quick Start
 

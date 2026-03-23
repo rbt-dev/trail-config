@@ -88,6 +88,34 @@ Use `Config::load_yaml()` to load configuration directly from a string rather th
 let config = Config::load_yaml("app:\n  port: 8080", "/")?;
 ```
 
+### Using the `config!` macro
+
+The `config!` macro provides a concise syntax for loading and merging configs:
+```rust
+use trail_config::config;
+
+// Minimal
+let config = config!("config.yaml")?;
+
+// With custom separator
+let config = config!("config.yaml", sep: "::")?;
+
+// With environment
+let config = config!("config.{env}.yaml", env: "prod")?;
+
+// With merges
+let config = config!("config.yaml", merge: ["config.prod.yaml"])?;
+
+// Full syntax
+let config = config! {
+    file: "config.yaml",
+    sep: "/",
+    env: "prod",
+    merge: ["config.{env}.yaml"],
+    merge_optional: ["config.local.yaml"],
+}?;
+```
+
 ## API Overview
 
 Trail Config organizes methods into two styles. Every method has both a lenient and a strict variant:

@@ -4,6 +4,7 @@ mod escape;
 mod formatting;
 mod internals;
 mod loading;
+mod macros;
 mod merge;
 mod reload;
 mod structs;

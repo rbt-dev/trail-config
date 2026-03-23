@@ -237,6 +237,7 @@ impl Config {
     /// # Ok(())
     /// # }
     /// ```
+    #[must_use]
     pub fn merge_required(mut self, filename: &str, env: Option<&str>) -> Result<Config, ConfigError> {
         let (file, _) = Self::get_file(filename, env)?;
         let yaml = Self::load(&file)?;
@@ -274,6 +275,7 @@ impl Config {
     /// # Ok(())
     /// # }
     /// ```
+    #[must_use]
     pub fn merge_optional(mut self, filename: &str, env: Option<&str>) -> Result<Config, ConfigError> {
         let (file, _) = Self::get_file(filename, env)?;
         match Self::load(&file) {

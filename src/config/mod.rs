@@ -466,7 +466,7 @@ impl Config {
     pub fn str_strict(&self, path: &str) -> Result<String, ConfigError> {
         let value = Self::get_leaf(&self.content, path, &self.separator)
             .ok_or_else(|| ConfigError::PathNotFound(path.to_string()))?;
-        Ok(Self::to_string(&value))
+        Self::to_string_strict(&value, path)
     }
 
     /// Gets a value as a list of strings at the specified path, returning an error if not found
@@ -836,6 +836,15 @@ impl Config {
             Value::Number(v) => v.to_string(),
             Value::Bool(v) => v.to_string(),
             _ => String::new()
+        }
+    }
+
+    fn to_string_strict(value: &Value, path: &str) -> Result<String, ConfigError> {
+        match value {
+            Value::String(v) => Ok(v.to_string()),
+            Value::Number(v) => Ok(v.to_string()),
+            Value::Bool(v) => Ok(v.to_string()),
+            _ => Err(ConfigError::FormatError(format!("Value at {} is not a scalar", path)))
         }
     }
 

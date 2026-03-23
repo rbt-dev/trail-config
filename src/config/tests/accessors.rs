@@ -193,6 +193,32 @@ fn str_strict_not_found() {
 }
 
 #[test]
+fn str_strict_errors_on_non_scalar() {
+    let yaml = "
+app:
+  port: 8080
+nested:
+  child:
+    key: value
+items:
+  - one
+  - two
+";
+    let config = Config::load_yaml(yaml, "/").unwrap();
+
+    // Scalar should work fine
+    assert!(config.str_strict("app/port").is_ok());
+
+    // A mapping should return an error, not Ok("")
+    let result = config.str_strict("nested/child");
+    assert!(result.is_err(), "Expected error for mapping, got: {:?}", result);
+
+    // A sequence should return an error, not Ok("")
+    let result = config.str_strict("items");
+    assert!(result.is_err(), "Expected error for sequence, got: {:?}", result);
+}
+
+#[test]
 fn list_strict_found() {
     let config = Config::load_yaml(YAML, "/").unwrap();
     let result = config.list_strict("sources");

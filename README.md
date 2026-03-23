@@ -1,6 +1,6 @@
 # Trail Config
 
-A Rust library for reading YAML config files with path-based access, typed and struct deserialization, environment-specific overlays, deep merging, and hot reload support. Uses [yaml_serde](https://github.com/yaml/yaml-serde) for YAML parsing.
+A Rust library for reading config files with path-based access, typed deserialization, environment overlays, deep merging, env variable interpolation, and hot reload support.
 
 ## Features
 

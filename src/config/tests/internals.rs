@@ -40,12 +40,3 @@ fn to_string_test() {
 
     assert_eq!(str_value, "6379");
 }
-
-#[test]
-fn to_list_test() {
-    let parsed: Value = from_str(YAML).unwrap();
-    let value = Config::get_leaf(&parsed, "sources", "/").unwrap();
-    let list = Config::to_list(&value);
-
-    assert_eq!(list, vec!["one", "two", "three"]);
-}

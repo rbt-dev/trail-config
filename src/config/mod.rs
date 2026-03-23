@@ -425,7 +425,10 @@ impl Config {
     /// # Returns
     /// Returns a `Vec<String>` with the sequence elements, or empty vec if not found or not a sequence
     pub fn list(&self, path: &str) -> Vec<String> {
-        self.list_strict(path).unwrap_or_else(|_| vec![])
+        match Self::get_leaf(&self.content, path, &self.separator) {
+            Some(Value::Sequence(v)) => v.iter().map(Self::to_string).collect(),
+            _ => vec![]
+        }
     }
 
     /// Checks if a path exists in the configuration
@@ -482,7 +485,10 @@ impl Config {
     pub fn list_strict(&self, path: &str) -> Result<Vec<String>, ConfigError> {
         let value = Self::get_leaf(&self.content, path, &self.separator)
             .ok_or_else(|| ConfigError::PathNotFound(path.to_string()))?;
-        Ok(Self::to_list(&value))
+        match &value {
+            Value::Sequence(v) => Ok(v.iter().map(Self::to_string).collect()),
+            _ => Err(ConfigError::FormatError(format!("Value at {} is not a sequence", path)))
+        }
     }
 
     /// Gets a value as an integer at the specified path
@@ -845,13 +851,6 @@ impl Config {
             Value::Number(v) => Ok(v.to_string()),
             Value::Bool(v) => Ok(v.to_string()),
             _ => Err(ConfigError::FormatError(format!("Value at {} is not a scalar", path)))
-        }
-    }
-
-    fn to_list(value: &Value) -> Vec<String> {
-        match value {
-            Value::Sequence(v) => v.iter().map(Self::to_string).collect::<Vec<String>>(),
-            _ => vec![]
         }
     }
 }

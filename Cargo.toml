@@ -3,10 +3,10 @@ name = "trail-config"
 version = "0.4.0"
 edition = "2021"
 authors = ["Robert Lampreht <robert.lampreht@gmail.com>"]
-description = "A Rust library for reading YAML config files with path-based access, typed and struct deserialization, environment-specific overlays, deep merging, and hot reload support"
+description = "A Rust library for reading config files with path-based access, typed deserialization, environment overlays, deep merging, env variable interpolation, and hot reload support."
 readme = "README.md"
-keywords = ["config", "yaml", "deserialize", "merge", "hot-reload"]
-categories = ["config", "parsing", "filesystem", "encoding"]
+keywords = ["config", "yaml", "deserialize", "merge", "env", "hot-reload"]
+categories = ["config", "parsing", "filesystem", "development-tools"]
 license = "MIT"
 repository = "https://github.com/rbt-dev/trail-config.git"
 

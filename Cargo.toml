@@ -16,8 +16,10 @@ path = "src/lib.rs"
 
 [features]
 json = ["serde_json"]
+toml = ["dep:toml"]
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", optional = true }
+toml = { version = "0.9", optional = true }
 yaml_serde = "0.10"

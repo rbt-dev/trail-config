@@ -28,7 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `load_optional(filename, sep, env)` — a new public constructor for loading optional config files. Returns `Ok` with an empty config if the file is not found, but still returns `Err` for other failures (invalid YAML/JSON, permission denied, bad separator) so that a present-but-broken config file is not silently ignored. Replaces the former `Config::new`.
+- `load_optional(filename, sep, env)` — a new public constructor for loading optional config files. Returns `Ok` with an empty config if the file is not found, but still returns `Err` for other failures (invalid YAML/JSON/TOML, permission denied, bad separator) so that a present-but-broken config file is not silently ignored. Replaces the former `Config::new`.
 - `load_or_create(filename, sep, env, defaults)` — loads a config file if it exists, or writes the provided default YAML string to disk and returns it as the active config if it doesn't. The defaults string is written as-is, preserving formatting and comments. If the file exists its content is used and the defaults are discarded entirely. Errors on invalid YAML in either the file or the defaults string, or on write failure.
 - `merge_required(filename: &str, env: Option<&str>) -> Result<Config, ConfigError>` — deep-merges an overlay file on top of `self`. Accepts an optional `{env}` placeholder in the filename, consistent with the load methods. The resolved filename is recorded; if the file is missing during a `reload()` an error is returned.
 - `merge_optional(filename: &str, env: Option<&str>) -> Result<Config, ConfigError>` — same as `merge_required` but silently skips the overlay if the file is missing, both at merge time and during `reload()`. Returns `Err` if the file exists but cannot be parsed.
@@ -54,6 +54,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `#[must_use]` on `merge_required` and `merge_optional` to prevent silently discarding the merged result.
 - JSON config file support behind the `json` feature flag. Auto-detected by `.json` extension in `load_required`/`load_optional`/`load_or_create`, or loaded explicitly with `load_json(str, sep)` and `load_json_file(filename, sep)`. JSON overlays work with `merge_required`/`merge_optional` and are handled correctly on `reload()`.
 - `ConfigError::JsonError` variant for JSON-specific parse errors.
+- TOML config file support behind the `toml` feature flag. Auto-detected by `.toml` extension in `load_required`/`load_optional`/`load_or_create`, or loaded explicitly with `load_toml(str, sep)` and `load_toml_file(filename, sep)`. TOML overlays work with `merge_required`/`merge_optional` and are handled correctly on `reload()`.
+- `ConfigError::TomlError` variant for TOML-specific parse errors.
 
 ### Removed
 

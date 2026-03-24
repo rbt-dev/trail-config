@@ -6,6 +6,9 @@ mod yaml;
 #[cfg(feature = "json")]
 mod json;
 
+#[cfg(feature = "toml")]
+mod toml;
+
 #[derive(Debug, Clone)]
 enum OverlaySource {
     Required(String),
@@ -63,7 +66,7 @@ impl Config {
     ///
     /// # Errors
     /// Returns `ConfigError::IoError` if the file is missing, empty filename, or cannot be read
-    /// Returns `ConfigError::YamlError` or `ConfigError::JsonError` if the file cannot be parsed
+    /// Returns `ConfigError::YamlError`, `ConfigError::JsonError` or `ConfigError::TomlError` if the file cannot be parsed
     /// Returns `ConfigError::FormatError` if the separator is empty or filename template is invalid
     ///
     /// # Example
@@ -85,7 +88,7 @@ impl Config {
     /// Loads a Config from a file, treating a missing file as an empty config.
     ///
     /// Use this when the config file is optional. If the file doesn't exist, returns
-    /// `Ok` with an empty config. If the file *does* exist but is invalid (bad YAML/JSON,
+    /// `Ok` with an empty config. If the file *does* exist but is invalid (bad YAML/JSON/TOML,
     /// permission denied), returns `Err` — a present-but-broken config file is likely
     /// a mistake worth surfacing.
     ///
@@ -101,7 +104,7 @@ impl Config {
     ///
     /// # Errors
     /// Returns `ConfigError::IoError` if the file exists but cannot be read (e.g. permission denied)
-    /// Returns `ConfigError::YamlError` or `ConfigError::JsonError` if the file exists but cannot be parsed
+    /// Returns `ConfigError::YamlError`, `ConfigError::JsonError` or `ConfigError::TomlError` if the file cannot be parsed
     /// Returns `ConfigError::FormatError` if the separator is empty or filename template is invalid
     ///
     /// # Example
@@ -151,7 +154,8 @@ impl Config {
     ///
     /// # Errors
     /// Returns `ConfigError::IoError` if the file exists but cannot be read, or if writing fails
-    /// Returns `ConfigError::YamlError` or `ConfigError::JsonError` if the file cannot be parsed, or `ConfigError::YamlError` if the defaults string contains invalid YAML
+    /// Returns `ConfigError::YamlError`, `ConfigError::JsonError` or `ConfigError::TomlError` if the file cannot be parsed, 
+    ///     or `ConfigError::YamlError` if the defaults string contains invalid YAML
     /// Returns `ConfigError::FormatError` if the separator is empty or filename template is invalid
     ///
     /// # Example
@@ -228,7 +232,7 @@ impl Config {
     ///
     /// # Errors
     /// Returns `ConfigError::IoError` if the file is missing or cannot be read
-    /// Returns `ConfigError::YamlError` or `ConfigError::JsonError` if the file cannot be parsed
+    /// Returns `ConfigError::YamlError`, `ConfigError::JsonError` or `ConfigError::TomlError` if the file cannot be parsed
     /// Returns `ConfigError::FormatError` if the filename template is invalid
     ///
     /// # Example
@@ -266,7 +270,7 @@ impl Config {
     /// * `env` - Optional environment name to substitute in filename
     ///
     /// # Errors
-    /// Returns `ConfigError::YamlError` or `ConfigError::JsonError` if the file exists but cannot be parsed
+    /// Returns `ConfigError::YamlError`, `ConfigError::JsonError` or `ConfigError::TomlError` if the file cannot be parsed
     /// Returns `ConfigError::FormatError` if the filename template is invalid
     ///
     /// # Example
@@ -325,7 +329,7 @@ impl Config {
     /// # Errors
     /// Returns `ConfigError::FormatError` if no file path is associated with this config
     /// Returns `ConfigError::IoError` if the base file or a required overlay is missing or cannot be read
-    /// Returns `ConfigError::YamlError` or `ConfigError::JsonError` if any file cannot be parsed
+    /// Returns `ConfigError::YamlError`, `ConfigError::JsonError` or `ConfigError::TomlError` if any file cannot be parsed
     ///
     /// # Note
     /// If reloading fails, the existing configuration is preserved unchanged.
@@ -384,7 +388,7 @@ impl Config {
     ///
     /// # Errors
     /// Returns `ConfigError::IoError` if the file is missing or cannot be read
-    /// Returns `ConfigError::YamlError` or `ConfigError::JsonError` if the file cannot be parsed
+    /// Returns `ConfigError::YamlError`, `ConfigError::JsonError` or `ConfigError::TomlError` if the file cannot be parsed
     ///
     /// # Example
     /// ```no_run
@@ -775,6 +779,65 @@ impl Config {
         })
     }
 
+    /// Loads a Config from a TOML file, returning an error if the file is missing or invalid.
+    ///
+    /// # Errors
+    /// Returns `ConfigError::IoError` if the file is missing or cannot be read
+    /// Returns `ConfigError::TomlError` if the TOML cannot be parsed
+    /// Returns `ConfigError::FormatError` if the separator is empty
+    ///
+    /// # Example
+    /// ```no_run
+    /// # use trail_config::Config;
+    /// let config = Config::load_toml_file("config.toml", "/")
+    ///     .expect("Failed to load config.toml");
+    /// ```
+    #[cfg(feature = "toml")]
+    pub fn load_toml_file(filename: &str, sep: &str) -> Result<Config, ConfigError> {
+        if sep.is_empty() {
+            return Err(ConfigError::FormatError("Separator cannot be empty".to_string()));
+        }
+
+        let parsed = toml::load_file(filename)?;
+
+        Ok(Config {
+            content: Self::resolve_env_vars(parsed)?,
+            filename: filename.to_string(),
+            separator: sep.to_string(),
+            environment: None,
+            overlays: Vec::new(),
+        })
+    }
+
+    /// Parses a TOML string into a Config object.
+    ///
+    /// # Errors
+    /// Returns `ConfigError::TomlError` if the TOML cannot be parsed
+    /// Returns `ConfigError::FormatError` if the separator is empty
+    ///
+    /// # Example
+    /// ```
+    /// # use trail_config::Config;
+    /// let config = Config::load_toml("[app]\nport = 8080", "/").unwrap();
+    /// assert_eq!(config.get_int("app/port"), Some(8080));
+    /// ```
+    #[cfg(feature = "toml")]
+    pub fn load_toml(toml_str: &str, sep: &str) -> Result<Config, ConfigError> {
+        if sep.is_empty() {
+            return Err(ConfigError::FormatError("Separator cannot be empty".to_string()));
+        }
+
+        let parsed = toml::parse(toml_str)?;
+
+        Ok(Config {
+            content: Self::resolve_env_vars(parsed)?,
+            filename: String::new(),
+            separator: sep.to_string(),
+            environment: None,
+            overlays: Vec::new(),
+        })
+    }
+
     /// Formats a string template with values from the config, returning an error if any value is missing
     ///
     /// # Example
@@ -897,6 +960,11 @@ impl Config {
         #[cfg(feature = "json")]
         if filename.ends_with(".json") {
             return json::load_file(filename);
+        }
+
+        #[cfg(feature = "toml")]
+        if filename.ends_with(".toml") {
+            return toml::load_file(filename);
         }
 
         yaml::load_file(filename)

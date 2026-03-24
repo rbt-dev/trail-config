@@ -10,6 +10,8 @@ mod macros;
 mod merge;
 mod reload;
 mod structs;
+#[cfg(feature = "toml")]
+mod toml;
 
 use super::Config;
 use crate::ConfigError;

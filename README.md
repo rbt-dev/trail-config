@@ -18,6 +18,7 @@ A Rust library for reading config files with path-based access, typed deserializ
 - 🆕 Auto-create config files from in-code defaults on first run
 - 🧵 Thread-safe `ConfigHandle` for sharing config across threads
 - ⚡ `config!` macro for concise loading and merging
+- 📂 JSON and TOML support via optional feature flags
 
 ## Quick Start
 
@@ -57,7 +58,7 @@ Use `Config::load_required()` when the configuration file **must** exist:
 use trail_config::Config;
 
 let config = Config::load_required("config.yaml", "/", None)?;
-// Errors if file is missing, invalid YAML/JSON, or permission denied
+// Errors if file is missing, invalid YAML/JSON/TOML, or permission denied
 ```
 
 ### Optional config
@@ -111,6 +112,29 @@ let config = Config::load_json(r#"{"app": {"port": 8080}}"#, "/")?;
 // Mix YAML base with JSON overlay
 let config = Config::load_required("config.yaml", "/", None)?
     .merge_required("overrides.json", None)?;
+```
+
+### From a TOML file or string (requires `toml` feature)
+
+Enable the `toml` feature in your `Cargo.toml`:
+```toml
+[dependencies]
+trail-config = { version = "0.4", features = ["toml"] }
+```
+
+TOML files are auto-detected by extension:
+```rust
+use trail_config::Config;
+
+// Auto-detected by .toml extension
+let config = Config::load_required("config.toml", "/", None)?;
+
+// Or load explicitly from a string
+let config = Config::load_toml("[app]\nport = 8080", "/")?;
+
+// Mix formats freely
+let config = Config::load_required("config.yaml", "/", None)?
+    .merge_required("overrides.toml", None)?;
 ```
 
 ### Using the `config!` macro
@@ -205,6 +229,7 @@ use trail_config::ConfigError;
 // - IoError(io::Error)       - File I/O errors (missing file, permission denied, etc.)
 // - YamlError(String)        - YAML parsing or deserialization errors
 // - JsonError(String)        - JSON parsing or conversion errors (requires `json` feature)
+// - TomlError(String)        - TOML parsing or conversion errors (requires `toml` feature)
 // - PathNotFound(String)     - Configuration path not found in document
 // - FormatError(String)      - String formatting or configuration errors
 ```
@@ -227,6 +252,9 @@ match Config::load_required("config.yaml", "/", None) {
     },
     Err(ConfigError::JsonError(msg)) => {
         eprintln!("Invalid JSON: {}", msg);
+    },
+    Err(ConfigError::TomlError(msg)) => {
+        eprintln!("Invalid TOML: {}", msg);
     },
     Err(e) => eprintln!("Config error: {}", e),
 }

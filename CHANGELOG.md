@@ -28,10 +28,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `load_optional(filename, sep, env)` — a new public constructor for loading optional config files. Returns `Ok` with an empty config if the file is not found, but still returns `Err` for other failures (invalid YAML, permission denied, bad separator) so that a present-but-broken config file is not silently ignored. Replaces the former `Config::new`.
+- `load_optional(filename, sep, env)` — a new public constructor for loading optional config files. Returns `Ok` with an empty config if the file is not found, but still returns `Err` for other failures (invalid YAML/JSON, permission denied, bad separator) so that a present-but-broken config file is not silently ignored. Replaces the former `Config::new`.
 - `load_or_create(filename, sep, env, defaults)` — loads a config file if it exists, or writes the provided default YAML string to disk and returns it as the active config if it doesn't. The defaults string is written as-is, preserving formatting and comments. If the file exists its content is used and the defaults are discarded entirely. Errors on invalid YAML in either the file or the defaults string, or on write failure.
 - `merge_required(filename: &str, env: Option<&str>) -> Result<Config, ConfigError>` — deep-merges an overlay file on top of `self`. Accepts an optional `{env}` placeholder in the filename, consistent with the load methods. The resolved filename is recorded; if the file is missing during a `reload()` an error is returned.
-- `merge_optional(filename: &str, env: Option<&str>) -> Result<Config, ConfigError>` — same as `merge_required` but silently skips the overlay if the file is missing, both at merge time and during `reload()`. Returns `Err` if the file exists but contains invalid YAML.
+- `merge_optional(filename: &str, env: Option<&str>) -> Result<Config, ConfigError>` — same as `merge_required` but silently skips the overlay if the file is missing, both at merge time and during `reload()`. Returns `Err` if the file exists but cannot be parsed.
 - `deserialize<T>() -> Option<T>` — deserializes the entire config into a typed struct, returning `None` on failure.
 - `deserialize_strict<T>() -> Result<T, ConfigError>` — same as `deserialize` but returns `YamlError` on failure.
 - `get_as<T>(path)` — deserializes a config subtree at the given path into any `T: DeserializeOwned`, returning `None` on missing path or deserialization failure.
@@ -47,11 +47,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - A poisoned lock is recovered transparently via `into_inner()` on both reads and writes — the config data remains valid since `Config::reload()` only commits changes at the very end
 - Regression test `parse_path_escape_requires_full_separator` covering the multi-character separator escape bug.
 - Test `fmt_strict_with_escaped_separator_in_path` covering escaped separators in `fmt` paths.
-- Environment variable interpolation in YAML string values. `${VAR}` is replaced with the variable's value; `${VAR:-default}` falls back to the default if unset. Variables are resolved at load time and re-resolved on `reload()`. Missing variables without a default return `ConfigError::FormatError`.
+- Environment variable interpolation in string values. `${VAR}` is replaced with the variable's value; `${VAR:-default}` falls back to the default if unset. Variables are resolved at load time and re-resolved on `reload()`. Missing variables without a default return `ConfigError::FormatError`.
 - `config!` macro for concise config loading and merging.
 - `From<yaml_serde::Error>` impl for `ConfigError`.
 - Compile-time `Send + Sync` assertion for `ConfigHandle`.
 - `#[must_use]` on `merge_required` and `merge_optional` to prevent silently discarding the merged result.
+- JSON config file support behind the `json` feature flag. Auto-detected by `.json` extension in `load_required`/`load_optional`/`load_or_create`, or loaded explicitly with `load_json(str, sep)` and `load_json_file(filename, sep)`. JSON overlays work with `merge_required`/`merge_optional` and are handled correctly on `reload()`.
+- `ConfigError::JsonError` variant for JSON-specific parse errors.
 
 ### Removed
 

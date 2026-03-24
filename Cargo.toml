@@ -5,7 +5,7 @@ edition = "2021"
 authors = ["Robert Lampreht <robert.lampreht@gmail.com>"]
 description = "A Rust library for reading config files with path-based access, typed deserialization, environment overlays, deep merging, env variable interpolation, and hot reload support."
 readme = "README.md"
-keywords = ["config", "yaml", "deserialize", "merge", "env", "hot-reload"]
+keywords = ["config", "env", "deserialize", "merge", "hot-reload"]
 categories = ["config", "parsing", "filesystem", "development-tools"]
 license = "MIT"
 repository = "https://github.com/rbt-dev/trail-config.git"
@@ -14,6 +14,10 @@ repository = "https://github.com/rbt-dev/trail-config.git"
 name = "trail_config"
 path = "src/lib.rs"
 
+[features]
+json = ["serde_json"]
+
 [dependencies]
 serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", optional = true }
 yaml_serde = "0.10"

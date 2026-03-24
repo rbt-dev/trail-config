@@ -57,7 +57,7 @@ Use `Config::load_required()` when the configuration file **must** exist:
 use trail_config::Config;
 
 let config = Config::load_required("config.yaml", "/", None)?;
-// Errors if file is missing, invalid YAML, or permission denied
+// Errors if file is missing, invalid YAML/JSON, or permission denied
 ```
 
 ### Optional config
@@ -88,6 +88,29 @@ Use `Config::load_yaml()` to load configuration directly from a string rather th
 
 ```rust
 let config = Config::load_yaml("app:\n  port: 8080", "/")?;
+```
+
+### From a JSON file or string (requires `json` feature)
+
+Enable the `json` feature in your `Cargo.toml`:
+```toml
+[dependencies]
+trail-config = { version = "0.4", features = ["json"] }
+```
+
+JSON files are auto-detected by extension:
+```rust
+use trail_config::Config;
+
+// Auto-detected by .json extension
+let config = Config::load_required("config.json", "/", None)?;
+
+// Or load explicitly from a string
+let config = Config::load_json(r#"{"app": {"port": 8080}}"#, "/")?;
+
+// Mix YAML base with JSON overlay
+let config = Config::load_required("config.yaml", "/", None)?
+    .merge_required("overrides.json", None)?;
 ```
 
 ### Using the `config!` macro
@@ -127,7 +150,7 @@ Trail Config organizes methods into two styles. Every method has both a lenient 
 | Lenient — `get()`, `str()`, `get_int()`, etc. | `Option<T>` or empty default | Returns `None` or `""` / `[]` |
 | Strict — `get_strict()`, `str_strict()`, `get_int_strict()`, etc. | `Result<T, ConfigError>` | Returns `Err(PathNotFound)` |
 
-Both styles share the same path syntax and navigate nested YAML using separators (default: `/`).
+Both styles share the same path syntax and navigate nested config values using separators (default: `/`).
 
 ### Reading values
 
@@ -181,6 +204,7 @@ use trail_config::ConfigError;
 
 // - IoError(io::Error)       - File I/O errors (missing file, permission denied, etc.)
 // - YamlError(String)        - YAML parsing or deserialization errors
+// - JsonError(String)        - JSON parsing or conversion errors (requires `json` feature)
 // - PathNotFound(String)     - Configuration path not found in document
 // - FormatError(String)      - String formatting or configuration errors
 ```
@@ -194,13 +218,16 @@ match Config::load_required("config.yaml", "/", None) {
     Ok(config) => {
         let host = config.str("database/host");
         println!("Connecting to {}", host);
-    }
+    },
     Err(ConfigError::IoError(e)) => {
         eprintln!("Config file error: {}", e);
-    }
+    },
     Err(ConfigError::YamlError(msg)) => {
         eprintln!("Invalid YAML: {}", msg);
-    }
+    },
+    Err(ConfigError::JsonError(msg)) => {
+        eprintln!("Invalid JSON: {}", msg);
+    },
     Err(e) => eprintln!("Config error: {}", e),
 }
 ```
@@ -216,7 +243,7 @@ match config.str_strict("database/host") {
     Ok(host) => println!("Connecting to {}", host),
     Err(ConfigError::PathNotFound(path)) => {
         eprintln!("Missing required config: {}", path);
-    }
+    },
     Err(e) => eprintln!("Config error: {}", e),
 }
 
@@ -224,10 +251,10 @@ match config.str_strict("database") {
     Ok(value) => println!("Database: {}", value),
     Err(ConfigError::FormatError(msg)) => {
         eprintln!("Not a scalar: {}", msg);
-    }
+    },
     Err(ConfigError::PathNotFound(path)) => {
         eprintln!("Not found: {}", path);
-    }
+    },
     Err(e) => eprintln!("Unexpected error: {}", e),
 }
 
@@ -235,10 +262,10 @@ match config.get_int_strict("app/port") {
     Ok(port) => println!("Port: {}", port),
     Err(ConfigError::FormatError(msg)) => {
         eprintln!("Port value has wrong type: {}", msg);
-    }
+    },
     Err(ConfigError::PathNotFound(path)) => {
         eprintln!("Port config not found: {}", path);
-    }
+    },
     Err(e) => eprintln!("Unexpected error: {}", e),
 }
 ```
@@ -667,7 +694,7 @@ database:
 
 ## Environment Variable Interpolation
 
-Trail Config resolves `${VAR}` placeholders in YAML string values at load time using environment variables. Placeholders can include a default value with `${VAR:-default}`.
+Trail Config resolves `${VAR}` placeholders in string values at load time using environment variables. Placeholders can include a default value with `${VAR:-default}`.
 ```yaml
 # config.yaml
 database:

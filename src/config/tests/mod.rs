@@ -3,6 +3,8 @@ mod env_vars;
 mod escape;
 mod formatting;
 mod internals;
+#[cfg(feature = "json")]
+mod json;
 mod loading;
 mod macros;
 mod merge;

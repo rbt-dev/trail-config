@@ -1,6 +1,10 @@
 use std::{env, fs, io};
-use yaml_serde::{Value, from_str};
+use yaml_serde::Value;
 use crate::error::ConfigError;
+
+mod yaml;
+#[cfg(feature = "json")]
+mod json;
 
 #[derive(Debug, Clone)]
 enum OverlaySource {
@@ -44,7 +48,7 @@ impl Default for Config {
 }
 
 impl Config {
-    /// Loads a Config from a YAML file, returning an error if the file is missing or invalid.
+    /// Loads a Config from a file, returning an error if the file is missing or invalid.
     ///
     /// Use this in production code where a missing config file is a critical error.
     /// For optional config files, use [`load_optional`](Config::load_optional) or [`default`](Config::default).
@@ -55,11 +59,11 @@ impl Config {
     /// * `env` - Optional environment name to substitute in filename
     ///
     /// # Returns
-    /// Returns `Ok(Config)` if the file is found and valid YAML, or `Err(ConfigError)` otherwise
+    /// Returns `Ok(Config)` if the file is found and valid, or `Err(ConfigError)` otherwise
     ///
     /// # Errors
     /// Returns `ConfigError::IoError` if the file is missing, empty filename, or cannot be read
-    /// Returns `ConfigError::YamlError` if the YAML cannot be parsed
+    /// Returns `ConfigError::YamlError` or `ConfigError::JsonError` if the file cannot be parsed
     /// Returns `ConfigError::FormatError` if the separator is empty or filename template is invalid
     ///
     /// # Example
@@ -78,10 +82,10 @@ impl Config {
         Self::load_internal(filename, sep, env)
     }
 
-    /// Loads a Config from a YAML file, treating a missing file as an empty config.
+    /// Loads a Config from a file, treating a missing file as an empty config.
     ///
     /// Use this when the config file is optional. If the file doesn't exist, returns
-    /// `Ok` with an empty config. If the file *does* exist but is invalid (bad YAML,
+    /// `Ok` with an empty config. If the file *does* exist but is invalid (bad YAML/JSON,
     /// permission denied), returns `Err` — a present-but-broken config file is likely
     /// a mistake worth surfacing.
     ///
@@ -97,7 +101,7 @@ impl Config {
     ///
     /// # Errors
     /// Returns `ConfigError::IoError` if the file exists but cannot be read (e.g. permission denied)
-    /// Returns `ConfigError::YamlError` if the file exists but contains invalid YAML
+    /// Returns `ConfigError::YamlError` or `ConfigError::JsonError` if the file exists but cannot be parsed
     /// Returns `ConfigError::FormatError` if the separator is empty or filename template is invalid
     ///
     /// # Example
@@ -128,7 +132,7 @@ impl Config {
         }
     }
 
-    /// Loads a Config from a YAML file, creating it from a default YAML string if it doesn't exist.
+    /// Loads a Config from a file, creating it from a default string if it doesn't exist.
     ///
     /// If the file exists, its content is loaded and returned — the `defaults` string is
     /// discarded. If the file does not exist, `defaults` is written to disk and returned as
@@ -147,7 +151,7 @@ impl Config {
     ///
     /// # Errors
     /// Returns `ConfigError::IoError` if the file exists but cannot be read, or if writing fails
-    /// Returns `ConfigError::YamlError` if the file or defaults string contains invalid YAML
+    /// Returns `ConfigError::YamlError` or `ConfigError::JsonError` if the file cannot be parsed, or `ConfigError::YamlError` if the defaults string contains invalid YAML
     /// Returns `ConfigError::FormatError` if the separator is empty or filename template is invalid
     ///
     /// # Example
@@ -186,7 +190,7 @@ impl Config {
 
         let (file, env) = Self::get_file(filename, env)?;
 
-        match Self::load(&file) {
+        match Self::load_auto(&file) {
             Ok(yaml) => Ok(Config {
                 content: Self::resolve_env_vars(yaml)?,
                 filename: file,
@@ -224,7 +228,7 @@ impl Config {
     ///
     /// # Errors
     /// Returns `ConfigError::IoError` if the file is missing or cannot be read
-    /// Returns `ConfigError::YamlError` if the file contains invalid YAML
+    /// Returns `ConfigError::YamlError` or `ConfigError::JsonError` if the file cannot be parsed
     /// Returns `ConfigError::FormatError` if the filename template is invalid
     ///
     /// # Example
@@ -237,10 +241,10 @@ impl Config {
     /// # Ok(())
     /// # }
     /// ```
-    #[must_use]
+    #[must_use = "merge returns a new Config; the original is consumed"]
     pub fn merge_required(mut self, filename: &str, env: Option<&str>) -> Result<Config, ConfigError> {
         let (file, _) = Self::get_file(filename, env)?;
-        let yaml = Self::load(&file)?;
+        let yaml = Self::load_auto(&file)?;
         self.content = Self::resolve_env_vars(Self::merge_values(self.content, yaml))?;
         self.overlays.push(OverlaySource::Required(file));
         Ok(self)
@@ -255,14 +259,14 @@ impl Config {
     ///
     /// The overlay filename is recorded so that [`reload`](Config::reload) can re-read and
     /// re-apply it. If the overlay file is missing during a reload, it is silently skipped.
-    /// If the file exists but contains invalid YAML, an error is returned.
+    /// If the file exists but cannot be parsed, an error is returned.
     ///
     /// # Arguments
     /// * `filename` - Path to the overlay file (can contain `{env}` placeholder)
     /// * `env` - Optional environment name to substitute in filename
     ///
     /// # Errors
-    /// Returns `ConfigError::YamlError` if the file exists but contains invalid YAML
+    /// Returns `ConfigError::YamlError` or `ConfigError::JsonError` if the file exists but cannot be parsed
     /// Returns `ConfigError::FormatError` if the filename template is invalid
     ///
     /// # Example
@@ -275,10 +279,10 @@ impl Config {
     /// # Ok(())
     /// # }
     /// ```
-    #[must_use]
+    #[must_use = "merge returns a new Config; the original is consumed"]
     pub fn merge_optional(mut self, filename: &str, env: Option<&str>) -> Result<Config, ConfigError> {
         let (file, _) = Self::get_file(filename, env)?;
-        match Self::load(&file) {
+        match Self::load_auto(&file) {
             Ok(yaml) => {
                 self.content = Self::resolve_env_vars(Self::merge_values(self.content, yaml))?;
             },
@@ -316,12 +320,12 @@ impl Config {
     /// return an error; optional overlays that are missing are silently skipped.
     ///
     /// # Returns
-    /// Returns `Ok(())` on success, or `Err(ConfigError)` if any required file cannot be read or is invalid YAML
+    /// Returns `Ok(())` on success, or `Err(ConfigError)` if any required file cannot be read or parsed
     ///
     /// # Errors
     /// Returns `ConfigError::FormatError` if no file path is associated with this config
     /// Returns `ConfigError::IoError` if the base file or a required overlay is missing or cannot be read
-    /// Returns `ConfigError::YamlError` if any file contains invalid YAML
+    /// Returns `ConfigError::YamlError` or `ConfigError::JsonError` if any file cannot be parsed
     ///
     /// # Note
     /// If reloading fails, the existing configuration is preserved unchanged.
@@ -343,16 +347,16 @@ impl Config {
             return Err(ConfigError::FormatError("Cannot reload: no file path associated with this config".to_string()));
         }
 
-        let mut content = Self::load(&self.filename)?;
+        let mut content = Self::load_auto(&self.filename)?;
         
         for overlay in &self.overlays {
             match overlay {
                 OverlaySource::Required(filename) => {
-                    let yaml = Self::load(filename)?;
+                    let yaml = Self::load_auto(filename)?;
                     content = Self::merge_values(content, yaml);
                 },
                 OverlaySource::Optional(filename) => {
-                    match Self::load(filename) {
+                    match Self::load_auto(filename) {
                         Ok(yaml) => {
                             content = Self::merge_values(content, yaml);
                         },
@@ -376,11 +380,11 @@ impl Config {
     /// * `filename` - New config file to load
     ///
     /// # Returns
-    /// Returns `Ok(())` on success, or `Err(ConfigError)` if the file cannot be read or is invalid YAML
+    /// Returns `Ok(())` on success, or `Err(ConfigError)` if the file cannot be read or parsed
     ///
     /// # Errors
     /// Returns `ConfigError::IoError` if the file is missing or cannot be read
-    /// Returns `ConfigError::YamlError` if the YAML cannot be parsed
+    /// Returns `ConfigError::YamlError` or `ConfigError::JsonError` if the file cannot be parsed
     ///
     /// # Example
     /// ```no_run
@@ -390,7 +394,7 @@ impl Config {
     /// config.reload_from("other_config.yaml").expect("Failed to load");
     /// ```
     pub fn reload_from(&mut self, filename: &str) -> Result<(), ConfigError> {
-        let yaml = Self::load(filename)?;
+        let yaml = Self::load_auto(filename)?;
         self.filename = filename.to_string();
         self.content = Self::resolve_env_vars(yaml)?;
         self.overlays.clear();
@@ -701,7 +705,66 @@ impl Config {
             return Err(ConfigError::FormatError("Separator cannot be empty".to_string()));
         }
 
-        let parsed = from_str(yaml)?;
+        let parsed = yaml::parse(yaml)?;
+
+        Ok(Config {
+            content: Self::resolve_env_vars(parsed)?,
+            filename: String::new(),
+            separator: sep.to_string(),
+            environment: None,
+            overlays: Vec::new(),
+        })
+    }
+
+    /// Loads a Config from a JSON file, returning an error if the file is missing or invalid.
+    ///
+    /// # Errors
+    /// Returns `ConfigError::IoError` if the file is missing or cannot be read
+    /// Returns `ConfigError::FormatError` if the separator is empty
+    /// Returns `ConfigError::JsonError` if JSON cannot be parsed
+    ///
+    /// # Example
+    /// ```no_run
+    /// # use trail_config::Config;
+    /// let config = Config::load_json_file("config.json", "/")
+    ///     .expect("Failed to load config.json");
+    /// ```
+    #[cfg(feature = "json")]
+    pub fn load_json_file(filename: &str, sep: &str) -> Result<Config, ConfigError> {
+        if sep.is_empty() {
+            return Err(ConfigError::FormatError("Separator cannot be empty".to_string()));
+        }
+
+        let parsed = json::load_file(filename)?;
+
+        Ok(Config {
+            content: Self::resolve_env_vars(parsed)?,
+            filename: filename.to_string(),
+            separator: sep.to_string(),
+            environment: None,
+            overlays: Vec::new(),
+        })
+    }
+
+    /// Parses a JSON string into a Config object.
+    ///
+    /// # Errors
+    /// Returns `ConfigError::FormatError` if separator is empty
+    /// Returns `ConfigError::JsonError` if JSON parsing fails
+    ///
+    /// # Example
+    /// ```
+    /// # use trail_config::Config;
+    /// let config = Config::load_json(r#"{"app": {"port": 8080}}"#, "/").unwrap();
+    /// assert_eq!(config.get_int("app/port"), Some(8080));
+    /// ```
+    #[cfg(feature = "json")]
+    pub fn load_json(json_str: &str, sep: &str) -> Result<Config, ConfigError> {
+        if sep.is_empty() {
+            return Err(ConfigError::FormatError("Separator cannot be empty".to_string()));
+        }
+
+        let parsed = json::parse(json_str)?;
 
         Ok(Config {
             content: Self::resolve_env_vars(parsed)?,
@@ -830,10 +893,13 @@ impl Config {
         }
     }
 
-    fn load(filename: &str) -> Result<Value, ConfigError> {
-        let yaml = fs::read_to_string(filename)?;
-        let parsed = from_str(&yaml)?;
-        Ok(parsed)
+    fn load_auto(filename: &str) -> Result<Value, ConfigError> {
+        #[cfg(feature = "json")]
+        if filename.ends_with(".json") {
+            return json::load_file(filename);
+        }
+
+        yaml::load_file(filename)
     }
 
     fn to_string(value: &Value) -> String {

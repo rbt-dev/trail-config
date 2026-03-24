@@ -44,7 +44,7 @@ match config.str_strict("database/host") {
 Trail Config exposes four constructors with a clear, symmetric design:
 
 | Constructor | File required? | Use case |
-|---|---|---|
+| ----------- | -------------- | -------- |
 | `Config::load_required(filename, sep, env)` | Yes — errors if missing | Production: config must exist |
 | `Config::load_optional(filename, sep, env)` | No — returns empty config if missing | Optional or environment-specific files |
 | `Config::load_or_create(filename, sep, env, defaults)` | No — creates from defaults if missing | First-run config generation |
@@ -94,12 +94,14 @@ let config = Config::load_yaml("app:\n  port: 8080", "/")?;
 ### From a JSON file or string (requires `json` feature)
 
 Enable the `json` feature in your `Cargo.toml`:
+
 ```toml
 [dependencies]
 trail-config = { version = "0.4", features = ["json"] }
 ```
 
 JSON files are auto-detected by extension:
+
 ```rust
 use trail_config::Config;
 
@@ -117,12 +119,14 @@ let config = Config::load_required("config.yaml", "/", None)?
 ### From a TOML file or string (requires `toml` feature)
 
 Enable the `toml` feature in your `Cargo.toml`:
+
 ```toml
 [dependencies]
 trail-config = { version = "0.4", features = ["toml"] }
 ```
 
 TOML files are auto-detected by extension:
+
 ```rust
 use trail_config::Config;
 
@@ -140,6 +144,7 @@ let config = Config::load_required("config.yaml", "/", None)?
 ### Using the `config!` macro
 
 The `config!` macro provides a concise syntax for loading and merging configs:
+
 ```rust
 use trail_config::config;
 
@@ -170,7 +175,7 @@ let config = config! {
 Trail Config organizes methods into two styles. Every method has both a lenient and a strict variant:
 
 | Style | Returns | Behaviour on missing path |
-|-------|---------|--------------------------|
+| ----- | ------- | ------------------------- |
 | Lenient — `get()`, `str()`, `get_int()`, etc. | `Option<T>` or empty default | Returns `None` or `""` / `[]` |
 | Strict — `get_strict()`, `str_strict()`, `get_int_strict()`, etc. | `Result<T, ConfigError>` | Returns `Err(PathNotFound)` |
 
@@ -179,7 +184,7 @@ Both styles share the same path syntax and navigate nested config values using s
 ### Reading values
 
 | Method | Returns | Description |
-|--------|---------|-------------|
+| ------ | ------- | ----------- |
 | `get(path)` | `Option<Value>` | Raw `yaml_serde::Value` |
 | `get_strict(path)` | `Result<Value, ConfigError>` | Raw value, errors if missing |
 | `str(path)` | `String` | String representation, empty if missing |
@@ -191,7 +196,7 @@ Both styles share the same path syntax and navigate nested config values using s
 ### Typed access
 
 | Method | Returns | Description |
-|--------|---------|-------------|
+| ------ | ------- | ----------- |
 | `get_int(path)` | `Option<i64>` | Integer value |
 | `get_int_strict(path)` | `Result<i64, ConfigError>` | Integer, errors if missing or wrong type |
 | `get_float(path)` | `Option<f64>` | Floating-point value |
@@ -206,14 +211,14 @@ Both styles share the same path syntax and navigate nested config values using s
 ### Formatting
 
 | Method | Returns | Description |
-|--------|---------|-------------|
+| ------ | ------- | ----------- |
 | `fmt(format, base, keys)` | `String` | Format sibling values into a string, empty on error |
 | `fmt_strict(format, base, keys)` | `Result<String, ConfigError>` | Format, errors if any value is missing |
 
 ### Metadata and hot reload
 
 | Method | Returns | Description |
-|--------|---------|-------------|
+| ------ | ------- | ----------- |
 | `get_filename()` | `&str` | Filename of the loaded config |
 | `environment()` | `Option<&str>` | Environment name used when loading |
 | `reload()` | `Result<(), ConfigError>` | Reload from current file |
@@ -226,12 +231,12 @@ Trail Config uses a custom `ConfigError` enum with four variants:
 ```rust
 use trail_config::ConfigError;
 
-// - IoError(io::Error)       - File I/O errors (missing file, permission denied, etc.)
-// - YamlError(String)        - YAML parsing or deserialization errors
-// - JsonError(String)        - JSON parsing or conversion errors (requires `json` feature)
-// - TomlError(String)        - TOML parsing or conversion errors (requires `toml` feature)
-// - PathNotFound(String)     - Configuration path not found in document
-// - FormatError(String)      - String formatting or configuration errors
+// - IoError(io::Error)    - File I/O errors (missing file, permission denied, etc.)
+// - YamlError(String)     - YAML parsing or deserialization errors
+// - JsonError(String)     - JSON parsing or conversion errors (requires `json` feature)
+// - TomlError(String)     - TOML parsing or conversion errors (requires `toml` feature)
+// - PathNotFound(String)  - Configuration path not found in document
+// - FormatError(String)   - String formatting or configuration errors
 ```
 
 ### Handling load errors
@@ -249,12 +254,6 @@ match Config::load_required("config.yaml", "/", None) {
     },
     Err(ConfigError::YamlError(msg)) => {
         eprintln!("Invalid YAML: {}", msg);
-    },
-    Err(ConfigError::JsonError(msg)) => {
-        eprintln!("Invalid JSON: {}", msg);
-    },
-    Err(ConfigError::TomlError(msg)) => {
-        eprintln!("Invalid TOML: {}", msg);
     },
     Err(e) => eprintln!("Config error: {}", e),
 }
@@ -303,7 +302,7 @@ match config.get_int_strict("app/port") {
 Trail Config validates inputs automatically and returns `FormatError` for invalid configurations:
 
 | Input | Constraint | Error |
-|-------|-----------|-------|
+| ----- | ---------- | ----- |
 | Path separator | Cannot be empty | Returns `FormatError` |
 | File paths (`load_required`) | Empty filename explicitly rejected | Returns `IoError` |
 | File paths (`load_optional`) | Empty filename passed to OS | Returns `IoError` |
@@ -353,6 +352,7 @@ match config.get_int_strict("app/port") {
 ```
 
 Example config (YAML):
+
 ```yaml
 app:
   port: 8080
@@ -723,6 +723,7 @@ database:
 ## Environment Variable Interpolation
 
 Trail Config resolves `${VAR}` placeholders in string values at load time using environment variables. Placeholders can include a default value with `${VAR:-default}`.
+
 ```yaml
 # config.yaml
 database:
@@ -732,6 +733,7 @@ database:
 app:
   url: ${APP_PROTO:-https}://${APP_DOMAIN}/api
 ```
+
 ```rust
 use trail_config::Config;
 
@@ -745,7 +747,7 @@ assert_eq!(config.str("app/url"), "https://example.com/api");
 ### Syntax
 
 | Pattern | Behaviour |
-|---|---|
+| ------- | --------- |
 | `${VAR}` | Replaced with the value of `VAR`. Error if not set. |
 | `${VAR:-default}` | Replaced with the value of `VAR`, or `default` if not set. |
 | `$VAR` | Not a placeholder — left as-is. |

@@ -144,21 +144,24 @@ impl Config {
     /// discarded. If the file does not exist, `defaults` is written to disk and returned as
     /// the active config, so the app behaves identically whether or not the file was present.
     ///
-    /// The `defaults` string is written as-is, preserving formatting and comments.
+    /// The `defaults` string is written as-is, preserving formatting and comments. It must
+    /// be in the same format as the file: YAML by default, or JSON/TOML when the filename
+    /// has a matching extension and the corresponding feature is enabled. The created config
+    /// records the filename, so [`reload`](Config::reload) works after a first run.
     ///
     /// # Arguments
     /// * `filename` - Path to the config file (can contain `{env}` placeholder)
     /// * `sep` - Path separator for accessing nested values
     /// * `env` - Optional environment name to substitute in filename
-    /// * `defaults` - YAML string to write and use if the file does not exist
+    /// * `defaults` - Config string to write and use if the file does not exist, in the file's format
     ///
     /// # Returns
     /// Returns `Ok(Config)` with the file content, or the defaults if the file was created
     ///
     /// # Errors
     /// Returns `ConfigError::IoError` if the file exists but cannot be read, or if writing fails
-    /// Returns `ConfigError::YamlError`, `ConfigError::JsonError` or `ConfigError::TomlError` if the file cannot be parsed, 
-    ///     or `ConfigError::YamlError` if the defaults string contains invalid YAML
+    /// Returns `ConfigError::YamlError`, `ConfigError::JsonError` or `ConfigError::TomlError` if the file
+    ///     or the defaults string cannot be parsed in the format matching the file extension
     /// Returns `ConfigError::FormatError` if the separator is empty or filename template is invalid
     ///
     /// # Example
@@ -184,7 +187,10 @@ impl Config {
             Err(ConfigError::IoError { ref source, .. }) if source.kind() == io::ErrorKind::NotFound => {
                 let (file, _) = Self::get_file(filename, env)?;
                 fs::write(&file, defaults).map_err(|e| ConfigError::io_in(&file, e))?;
-                Self::load_yaml(defaults, sep)
+                // Load the file we just wrote, so the defaults are parsed
+                // according to the file's format (YAML/JSON/TOML by extension)
+                // and the filename is recorded for reload()
+                Self::load_internal(filename, sep, env)
             },
             Err(e) => Err(e),
         }
@@ -475,6 +481,7 @@ impl Config {
     /// ```
     pub fn get_strict(&self, path: &str) -> Result<Value, ConfigError> {
         Self::get_leaf(&self.content, path, &self.separator)
+            .cloned()
             .ok_or_else(|| ConfigError::PathNotFound(path.to_string()))
     }
 
@@ -491,7 +498,7 @@ impl Config {
     pub fn str_strict(&self, path: &str) -> Result<String, ConfigError> {
         let value = Self::get_leaf(&self.content, path, &self.separator)
             .ok_or_else(|| ConfigError::PathNotFound(path.to_string()))?;
-        Self::to_string_strict(&value, path)
+        Self::to_string_strict(value, path)
     }
 
     /// Gets a value as a list of strings at the specified path, returning an error if not found
@@ -507,7 +514,7 @@ impl Config {
     pub fn list_strict(&self, path: &str) -> Result<Vec<String>, ConfigError> {
         let value = Self::get_leaf(&self.content, path, &self.separator)
             .ok_or_else(|| ConfigError::PathNotFound(path.to_string()))?;
-        match &value {
+        match value {
             Value::Sequence(v) => Ok(v.iter().map(Self::to_string).collect()),
             _ => Err(ConfigError::FormatError(format!("Value at {} is not a sequence", path)))
         }
@@ -532,7 +539,7 @@ impl Config {
         let value = Self::get_leaf(&self.content, path, &self.separator)
             .ok_or_else(|| ConfigError::PathNotFound(path.to_string()))?;
 
-        match &value {
+        match value {
             Value::Number(num) => {
                 num.as_i64()
                     .ok_or_else(|| ConfigError::FormatError(format!("Cannot convert {} to i64", num)))
@@ -560,7 +567,7 @@ impl Config {
         let value = Self::get_leaf(&self.content, path, &self.separator)
             .ok_or_else(|| ConfigError::PathNotFound(path.to_string()))?;
 
-        match &value {
+        match value {
             Value::Number(num) => {
                 num.as_f64()
                     .ok_or_else(|| ConfigError::FormatError(format!("Cannot convert {} to f64", num)))
@@ -588,7 +595,7 @@ impl Config {
         let value = Self::get_leaf(&self.content, path, &self.separator)
             .ok_or_else(|| ConfigError::PathNotFound(path.to_string()))?;
 
-        match &value {
+        match value {
             Value::Bool(b) => Ok(*b),
             _ => Err(ConfigError::FormatError(format!("Value at {} is not a boolean", path)))
         }
@@ -639,7 +646,7 @@ impl Config {
     pub fn get_as_strict<T: serde::de::DeserializeOwned>(&self, path: &str) -> Result<T, ConfigError> {
         let value = Self::get_leaf(&self.content, path, &self.separator)
             .ok_or_else(|| ConfigError::PathNotFound(path.to_string()))?;
-        yaml_serde::from_value(value).map_err(ConfigError::from)
+        yaml_serde::from_value(value.clone()).map_err(ConfigError::from)
     }
 
     /// Deserializes the entire config into a typed struct
@@ -884,7 +891,7 @@ impl Config {
         Ok(result)
     }
 
-    fn get_leaf(mut content: &Value, path: &str, separator: &str) -> Option<Value> {
+    fn get_leaf<'a>(mut content: &'a Value, path: &str, separator: &str) -> Option<&'a Value> {
         if path.is_empty() || separator.is_empty() {
             return None;
         }
@@ -901,7 +908,7 @@ impl Config {
             }
         }
 
-        Some(content.clone())
+        Some(content)
     }
 
     /// Parses a path with escape sequence support.

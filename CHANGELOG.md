@@ -5,20 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.4.1] - Not released
+## [0.5.0] - Not released
 
 ### Changed
 
 - **Breaking:** `ConfigError` is now derived with `thiserror`, and the `IoError`, `YamlError`, `JsonError` and `TomlError` variants are struct variants carrying the offending filename and the original underlying error instead of stringified messages: `{ file: Option<String>, source: ... }` (`file` is `None` when parsing from a string). `std::error::Error::source()` now returns the wrapped error, and Display messages include the filename when known (e.g. `YAML parse error in config.prod.yaml: ...`). Match with `ConfigError::YamlError { file, source }` or `ConfigError::YamlError { .. }`.
 - **Breaking:** the `JsonError` and `TomlError` variants now only exist when the corresponding feature is enabled (they carry `serde_json::Error` / `toml::de::Error`). Code matching on them without the feature no longer compiles — such code was unreachable anyway.
 - JSON/TOML → YAML value conversion failures (previously stringified into `JsonError`/`TomlError`) now surface as `YamlError`, since the conversion happens in the YAML layer. Parse errors still surface as `JsonError`/`TomlError`.
-- `thiserror` added as a dependency.
-
+- `get_leaf` returns a borrowed `&Value` instead of deep-cloning the subtree on every access. `contains`, `str`, `list` and the typed accessors no longer clone; only `get`/`get_strict` and `get_as`/`get_as_strict` clone, where an owned value is actually produced. No public API changes.
+- Added `[package.metadata.docs.rs] all-features = true` so the feature-gated JSON/TOML APIs appear in the docs.rs documentation.
+- README: removed the duplicated "Thread Safety" section (merged into "Thread-Safe Shared Config") and documented the `load_or_create` defaults-format behaviour.
 - Tests no longer write fixture files into the crate's working directory. All file-based tests now use per-test temp directories (via a new `tempfile` dev-dependency) that are cleaned up automatically, even when a test panics. Previously, fixed-name files like `test_handle_reload.yaml` were created in the CWD and left behind on failure.
 - Tests that mutate process environment variables (`std::env::set_var` / `remove_var`) are now serialized through a shared lock in a new internal `test_util` module, eliminating races under the parallel test runner.
 
 ### Fixed
 
+- `load_or_create` now parses the defaults string according to the file's format (JSON/TOML by extension, YAML otherwise) instead of always parsing it as YAML, and the created config now records its filename — previously `reload()` failed with `FormatError` after a first-run creation.
 - Environment variable placeholders are no longer re-resolved over the entire merged tree on `merge_required` / `merge_optional`. Previously the already-resolved base config was scanned again after every merge, so a variable whose *value* contained placeholder syntax (e.g. a password like `pa${ss}word`) would load fine but break — or double-expand — on the next merge. Each file is now resolved exactly once, when it is loaded.
 - `reload()` now resolves environment variables per file (base and each overlay) before merging, matching the load-then-merge path. Previously it resolved once over the final merged tree, which could produce different results than the original load for values containing `${`.
 

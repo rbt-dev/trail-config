@@ -7,7 +7,7 @@ fn get_leaf_test() {
     let value1 = Config::get_leaf(&parsed, "db/redis/port", "/");
     let value2 = Config::get_leaf(&parsed, "db/redis/username", "/");
 
-    assert_eq!(value1, Some(Value::Number(Number::from(6379))));
+    assert_eq!(value1, Some(&Value::Number(Number::from(6379))));
     assert_eq!(value2, None);
 }
 
@@ -36,7 +36,7 @@ fn get_file_invalid_template() {
 fn to_string_test() {
     let parsed: Value = from_str(YAML).unwrap();
     let value = Config::get_leaf(&parsed, "db/redis/port", "/").unwrap();
-    let str_value = Config::to_string(&value);
+    let str_value = Config::to_string(value);
 
     assert_eq!(str_value, "6379");
 }

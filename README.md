@@ -85,7 +85,8 @@ let config = Config::default(); // Never panics, gracefully handles missing conf
 
 ### From a YAML string
 
-Use `Config::load_yaml()` to load configuration directly from a string rather than a file. This is useful for tests, embedded defaults, or configs received over the network:
+Use `Config::load_yaml()` to load configuration directly from a string rather than a file.
+This is useful for tests, embedded defaults, or configs received over the network:
 
 ```rust
 let config = Config::load_yaml("app:\n  port: 8080", "/")?;
@@ -367,7 +368,10 @@ app:
 
 ## Struct Deserialization
 
-Use `deserialize` / `deserialize_strict` to map the **entire config** into a typed Rust struct, or `get_as` / `get_as_strict` to deserialize a subtree at a specific path. Both approaches are more concise than reading fields one by one, and let the compiler verify you haven't missed any required fields.
+Use `deserialize` / `deserialize_strict` to map the **entire config** into a typed Rust struct, 
+or `get_as` / `get_as_strict` to deserialize a subtree at a specific path. Both approaches are 
+more concise than reading fields one by one, and let the compiler verify you haven't missed any 
+required fields.
 
 Any struct that derives `serde::Deserialize` can be used:
 
@@ -406,7 +410,8 @@ let db: DatabaseConfig = config.get_as_strict("database")?; // Strict — return
 let db: Option<DatabaseConfig> = config.get_as("database"); // Lenient — returns None if path is missing or struct doesn't match
 ```
 
-`deserialize_strict` returns `YamlError` if the config can't be deserialized into `T`. `get_as_strict` additionally returns `PathNotFound` if the path doesn't exist.
+`deserialize_strict` returns `YamlError` if the config can't be deserialized into `T`.
+`get_as_strict` additionally returns `PathNotFound` if the path doesn't exist.
 
 Sample YAML:
 
@@ -437,7 +442,9 @@ let connection = format!("{}:{}", host, port);
 let connection = config.fmt("{}:{}", "database", &["host", "port"]);
 ```
 
-The `fmt()` method takes a format string with `{}` placeholders, a base path to the parent node, and a slice of key names — one per placeholder. It navigates to the base path, then extracts and formats the specified keys in order.
+The `fmt()` method takes a format string with `{}` placeholders, a base path to the parent node, 
+and a slice of key names — one per placeholder. It navigates to the base path, then extracts and 
+formats the specified keys in order.
 
 ### Multi-value formatting
 
@@ -515,7 +522,9 @@ let value = config.str("a::b\\::c::d");
 
 ## Thread-Safe Shared Config
 
-Use `ConfigHandle` to share a `Config` across threads and reload it at runtime without restarting. It wraps `Config` in an `Arc<RwLock<...>>` — cloning the handle is cheap, and all clones refer to the same underlying config.
+`Config` is not `Send + Sync` on its own. Use `ConfigHandle` to share a `Config` across threads 
+and reload it at runtime without restarting. It wraps `Config` in an `Arc<RwLock<...>>` — cloning 
+the handle is cheap, and all clones refer to the same underlying config.
 
 ```rust
 use trail_config::{Config, ConfigHandle};
@@ -617,64 +626,15 @@ fn main() {
 }
 ```
 
-## Thread Safety
-
-`Config` is not `Send + Sync` on its own. Use `ConfigHandle` to share a config across threads — it wraps `Config` in an `Arc<RwLock<...>>` so it can be cloned freely and reloaded at runtime.
-
-```rust
-use trail_config::{Config, ConfigHandle};
-
-let handle = ConfigHandle::new(
-    Config::load_required("config.yaml", "/", None)?
-);
-
-// Cheap to clone — all clones share the same underlying config
-let handle2 = handle.clone();
-
-// Convenience methods for common accessors
-let port = handle.str("app/port");
-let debug = handle.get_bool("app/debug");
-
-// Full access via read guard
-let host = handle.read().str_strict("database/host")?;
-
-// Reload from disk (re-applies all overlays), visible to all clones
-handle.reload()?;
-```
-
-### Background reload loop
-
-```rust
-use trail_config::{Config, ConfigHandle};
-use std::{thread, time::Duration};
-
-let handle = ConfigHandle::new(
-    Config::load_required("config.yaml", "/", None)
-        .expect("Failed to load config")
-);
-
-// Share with the main application
-let app_handle = handle.clone();
-
-// Reload in the background every 5 seconds
-thread::spawn(move || {
-    loop {
-        thread::sleep(Duration::from_secs(5));
-        if let Err(e) = handle.reload() {
-            eprintln!("Config reload failed: {}", e);
-        }
-    }
-});
-
-// Main thread reads are never blocked except during the brief reload swap
-let port = app_handle.get_int("app/port").unwrap_or(8080);
-```
-
 ## Merging Configs
 
-Use `merge_required` / `merge_optional` to layer configs on top of each other. Values in the overlay take precedence over the base; nested mappings are merged recursively so sibling keys are preserved. Sequences are replaced wholesale. The base config's separator is preserved.
+Use `merge_required` / `merge_optional` to layer configs on top of each other. Values in 
+the overlay take precedence over the base; nested mappings are merged recursively so sibling 
+keys are preserved. Sequences are replaced wholesale. The base config's separator is preserved.
 
-The overlay filenames are recorded so that `reload()` can re-read and re-apply them in order — required overlays that are missing on reload return an error, optional overlays that are missing are silently skipped.
+The overlay filenames are recorded so that `reload()` can re-read and re-apply them in 
+order — required overlays that are missing on reload return an error, optional overlays that 
+are missing are silently skipped.
 
 ```rust
 use trail_config::Config;
@@ -727,7 +687,8 @@ database:
 
 ## Environment Variable Interpolation
 
-Trail Config resolves `${VAR}` placeholders in string values at load time using environment variables. Placeholders can include a default value with `${VAR:-default}`.
+Trail Config resolves `${VAR}` placeholders in string values at load time using environment 
+variables. Placeholders can include a default value with `${VAR:-default}`.
 
 ```yaml
 # config.yaml
@@ -759,11 +720,14 @@ assert_eq!(config.str("app/url"), "https://example.com/api");
 
 ### Resolution timing
 
-Environment variables are resolved at load time and re-resolved on every `reload()` call. This means changes to environment variables are picked up when the config is reloaded.
+Environment variables are resolved at load time and re-resolved on every `reload()` call. 
+This means changes to environment variables are picked up when the config is reloaded.
 
 ### Error handling
 
-If a placeholder references an unset variable and no default is provided, loading returns a `ConfigError::FormatError`. Unclosed placeholders (`${VAR`) and empty variable names (`${:-default}`) also return errors.
+If a placeholder references an unset variable and no default is provided, loading returns 
+a `ConfigError::FormatError`. Unclosed placeholders (`${VAR`) and empty variable 
+names (`${:-default}`) also return errors.
 
 ## Auto-Creating Config Files
 
@@ -790,6 +754,11 @@ let config = Config::load_or_create("config.yaml", "/", None, DEFAULTS)?;
 On first run `config.yaml` is created with the contents of `DEFAULTS`. On subsequent
 runs the file is loaded normally and `DEFAULTS` is ignored — so users can edit the
 file freely without their changes being overwritten.
+
+The defaults string must be in the same format as the file: YAML by default, or
+JSON/TOML when the filename has a matching extension and the corresponding feature
+is enabled. The created config records its filename, so `reload()` works after a
+first run.
 
 The defaults string is written as-is, preserving formatting and any comments you include:
 

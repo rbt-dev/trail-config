@@ -82,6 +82,25 @@ fn load_json_empty_separator_errors() {
 }
 
 #[test]
+fn load_or_create_json_defaults() {
+    let dir = temp_dir();
+    let path = dir.path().join("new.json").to_string_lossy().into_owned();
+
+    // Defaults for a .json file are parsed as JSON
+    let config = Config::load_or_create(&path, "/", None, r#"{"app": {"port": 8080}}"#).unwrap();
+    assert_eq!(config.get_int("app/port"), Some(8080));
+    assert_eq!(fs::read_to_string(&path).unwrap(), r#"{"app": {"port": 8080}}"#);
+
+    // Invalid JSON defaults surface as JsonError
+    let path2 = dir.path().join("bad.json").to_string_lossy().into_owned();
+    let result = Config::load_or_create(&path2, "/", None, "{invalid json}");
+    match result {
+        Err(ConfigError::JsonError { .. }) => (),
+        other => panic!("Expected JsonError, got: {:?}", other),
+    }
+}
+
+#[test]
 fn merge_json_overlay() {
     let dir = temp_dir();
     let base = write_file(&dir, "base.yaml", "app:\n  port: 8080\n  name: myapp\n");

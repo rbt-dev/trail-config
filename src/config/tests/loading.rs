@@ -116,6 +116,23 @@ fn load_or_create_loads_existing_file() {
 }
 
 #[test]
+fn load_or_create_supports_reload() {
+    use std::fs;
+
+    let dir = temp_dir();
+    let test_file = dir.path().join("new.yaml").to_string_lossy().into_owned();
+
+    let mut config = Config::load_or_create(&test_file, "/", None, "app:\n  port: 8080\n").unwrap();
+    assert_eq!(config.get_filename(), test_file);
+    assert_eq!(config.str("app/port"), "8080");
+
+    // The created config records its filename, so reload() picks up edits
+    fs::write(&test_file, "app:\n  port: 9090\n").unwrap();
+    config.reload().unwrap();
+    assert_eq!(config.str("app/port"), "9090");
+}
+
+#[test]
 fn load_or_create_invalid_defaults_returns_error() {
     let dir = temp_dir();
     let test_file = dir.path().join("invalid_defaults.yaml").to_string_lossy().into_owned();

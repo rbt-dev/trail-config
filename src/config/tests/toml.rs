@@ -81,6 +81,25 @@ fn load_toml_empty_separator_errors() {
 }
 
 #[test]
+fn load_or_create_toml_defaults() {
+    let dir = temp_dir();
+    let path = dir.path().join("new.toml").to_string_lossy().into_owned();
+
+    // Defaults for a .toml file are parsed as TOML
+    let config = Config::load_or_create(&path, "/", None, "[app]\nport = 8080\n").unwrap();
+    assert_eq!(config.get_int("app/port"), Some(8080));
+    assert_eq!(fs::read_to_string(&path).unwrap(), "[app]\nport = 8080\n");
+
+    // Invalid TOML defaults surface as TomlError
+    let path2 = dir.path().join("bad.toml").to_string_lossy().into_owned();
+    let result = Config::load_or_create(&path2, "/", None, "invalid = [unclosed");
+    match result {
+        Err(ConfigError::TomlError { .. }) => (),
+        other => panic!("Expected TomlError, got: {:?}", other),
+    }
+}
+
+#[test]
 fn merge_toml_overlay() {
     let dir = temp_dir();
     let base = write_file(&dir, "base.yaml", "app:\n  port: 8080\n  name: myapp\n");

@@ -165,77 +165,59 @@ app:
 
     #[test]
     fn reload_picks_up_changes() {
-        use std::fs::{self, File};
-        use std::io::Write;
+        use crate::test_util::{temp_dir, write_file};
+        use std::fs;
 
-        let path = "test_handle_reload.yaml";
-        let mut f = File::create(path).unwrap();
-        writeln!(f, "app:\n  port: 8080").unwrap();
-        drop(f);
+        let dir = temp_dir();
+        let path = write_file(&dir, "config.yaml", "app:\n  port: 8080\n");
 
         let handle = ConfigHandle::new(
-            Config::load_required(path, "/", None).unwrap()
+            Config::load_required(&path, "/", None).unwrap()
         );
         assert_eq!(handle.str("app/port"), "8080");
 
-        let mut f = File::create(path).unwrap();
-        writeln!(f, "app:\n  port: 9090").unwrap();
-        drop(f);
+        fs::write(&path, "app:\n  port: 9090\n").unwrap();
 
         handle.reload().unwrap();
         assert_eq!(handle.str("app/port"), "9090");
-
-        fs::remove_file(path).ok();
     }
 
     #[test]
     fn reload_visible_to_all_clones() {
-        use std::fs::{self, File};
-        use std::io::Write;
+        use crate::test_util::{temp_dir, write_file};
+        use std::fs;
 
-        let path = "test_handle_reload_clones.yaml";
-        let mut f = File::create(path).unwrap();
-        writeln!(f, "app:\n  port: 1111").unwrap();
-        drop(f);
+        let dir = temp_dir();
+        let path = write_file(&dir, "config.yaml", "app:\n  port: 1111\n");
 
         let handle1 = ConfigHandle::new(
-            Config::load_required(path, "/", None).unwrap()
+            Config::load_required(&path, "/", None).unwrap()
         );
         let handle2 = handle1.clone();
 
-        let mut f = File::create(path).unwrap();
-        writeln!(f, "app:\n  port: 2222").unwrap();
-        drop(f);
+        fs::write(&path, "app:\n  port: 2222\n").unwrap();
 
         handle1.reload().unwrap();
         // handle2 sees the change because they share the same Arc
         assert_eq!(handle2.str("app/port"), "2222");
-
-        fs::remove_file(path).ok();
     }
 
     #[test]
     fn reload_preserves_config_on_failure() {
-        use std::fs::{self, File};
-        use std::io::Write;
+        use crate::test_util::{temp_dir, write_file};
+        use std::fs;
 
-        let path = "test_handle_reload_fail.yaml";
-        let mut f = File::create(path).unwrap();
-        writeln!(f, "app:\n  port: 8080").unwrap();
-        drop(f);
+        let dir = temp_dir();
+        let path = write_file(&dir, "config.yaml", "app:\n  port: 8080\n");
 
         let handle = ConfigHandle::new(
-            Config::load_required(path, "/", None).unwrap()
+            Config::load_required(&path, "/", None).unwrap()
         );
 
-        let mut f = File::create(path).unwrap();
-        writeln!(f, "invalid: [unclosed").unwrap();
-        drop(f);
+        fs::write(&path, "invalid: [unclosed\n").unwrap();
 
         assert!(handle.reload().is_err());
         assert_eq!(handle.str("app/port"), "8080"); // still intact
-
-        fs::remove_file(path).ok();
     }
 
     #[test]

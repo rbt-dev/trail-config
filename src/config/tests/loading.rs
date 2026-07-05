@@ -1,4 +1,5 @@
 use super::{Config, ConfigError, YAML};
+use crate::test_util::{temp_dir, write_file};
 
 #[test]
 fn yaml_parse_error() {
@@ -74,22 +75,15 @@ fn load_optional_missing_file_returns_empty_config() {
 
 #[test]
 fn load_optional_invalid_yaml_returns_error() {
-    use std::fs::{self, File};
-    use std::io::Write;
+    let dir = temp_dir();
+    let test_file = write_file(&dir, "invalid.yaml", "invalid: [unclosed\n");
 
-    let test_file = "test_optional_invalid.yaml";
-    let mut file = File::create(test_file).unwrap();
-    writeln!(file, "invalid: [unclosed").unwrap();
-    drop(file);
-
-    let result = Config::load_optional(test_file, "/", None);
+    let result = Config::load_optional(&test_file, "/", None);
     assert!(result.is_err());
     match result {
         Err(ConfigError::YamlError(_)) => (),
         _ => panic!("Expected YamlError for malformed file"),
     }
-
-    fs::remove_file(test_file).ok();
 }
 
 #[test]
@@ -97,76 +91,56 @@ fn load_or_create_creates_file_when_missing() {
     use std::fs;
 
     const DEFAULTS: &str = "app:\n  port: 8080\n  debug: false\n";
-    let test_file = "test_load_or_create_new.yaml";
-    fs::remove_file(test_file).ok();
+    let dir = temp_dir();
+    let test_file = dir.path().join("new.yaml").to_string_lossy().into_owned();
 
-    let result = Config::load_or_create(test_file, "/", None, DEFAULTS);
+    let result = Config::load_or_create(&test_file, "/", None, DEFAULTS);
 
     assert!(result.is_ok());
     let config = result.unwrap();
     assert_eq!(config.str("app/port"), "8080");
     assert_eq!(config.get_bool("app/debug"), Some(false));
 
-    assert!(fs::metadata(test_file).is_ok());
-    let written = fs::read_to_string(test_file).unwrap();
+    assert!(fs::metadata(&test_file).is_ok());
+    let written = fs::read_to_string(&test_file).unwrap();
     assert_eq!(written, DEFAULTS);
-
-    fs::remove_file(test_file).ok();
 }
 
 #[test]
 fn load_or_create_loads_existing_file() {
-    use std::fs::{self, File};
-    use std::io::Write;
+    let dir = temp_dir();
+    let test_file = write_file(&dir, "existing.yaml", "app:\n  port: 9090\n");
 
-    let test_file = "test_load_or_create_existing.yaml";
-    let mut file = File::create(test_file).unwrap();
-    writeln!(file, "app:\n  port: 9090").unwrap();
-    drop(file);
-
-    let config = Config::load_or_create(test_file, "/", None, "app:\n  port: 8080\n").unwrap();
+    let config = Config::load_or_create(&test_file, "/", None, "app:\n  port: 8080\n").unwrap();
     assert_eq!(config.str("app/port"), "9090");
-
-    fs::remove_file(test_file).ok();
 }
 
 #[test]
 fn load_or_create_invalid_defaults_returns_error() {
-    use std::fs;
+    let dir = temp_dir();
+    let test_file = dir.path().join("invalid_defaults.yaml").to_string_lossy().into_owned();
 
-    let test_file = "test_load_or_create_invalid.yaml";
-    fs::remove_file(test_file).ok();
-
-    let result = Config::load_or_create(test_file, "/", None, "invalid: [unclosed");
+    let result = Config::load_or_create(&test_file, "/", None, "invalid: [unclosed");
 
     assert!(result.is_err());
     match result {
         Err(ConfigError::YamlError(_)) => (),
         _ => panic!("Expected YamlError for invalid defaults"),
     }
-
-    fs::remove_file(test_file).ok();
 }
 
 #[test]
 fn load_or_create_invalid_existing_file_returns_error() {
-    use std::fs::{self, File};
-    use std::io::Write;
+    let dir = temp_dir();
+    let test_file = write_file(&dir, "broken.yaml", "invalid: [unclosed\n");
 
-    let test_file = "test_load_or_create_broken.yaml";
-    let mut file = File::create(test_file).unwrap();
-    writeln!(file, "invalid: [unclosed").unwrap();
-    drop(file);
-
-    let result = Config::load_or_create(test_file, "/", None, "app:\n  port: 8080\n");
+    let result = Config::load_or_create(&test_file, "/", None, "app:\n  port: 8080\n");
 
     assert!(result.is_err());
     match result {
         Err(ConfigError::YamlError(_)) => (),
         _ => panic!("Expected YamlError for broken existing file"),
     }
-
-    fs::remove_file(test_file).ok();
 }
 
 #[test]

@@ -2,6 +2,9 @@ mod error;
 mod config;
 mod handle;
 
+#[cfg(test)]
+mod test_util;
+
 pub use error::ConfigError;
 pub use config::Config;
 pub use handle::ConfigHandle;

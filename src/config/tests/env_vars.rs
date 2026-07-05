@@ -1,8 +1,10 @@
 use super::{Config, ConfigError};
+use crate::test_util::{env_lock, temp_dir, write_file};
 use std::env;
 
 #[test]
 fn resolves_env_var() {
+    let _env = env_lock();
     env::set_var("TRAIL_TEST_HOST", "prod-server");
     let yaml = "
 db:
@@ -15,6 +17,7 @@ db:
 
 #[test]
 fn resolves_env_var_with_default() {
+    let _env = env_lock();
     env::remove_var("TRAIL_TEST_MISSING");
     let yaml = "
 db:
@@ -26,6 +29,7 @@ db:
 
 #[test]
 fn env_var_set_overrides_default() {
+    let _env = env_lock();
     env::set_var("TRAIL_TEST_PORT", "9090");
     let yaml = "
 db:
@@ -38,6 +42,7 @@ db:
 
 #[test]
 fn missing_env_var_no_default_errors() {
+    let _env = env_lock();
     env::remove_var("TRAIL_TEST_UNDEFINED");
     let yaml = "
 db:
@@ -87,6 +92,7 @@ db:
 
 #[test]
 fn mixed_text_and_env_vars() {
+    let _env = env_lock();
     env::set_var("TRAIL_TEST_PROTO", "https");
     env::set_var("TRAIL_TEST_DOMAIN", "example.com");
     let yaml = "
@@ -101,6 +107,7 @@ app:
 
 #[test]
 fn env_var_in_sequence() {
+    let _env = env_lock();
     env::set_var("TRAIL_TEST_ITEM", "resolved");
     let yaml = "
 items:
@@ -136,48 +143,35 @@ app:
 
 #[test]
 fn resolved_value_with_placeholder_syntax_survives_merge() {
-    use std::fs::{self, File};
-    use std::io::Write;
+    let _env = env_lock();
 
     // The env var's *value* contains placeholder syntax — after resolution it
     // must be preserved verbatim, not re-resolved when an overlay is merged.
     env::set_var("TRAIL_TEST_LITERAL", "pa${ss}word");
 
-    let overlay_file = "test_env_merge_no_reresolve.yaml";
-    let mut f = File::create(overlay_file).unwrap();
-    writeln!(f, "app:\n  debug: true").unwrap();
-    drop(f);
+    let dir = temp_dir();
+    let overlay_file = write_file(&dir, "overlay.yaml", "app:\n  debug: true\n");
 
     let config = Config::load_yaml("db:\n  password: ${TRAIL_TEST_LITERAL}", "/").unwrap()
-        .merge_required(overlay_file, None).unwrap();
+        .merge_required(&overlay_file, None).unwrap();
 
     assert_eq!(config.str("db/password"), "pa${ss}word");
     assert_eq!(config.get_bool("app/debug"), Some(true));
 
     env::remove_var("TRAIL_TEST_LITERAL");
-    fs::remove_file(overlay_file).ok();
 }
 
 #[test]
 fn reload_resolves_each_file_once() {
-    use std::fs::{self, File};
-    use std::io::Write;
-
+    let _env = env_lock();
     env::set_var("TRAIL_TEST_RELOAD_LITERAL", "se${cr}et");
 
-    let base_file = "test_env_reload_base.yaml";
-    let overlay_file = "test_env_reload_overlay.yaml";
+    let dir = temp_dir();
+    let base_file = write_file(&dir, "base.yaml", "db:\n  password: ${TRAIL_TEST_RELOAD_LITERAL}\n");
+    let overlay_file = write_file(&dir, "overlay.yaml", "app:\n  debug: true\n");
 
-    let mut f = File::create(base_file).unwrap();
-    writeln!(f, "db:\n  password: ${{TRAIL_TEST_RELOAD_LITERAL}}").unwrap();
-    drop(f);
-
-    let mut f = File::create(overlay_file).unwrap();
-    writeln!(f, "app:\n  debug: true").unwrap();
-    drop(f);
-
-    let mut config = Config::load_required(base_file, "/", None).unwrap()
-        .merge_required(overlay_file, None).unwrap();
+    let mut config = Config::load_required(&base_file, "/", None).unwrap()
+        .merge_required(&overlay_file, None).unwrap();
     assert_eq!(config.str("db/password"), "se${cr}et");
 
     // Reload must produce the same result as the original load-then-merge
@@ -186,12 +180,11 @@ fn reload_resolves_each_file_once() {
     assert_eq!(config.get_bool("app/debug"), Some(true));
 
     env::remove_var("TRAIL_TEST_RELOAD_LITERAL");
-    fs::remove_file(base_file).ok();
-    fs::remove_file(overlay_file).ok();
 }
 
 #[test]
 fn empty_default_is_valid() {
+    let _env = env_lock();
     env::remove_var("TRAIL_TEST_EMPTY_DEFAULT");
     let yaml = "
 app:

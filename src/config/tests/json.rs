@@ -1,8 +1,8 @@
 #![cfg(feature = "json")]
 
 use super::{Config, ConfigError};
-use std::fs::{self, File};
-use std::io::Write;
+use crate::test_util::{env_lock, temp_dir, write_file};
+use std::fs;
 
 #[test]
 fn load_json_string() {
@@ -34,28 +34,20 @@ fn load_json_with_custom_separator() {
 
 #[test]
 fn load_json_file_auto_detect() {
-    let path = "test_auto_detect.json";
-    let mut f = File::create(path).unwrap();
-    write!(f, r#"{{"app": {{"port": 3000}}}}"#).unwrap();
-    drop(f);
+    let dir = temp_dir();
+    let path = write_file(&dir, "config.json", r#"{"app": {"port": 3000}}"#);
 
-    let config = Config::load_required(path, "/", None).unwrap();
+    let config = Config::load_required(&path, "/", None).unwrap();
     assert_eq!(config.get_int("app/port"), Some(3000));
-
-    fs::remove_file(path).ok();
 }
 
 #[test]
 fn load_json_file_explicit() {
-    let path = "test_explicit_json.json";
-    let mut f = File::create(path).unwrap();
-    write!(f, r#"{{"app": {{"name": "myapp"}}}}"#).unwrap();
-    drop(f);
+    let dir = temp_dir();
+    let path = write_file(&dir, "config.json", r#"{"app": {"name": "myapp"}}"#);
 
-    let config = Config::load_json_file(path, "/").unwrap();
+    let config = Config::load_json_file(&path, "/").unwrap();
     assert_eq!(config.str("app/name"), "myapp");
-
-    fs::remove_file(path).ok();
 }
 
 #[test]
@@ -66,6 +58,7 @@ fn load_json_list() {
 
 #[test]
 fn load_json_env_var_interpolation() {
+    let _env = env_lock();
     std::env::set_var("TRAIL_TEST_JSON_HOST", "json-server");
     let config = Config::load_json(r#"{"db": {"host": "${TRAIL_TEST_JSON_HOST}"}}"#, "/").unwrap();
     assert_eq!(config.str("db/host"), "json-server");
@@ -90,42 +83,26 @@ fn load_json_empty_separator_errors() {
 
 #[test]
 fn merge_json_overlay() {
-    let base = "test_merge_json_base.yaml";
-    let overlay = "test_merge_json_overlay.json";
+    let dir = temp_dir();
+    let base = write_file(&dir, "base.yaml", "app:\n  port: 8080\n  name: myapp\n");
+    let overlay = write_file(&dir, "overlay.json", r#"{"app": {"port": 9090}}"#);
 
-    let mut f = File::create(base).unwrap();
-    writeln!(f, "app:\n  port: 8080\n  name: myapp").unwrap();
-    drop(f);
-
-    let mut f = File::create(overlay).unwrap();
-    write!(f, r#"{{"app": {{"port": 9090}}}}"#).unwrap();
-    drop(f);
-
-    let config = Config::load_required(base, "/", None).unwrap()
-        .merge_required(overlay, None).unwrap();
+    let config = Config::load_required(&base, "/", None).unwrap()
+        .merge_required(&overlay, None).unwrap();
     assert_eq!(config.get_int("app/port"), Some(9090));
     assert_eq!(config.str("app/name"), "myapp");
-
-    fs::remove_file(base).ok();
-    fs::remove_file(overlay).ok();
 }
 
 #[test]
 fn reload_json_file() {
-    let path = "test_reload_json.json";
-    let mut f = File::create(path).unwrap();
-    write!(f, r#"{{"app": {{"port": 8080}}}}"#).unwrap();
-    drop(f);
+    let dir = temp_dir();
+    let path = write_file(&dir, "config.json", r#"{"app": {"port": 8080}}"#);
 
-    let mut config = Config::load_required(path, "/", None).unwrap();
+    let mut config = Config::load_required(&path, "/", None).unwrap();
     assert_eq!(config.get_int("app/port"), Some(8080));
 
-    let mut f = File::create(path).unwrap();
-    write!(f, r#"{{"app": {{"port": 9090}}}}"#).unwrap();
-    drop(f);
+    fs::write(&path, r#"{"app": {"port": 9090}}"#).unwrap();
 
     config.reload().unwrap();
     assert_eq!(config.get_int("app/port"), Some(9090));
-
-    fs::remove_file(path).ok();
 }

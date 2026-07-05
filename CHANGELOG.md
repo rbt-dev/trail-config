@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.4.1] - Not released
 
+### Changed
+
+- Tests no longer write fixture files into the crate's working directory. All file-based tests now use per-test temp directories (via a new `tempfile` dev-dependency) that are cleaned up automatically, even when a test panics. Previously, fixed-name files like `test_handle_reload.yaml` were created in the CWD and left behind on failure.
+- Tests that mutate process environment variables (`std::env::set_var` / `remove_var`) are now serialized through a shared lock in a new internal `test_util` module, eliminating races under the parallel test runner.
+
 ### Fixed
 
 - Environment variable placeholders are no longer re-resolved over the entire merged tree on `merge_required` / `merge_optional`. Previously the already-resolved base config was scanned again after every merge, so a variable whose *value* contained placeholder syntax (e.g. a password like `pa${ss}word`) would load fine but break — or double-expand — on the next merge. Each file is now resolved exactly once, when it is loaded.

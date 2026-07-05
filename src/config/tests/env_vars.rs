@@ -135,6 +135,62 @@ app:
 }
 
 #[test]
+fn resolved_value_with_placeholder_syntax_survives_merge() {
+    use std::fs::{self, File};
+    use std::io::Write;
+
+    // The env var's *value* contains placeholder syntax — after resolution it
+    // must be preserved verbatim, not re-resolved when an overlay is merged.
+    env::set_var("TRAIL_TEST_LITERAL", "pa${ss}word");
+
+    let overlay_file = "test_env_merge_no_reresolve.yaml";
+    let mut f = File::create(overlay_file).unwrap();
+    writeln!(f, "app:\n  debug: true").unwrap();
+    drop(f);
+
+    let config = Config::load_yaml("db:\n  password: ${TRAIL_TEST_LITERAL}", "/").unwrap()
+        .merge_required(overlay_file, None).unwrap();
+
+    assert_eq!(config.str("db/password"), "pa${ss}word");
+    assert_eq!(config.get_bool("app/debug"), Some(true));
+
+    env::remove_var("TRAIL_TEST_LITERAL");
+    fs::remove_file(overlay_file).ok();
+}
+
+#[test]
+fn reload_resolves_each_file_once() {
+    use std::fs::{self, File};
+    use std::io::Write;
+
+    env::set_var("TRAIL_TEST_RELOAD_LITERAL", "se${cr}et");
+
+    let base_file = "test_env_reload_base.yaml";
+    let overlay_file = "test_env_reload_overlay.yaml";
+
+    let mut f = File::create(base_file).unwrap();
+    writeln!(f, "db:\n  password: ${{TRAIL_TEST_RELOAD_LITERAL}}").unwrap();
+    drop(f);
+
+    let mut f = File::create(overlay_file).unwrap();
+    writeln!(f, "app:\n  debug: true").unwrap();
+    drop(f);
+
+    let mut config = Config::load_required(base_file, "/", None).unwrap()
+        .merge_required(overlay_file, None).unwrap();
+    assert_eq!(config.str("db/password"), "se${cr}et");
+
+    // Reload must produce the same result as the original load-then-merge
+    config.reload().unwrap();
+    assert_eq!(config.str("db/password"), "se${cr}et");
+    assert_eq!(config.get_bool("app/debug"), Some(true));
+
+    env::remove_var("TRAIL_TEST_RELOAD_LITERAL");
+    fs::remove_file(base_file).ok();
+    fs::remove_file(overlay_file).ok();
+}
+
+#[test]
 fn empty_default_is_valid() {
     env::remove_var("TRAIL_TEST_EMPTY_DEFAULT");
     let yaml = "

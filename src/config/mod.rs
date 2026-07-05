@@ -226,6 +226,10 @@ impl Config {
     /// The overlay filename is recorded so that [`reload`](Config::reload) can re-read and
     /// re-apply it. If the overlay file is missing during a reload, an error is returned.
     ///
+    /// Environment variable placeholders (`${VAR}`, `${VAR:-default}`) are resolved in the
+    /// overlay before merging. Values already present in the base config are not re-resolved,
+    /// so resolved values containing `${` are preserved verbatim.
+    ///
     /// # Arguments
     /// * `filename` - Path to the overlay file (can contain `{env}` placeholder)
     /// * `env` - Optional environment name to substitute in filename
@@ -248,8 +252,8 @@ impl Config {
     #[must_use = "merge returns a new Config; the original is consumed"]
     pub fn merge_required(mut self, filename: &str, env: Option<&str>) -> Result<Config, ConfigError> {
         let (file, _) = Self::get_file(filename, env)?;
-        let yaml = Self::load_auto(&file)?;
-        self.content = Self::resolve_env_vars(Self::merge_values(self.content, yaml))?;
+        let overlay = Self::resolve_env_vars(Self::load_auto(&file)?)?;
+        self.content = Self::merge_values(self.content, overlay);
         self.overlays.push(OverlaySource::Required(file));
         Ok(self)
     }
@@ -264,6 +268,10 @@ impl Config {
     /// The overlay filename is recorded so that [`reload`](Config::reload) can re-read and
     /// re-apply it. If the overlay file is missing during a reload, it is silently skipped.
     /// If the file exists but cannot be parsed, an error is returned.
+    ///
+    /// Environment variable placeholders (`${VAR}`, `${VAR:-default}`) are resolved in the
+    /// overlay before merging. Values already present in the base config are not re-resolved,
+    /// so resolved values containing `${` are preserved verbatim.
     ///
     /// # Arguments
     /// * `filename` - Path to the overlay file (can contain `{env}` placeholder)
@@ -288,7 +296,8 @@ impl Config {
         let (file, _) = Self::get_file(filename, env)?;
         match Self::load_auto(&file) {
             Ok(yaml) => {
-                self.content = Self::resolve_env_vars(Self::merge_values(self.content, yaml))?;
+                let overlay = Self::resolve_env_vars(yaml)?;
+                self.content = Self::merge_values(self.content, overlay);
             },
             Err(ConfigError::IoError(ref e)) if e.kind() == io::ErrorKind::NotFound => {},
             Err(e) => return Err(e),
@@ -351,18 +360,18 @@ impl Config {
             return Err(ConfigError::FormatError("Cannot reload: no file path associated with this config".to_string()));
         }
 
-        let mut content = Self::load_auto(&self.filename)?;
-        
+        let mut content = Self::resolve_env_vars(Self::load_auto(&self.filename)?)?;
+
         for overlay in &self.overlays {
             match overlay {
                 OverlaySource::Required(filename) => {
-                    let yaml = Self::load_auto(filename)?;
+                    let yaml = Self::resolve_env_vars(Self::load_auto(filename)?)?;
                     content = Self::merge_values(content, yaml);
                 },
                 OverlaySource::Optional(filename) => {
                     match Self::load_auto(filename) {
                         Ok(yaml) => {
-                            content = Self::merge_values(content, yaml);
+                            content = Self::merge_values(content, Self::resolve_env_vars(yaml)?);
                         },
                         Err(ConfigError::IoError(ref e)) if e.kind() == io::ErrorKind::NotFound => {},
                         Err(e) => return Err(e),
@@ -371,7 +380,7 @@ impl Config {
             }
         }
 
-        self.content = Self::resolve_env_vars(content)?;
+        self.content = content;
         Ok(())
     }
 

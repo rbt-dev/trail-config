@@ -5,7 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.4.0] - Unreleased
+## [0.4.1] - Not released
+
+### Fixed
+
+- Environment variable placeholders are no longer re-resolved over the entire merged tree on `merge_required` / `merge_optional`. Previously the already-resolved base config was scanned again after every merge, so a variable whose *value* contained placeholder syntax (e.g. a password like `pa${ss}word`) would load fine but break — or double-expand — on the next merge. Each file is now resolved exactly once, when it is loaded.
+- `reload()` now resolves environment variables per file (base and each overlay) before merging, matching the load-then-merge path. Previously it resolved once over the final merged tree, which could produce different results than the original load for values containing `${`.
+
+## [0.4.0] - 2026-04-01
 
 ### Changed
 

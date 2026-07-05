@@ -138,7 +138,7 @@ fn reload_fails_if_required_overlay_deleted() {
     let result = config.reload();
     assert!(result.is_err());
     match result {
-        Err(ConfigError::IoError(_)) => (),
+        Err(ConfigError::IoError { .. }) => (),
         _ => panic!("Expected IoError when required overlay is deleted"),
     }
 

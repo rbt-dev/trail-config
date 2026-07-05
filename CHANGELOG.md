@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Breaking:** `ConfigError` is now derived with `thiserror`, and the `IoError`, `YamlError`, `JsonError` and `TomlError` variants are struct variants carrying the offending filename and the original underlying error instead of stringified messages: `{ file: Option<String>, source: ... }` (`file` is `None` when parsing from a string). `std::error::Error::source()` now returns the wrapped error, and Display messages include the filename when known (e.g. `YAML parse error in config.prod.yaml: ...`). Match with `ConfigError::YamlError { file, source }` or `ConfigError::YamlError { .. }`.
+- **Breaking:** the `JsonError` and `TomlError` variants now only exist when the corresponding feature is enabled (they carry `serde_json::Error` / `toml::de::Error`). Code matching on them without the feature no longer compiles — such code was unreachable anyway.
+- JSON/TOML → YAML value conversion failures (previously stringified into `JsonError`/`TomlError`) now surface as `YamlError`, since the conversion happens in the YAML layer. Parse errors still surface as `JsonError`/`TomlError`.
+- `thiserror` added as a dependency.
+
 - Tests no longer write fixture files into the crate's working directory. All file-based tests now use per-test temp directories (via a new `tempfile` dev-dependency) that are cleaned up automatically, even when a test panics. Previously, fixed-name files like `test_handle_reload.yaml` were created in the CWD and left behind on failure.
 - Tests that mutate process environment variables (`std::env::set_var` / `remove_var`) are now serialized through a shared lock in a new internal `test_util` module, eliminating races under the parallel test runner.
 

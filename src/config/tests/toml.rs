@@ -69,7 +69,7 @@ fn load_toml_invalid_errors() {
     let result = Config::load_toml("invalid = [unclosed", "/");
     assert!(result.is_err());
     match result {
-        Err(ConfigError::TomlError(_)) => (),
+        Err(ConfigError::TomlError { .. }) => (),
         other => panic!("Expected TomlError, got: {:?}", other),
     }
 }

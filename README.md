@@ -226,18 +226,23 @@ Both styles share the same path syntax and navigate nested config values using s
 
 ## Error Handling
 
-Trail Config uses a custom `ConfigError` enum with four variants:
+Trail Config uses a custom `ConfigError` enum:
 
 ```rust
 use trail_config::ConfigError;
 
-// - IoError(io::Error)    - File I/O errors (missing file, permission denied, etc.)
-// - YamlError(String)     - YAML parsing or deserialization errors
-// - JsonError(String)     - JSON parsing or conversion errors (requires `json` feature)
-// - TomlError(String)     - TOML parsing or conversion errors (requires `toml` feature)
-// - PathNotFound(String)  - Configuration path not found in document
-// - FormatError(String)   - String formatting or configuration errors
+// - IoError { file, source }    - File I/O errors (missing file, permission denied, etc.)
+// - YamlError { file, source }  - YAML parsing or deserialization errors
+// - JsonError { file, source }  - JSON parse errors (requires `json` feature)
+// - TomlError { file, source }  - TOML parse errors (requires `toml` feature)
+// - PathNotFound(String)        - Configuration path not found in document
+// - FormatError(String)         - String formatting or configuration errors
 ```
+
+Load and parse errors record the offending file (`file` is `None` when parsing from a
+string) and preserve the original underlying error in `source`, which is also returned
+by `std::error::Error::source()` for error-chain reporting. Display messages include
+the filename when known, e.g. `YAML parse error in config.prod.yaml: ...`.
 
 ### Handling load errors
 
@@ -249,11 +254,11 @@ match Config::load_required("config.yaml", "/", None) {
         let host = config.str("database/host");
         println!("Connecting to {}", host);
     },
-    Err(ConfigError::IoError(e)) => {
-        eprintln!("Config file error: {}", e);
+    Err(ConfigError::IoError { file, source }) => {
+        eprintln!("Config file error in {}: {}", file.as_deref().unwrap_or("?"), source);
     },
-    Err(ConfigError::YamlError(msg)) => {
-        eprintln!("Invalid YAML: {}", msg);
+    Err(ConfigError::YamlError { source, .. }) => {
+        eprintln!("Invalid YAML: {}", source);
     },
     Err(e) => eprintln!("Config error: {}", e),
 }

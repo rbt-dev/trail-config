@@ -1,37 +1,91 @@
-use std::{error::Error, fmt, io};
+use std::io;
+use thiserror::Error;
 
-#[derive(Debug)]
+/// Error type for all fallible Trail Config operations.
+///
+/// Load and parse errors record the file they occurred in (`file` is `None`
+/// when the config was parsed from a string) and preserve the underlying
+/// error, available via [`std::error::Error::source`].
+#[derive(Debug, Error)]
 pub enum ConfigError {
-    IoError(io::Error),
-    YamlError(String),
-    JsonError(String),
-    TomlError(String),
+    /// File I/O failure (missing file, permission denied, ...).
+    #[error("IO error{}: {source}", fmt_file(.file))]
+    IoError {
+        /// The file being read or written, if the error relates to one.
+        file: Option<String>,
+        source: io::Error,
+    },
+
+    /// YAML parsing or deserialization failure.
+    #[error("YAML parse error{}: {source}", fmt_file(.file))]
+    YamlError {
+        /// The file being parsed, or `None` for string input or `from_value` failures.
+        file: Option<String>,
+        source: yaml_serde::Error,
+    },
+
+    /// JSON parsing failure (requires the `json` feature).
+    #[cfg(feature = "json")]
+    #[error("JSON parse error{}: {source}", fmt_file(.file))]
+    JsonError {
+        /// The file being parsed, or `None` for string input.
+        file: Option<String>,
+        source: serde_json::Error,
+    },
+
+    /// TOML parsing failure (requires the `toml` feature).
+    #[cfg(feature = "toml")]
+    #[error("TOML parse error{}: {source}", fmt_file(.file))]
+    TomlError {
+        /// The file being parsed, or `None` for string input.
+        file: Option<String>,
+        source: toml::de::Error,
+    },
+
+    /// Configuration path not found in the document.
+    #[error("Path not found in config: {0}")]
     PathNotFound(String),
+
+    /// String formatting or configuration error.
+    #[error("Format error: {0}")]
     FormatError(String),
 }
-impl fmt::Display for ConfigError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            ConfigError::IoError(e) => write!(f, "IO error: {}", e),
-            ConfigError::YamlError(msg) => write!(f, "YAML parse error: {}", msg),
-            ConfigError::JsonError(msg) => write!(f, "JSON parse error: {}", msg),
-            ConfigError::TomlError(msg) => write!(f, "TOML parse error: {}", msg),
-            ConfigError::PathNotFound(path) => write!(f, "Path not found in config: {}", path),
-            ConfigError::FormatError(msg) => write!(f, "Format error: {}", msg),
-        }
+
+fn fmt_file(file: &Option<String>) -> String {
+    match file {
+        Some(f) => format!(" in {}", f),
+        None => String::new(),
     }
 }
 
-impl Error for ConfigError {}
+impl ConfigError {
+    pub(crate) fn io_in(file: &str, source: io::Error) -> Self {
+        ConfigError::IoError { file: Some(file.to_string()), source }
+    }
+
+    pub(crate) fn yaml_in(file: &str, source: yaml_serde::Error) -> Self {
+        ConfigError::YamlError { file: Some(file.to_string()), source }
+    }
+
+    #[cfg(feature = "json")]
+    pub(crate) fn json_in(file: Option<&str>, source: serde_json::Error) -> Self {
+        ConfigError::JsonError { file: file.map(str::to_string), source }
+    }
+
+    #[cfg(feature = "toml")]
+    pub(crate) fn toml_in(file: Option<&str>, source: toml::de::Error) -> Self {
+        ConfigError::TomlError { file: file.map(str::to_string), source }
+    }
+}
 
 impl From<io::Error> for ConfigError {
     fn from(err: io::Error) -> Self {
-        ConfigError::IoError(err)
+        ConfigError::IoError { file: None, source: err }
     }
 }
 
 impl From<yaml_serde::Error> for ConfigError {
     fn from(err: yaml_serde::Error) -> Self {
-        ConfigError::YamlError(err.to_string())
+        ConfigError::YamlError { file: None, source: err }
     }
 }

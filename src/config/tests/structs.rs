@@ -44,7 +44,7 @@ fn get_as_strict_type_mismatch() {
 
     assert!(result.is_err());
     match result {
-        Err(ConfigError::YamlError(_)) => (),
+        Err(ConfigError::YamlError { .. }) => (),
         _ => panic!("Expected YamlError"),
     }
 }
@@ -124,7 +124,7 @@ fn deserialize_strict_type_mismatch() {
 
     assert!(result.is_err());
     match result {
-        Err(ConfigError::YamlError(_)) => (),
+        Err(ConfigError::YamlError { .. }) => (),
         _ => panic!("Expected YamlError"),
     }
 }
@@ -151,7 +151,7 @@ fn deserialize_strict_empty_config() {
 
     assert!(result.is_err());
     match result {
-        Err(ConfigError::YamlError(_)) => (),
+        Err(ConfigError::YamlError { .. }) => (),
         _ => panic!("Expected YamlError for empty config"),
     }
 }

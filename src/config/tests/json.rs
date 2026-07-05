@@ -70,7 +70,7 @@ fn load_json_invalid_errors() {
     let result = Config::load_json("{invalid json}", "/");
     assert!(result.is_err());
     match result {
-        Err(ConfigError::JsonError(_)) => (),
+        Err(ConfigError::JsonError { .. }) => (),
         other => panic!("Expected JsonError, got: {:?}", other),
     }
 }

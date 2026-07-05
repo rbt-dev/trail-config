@@ -77,10 +77,13 @@ impl Config {
     /// ```
     pub fn load_required(filename: &str, sep: &str, env: Option<&str>) -> Result<Config, ConfigError> {
         if filename.is_empty() {
-            return Err(ConfigError::IoError(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "load_required: filename cannot be empty",
-            )));
+            return Err(ConfigError::IoError {
+                file: None,
+                source: io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "load_required: filename cannot be empty",
+                ),
+            });
         }
         Self::load_internal(filename, sep, env)
     }
@@ -122,7 +125,7 @@ impl Config {
     pub fn load_optional(filename: &str, sep: &str, env: Option<&str>) -> Result<Config, ConfigError> {
         match Self::load_internal(filename, sep, env) {
             Ok(config) => Ok(config),
-            Err(ConfigError::IoError(ref e)) if e.kind() == io::ErrorKind::NotFound => {
+            Err(ConfigError::IoError { ref source, .. }) if source.kind() == io::ErrorKind::NotFound => {
                 Ok(Config {
                     content: Value::Null,
                     filename: String::new(),
@@ -178,9 +181,9 @@ impl Config {
     pub fn load_or_create(filename: &str, sep: &str, env: Option<&str>, defaults: &str) -> Result<Config, ConfigError> {
         match Self::load_internal(filename, sep, env) {
             Ok(config) => Ok(config),
-            Err(ConfigError::IoError(ref e)) if e.kind() == io::ErrorKind::NotFound => {
+            Err(ConfigError::IoError { ref source, .. }) if source.kind() == io::ErrorKind::NotFound => {
                 let (file, _) = Self::get_file(filename, env)?;
-                fs::write(&file, defaults)?;
+                fs::write(&file, defaults).map_err(|e| ConfigError::io_in(&file, e))?;
                 Self::load_yaml(defaults, sep)
             },
             Err(e) => Err(e),
@@ -299,7 +302,7 @@ impl Config {
                 let overlay = Self::resolve_env_vars(yaml)?;
                 self.content = Self::merge_values(self.content, overlay);
             },
-            Err(ConfigError::IoError(ref e)) if e.kind() == io::ErrorKind::NotFound => {},
+            Err(ConfigError::IoError { ref source, .. }) if source.kind() == io::ErrorKind::NotFound => {},
             Err(e) => return Err(e),
         }
         self.overlays.push(OverlaySource::Optional(file));
@@ -373,7 +376,7 @@ impl Config {
                         Ok(yaml) => {
                             content = Self::merge_values(content, Self::resolve_env_vars(yaml)?);
                         },
-                        Err(ConfigError::IoError(ref e)) if e.kind() == io::ErrorKind::NotFound => {},
+                        Err(ConfigError::IoError { ref source, .. }) if source.kind() == io::ErrorKind::NotFound => {},
                         Err(e) => return Err(e),
                     }
                 },
@@ -636,8 +639,7 @@ impl Config {
     pub fn get_as_strict<T: serde::de::DeserializeOwned>(&self, path: &str) -> Result<T, ConfigError> {
         let value = Self::get_leaf(&self.content, path, &self.separator)
             .ok_or_else(|| ConfigError::PathNotFound(path.to_string()))?;
-        yaml_serde::from_value(value)
-            .map_err(|e| ConfigError::YamlError(e.to_string()))
+        yaml_serde::from_value(value).map_err(ConfigError::from)
     }
 
     /// Deserializes the entire config into a typed struct
@@ -690,8 +692,7 @@ impl Config {
     /// assert_eq!(cfg.database.host, "localhost");
     /// ```
     pub fn deserialize_strict<T: serde::de::DeserializeOwned>(&self) -> Result<T, ConfigError> {
-        yaml_serde::from_value(self.content.clone())
-            .map_err(|e| ConfigError::YamlError(e.to_string()))
+        yaml_serde::from_value(self.content.clone()).map_err(ConfigError::from)
     }
 
     /// Formats a string template with values from the config

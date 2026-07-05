@@ -3,17 +3,19 @@ use crate::error::ConfigError;
 use std::fs;
 
 pub(crate) fn load_file(filename: &str) -> Result<Value, ConfigError> {
-    let content = fs::read_to_string(filename)?;
-    parse(&content)
+    let content = fs::read_to_string(filename)
+        .map_err(|e| ConfigError::io_in(filename, e))?;
+    parse_internal(&content, Some(filename))
 }
 
 pub(crate) fn parse(toml_str: &str) -> Result<Value, ConfigError> {
-    let toml_value: toml::Value = toml::from_str(toml_str)
-        .map_err(|e| ConfigError::TomlError(e.to_string()))?;
-    toml_to_yaml(toml_value)
+    parse_internal(toml_str, None)
 }
 
-fn toml_to_yaml(toml_val: toml::Value) -> Result<Value, ConfigError> {
-    yaml_serde::to_value(toml_val)
-        .map_err(|e| ConfigError::TomlError(format!("TOML to YAML conversion error: {}", e)))
+fn parse_internal(toml_str: &str, file: Option<&str>) -> Result<Value, ConfigError> {
+    let toml_value: toml::Value = toml::from_str(toml_str)
+        .map_err(|e| ConfigError::toml_in(file, e))?;
+    // Conversion into the YAML value model happens in yaml_serde, so a
+    // failure here surfaces as a YamlError
+    yaml_serde::to_value(toml_value).map_err(ConfigError::from)
 }

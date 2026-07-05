@@ -57,7 +57,7 @@ fn merge_required_missing_file_returns_error() {
 
     assert!(result.is_err());
     match result {
-        Err(ConfigError::IoError(_)) => (),
+        Err(ConfigError::IoError { .. }) => (),
         _ => panic!("Expected IoError for missing required overlay"),
     }
 }
@@ -92,7 +92,7 @@ fn merge_optional_invalid_yaml_returns_error() {
 
     assert!(result.is_err());
     match result {
-        Err(ConfigError::YamlError(_)) => (),
+        Err(ConfigError::YamlError { .. }) => (),
         _ => panic!("Expected YamlError for invalid optional overlay"),
     }
 }

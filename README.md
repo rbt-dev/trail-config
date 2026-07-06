@@ -310,8 +310,7 @@ Trail Config validates inputs automatically and returns `FormatError` for invali
 | Input | Constraint | Error |
 | ----- | ---------- | ----- |
 | Path separator | Cannot be empty | Returns `FormatError` |
-| File paths (`load_required`) | Empty filename explicitly rejected | Returns `IoError` |
-| File paths (`load_optional`) | Empty filename passed to OS | Returns `IoError` |
+| File paths | Empty filename rejected upfront by every loader (`load_required`, `load_optional`, `load_or_create`) and `reload_from` | Returns `IoError` (`InvalidInput`) |
 | Paths | Empty paths safely handled | Returns `None` or empty |
 | Separators (leading/trailing) | Handled gracefully | No error |
 | Filename templates | Must be valid format strings | Returns `FormatError` |
@@ -321,8 +320,14 @@ Trail Config validates inputs automatically and returns `FormatError` for invali
 let result = Config::load_optional("config.yaml", "", None);
 assert!(result.is_err()); // FormatError
 
-// load_required rejects empty filename upfront
+// Empty filename - rejected upfront by all loaders with IoError (InvalidInput)
 let result = Config::load_required("", "/", None);
+assert!(result.is_err()); // IoError (InvalidInput)
+
+let result = Config::load_optional("", "/", None);
+assert!(result.is_err()); // IoError (InvalidInput) — no longer silently returns an empty config
+
+let result = Config::load_or_create("", "/", None, "app:\n  port: 1\n");
 assert!(result.is_err()); // IoError (InvalidInput)
 
 // Missing file with load_required - error

@@ -76,15 +76,6 @@ impl Config {
     ///     .expect("Failed to load required config.yaml");
     /// ```
     pub fn load_required(filename: &str, sep: &str, env: Option<&str>) -> Result<Config, ConfigError> {
-        if filename.is_empty() {
-            return Err(ConfigError::IoError {
-                file: None,
-                source: io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    "load_required: filename cannot be empty",
-                ),
-            });
-        }
         Self::load_internal(filename, sep, env)
     }
 
@@ -106,7 +97,7 @@ impl Config {
     /// Returns `Ok(Config)` on success or if the file is not found
     ///
     /// # Errors
-    /// Returns `ConfigError::IoError` if the file exists but cannot be read (e.g. permission denied)
+    /// Returns `ConfigError::IoError` if the filename is empty, or the file exists but cannot be read (e.g. permission denied)
     /// Returns `ConfigError::YamlError`, `ConfigError::JsonError` or `ConfigError::TomlError` if the file cannot be parsed
     /// Returns `ConfigError::FormatError` if the separator is empty or filename template is invalid
     ///
@@ -159,7 +150,7 @@ impl Config {
     /// Returns `Ok(Config)` with the file content, or the defaults if the file was created
     ///
     /// # Errors
-    /// Returns `ConfigError::IoError` if the file exists but cannot be read, or if writing fails
+    /// Returns `ConfigError::IoError` if the filename is empty, the file exists but cannot be read, or if writing fails
     /// Returns `ConfigError::YamlError`, `ConfigError::JsonError` or `ConfigError::TomlError` if the file
     ///     or the defaults string cannot be parsed in the format matching the file extension
     /// Returns `ConfigError::FormatError` if the separator is empty or filename template is invalid
@@ -197,6 +188,9 @@ impl Config {
     }
 
     fn load_internal(filename: &str, sep: &str, env: Option<&str>) -> Result<Config, ConfigError> {
+        if filename.is_empty() {
+            return Err(empty_filename_error());
+        }
         if sep.is_empty() {
             return Err(ConfigError::FormatError("Separator cannot be empty".to_string()));
         }
@@ -405,7 +399,7 @@ impl Config {
     /// Returns `Ok(())` on success, or `Err(ConfigError)` if the file cannot be read or parsed
     ///
     /// # Errors
-    /// Returns `ConfigError::IoError` if the file is missing or cannot be read
+    /// Returns `ConfigError::IoError` if the file is missing, the filename is empty, or cannot be read
     /// Returns `ConfigError::YamlError`, `ConfigError::JsonError` or `ConfigError::TomlError` if the file cannot be parsed
     ///
     /// # Example
@@ -416,6 +410,9 @@ impl Config {
     /// config.reload_from("other_config.yaml").expect("Failed to load");
     /// ```
     pub fn reload_from(&mut self, filename: &str) -> Result<(), ConfigError> {
+        if filename.is_empty() {
+            return Err(empty_filename_error());
+        }
         let yaml = Self::load_auto(filename)?;
         self.filename = filename.to_string();
         self.content = Self::resolve_env_vars(yaml)?;
@@ -1080,6 +1077,18 @@ impl Config {
         }
 
         Ok(result)
+    }
+}
+
+/// The error returned when a config filename is empty.
+///
+/// An empty filename is almost always a caller bug rather than a "missing file",
+/// so it is rejected upfront with `InvalidInput` instead of being handed to the OS
+/// (which would report `NotFound`, indistinguishable from a genuinely-absent named file).
+fn empty_filename_error() -> ConfigError {
+    ConfigError::IoError {
+        file: None,
+        source: io::Error::new(io::ErrorKind::InvalidInput, "filename cannot be empty"),
     }
 }
 

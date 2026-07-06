@@ -188,8 +188,55 @@ fn load_required_rejects_empty_filename() {
 
     assert!(config.is_err());
     match config {
-        Err(ConfigError::IoError { .. }) => (),
-        _ => panic!("Expected IoError for empty filename"),
+        Err(ConfigError::IoError { source, .. }) => {
+            assert_eq!(source.kind(), std::io::ErrorKind::InvalidInput);
+        },
+        _ => panic!("Expected IoError(InvalidInput) for empty filename"),
+    }
+}
+
+#[test]
+fn load_optional_rejects_empty_filename() {
+    // Previously this silently returned an empty config: reading an empty path
+    // yields NotFound, which load_optional treated as a missing optional file.
+    // An empty filename is a caller bug and must be rejected upfront.
+    let result = Config::load_optional("", "/", None);
+
+    assert!(result.is_err());
+    match result {
+        Err(ConfigError::IoError { source, .. }) => {
+            assert_eq!(source.kind(), std::io::ErrorKind::InvalidInput);
+        },
+        _ => panic!("Expected IoError(InvalidInput) for empty filename, got {:?}", result),
+    }
+}
+
+#[test]
+fn load_or_create_rejects_empty_filename() {
+    let result = Config::load_or_create("", "/", None, "app:\n  port: 8080\n");
+
+    assert!(result.is_err());
+    match result {
+        Err(ConfigError::IoError { source, .. }) => {
+            assert_eq!(source.kind(), std::io::ErrorKind::InvalidInput);
+        },
+        _ => panic!("Expected IoError(InvalidInput) for empty filename, got {:?}", result),
+    }
+}
+
+#[test]
+fn all_loaders_reject_empty_filename_uniformly() {
+    for result in [
+        Config::load_required("", "/", None),
+        Config::load_optional("", "/", None),
+        Config::load_or_create("", "/", None, "app:\n  port: 1\n"),
+    ] {
+        match result {
+            Err(ConfigError::IoError { source, .. }) => {
+                assert_eq!(source.kind(), std::io::ErrorKind::InvalidInput);
+            },
+            other => panic!("Expected IoError(InvalidInput), got {:?}", other),
+        }
     }
 }
 

@@ -166,3 +166,25 @@ fn reload_from_does_not_reapply_stale_overlays() {
     config.reload().unwrap();
     assert_eq!(config.str("app/port"), "3000");
 }
+
+#[test]
+fn reload_from_rejects_empty_filename() {
+    let dir = temp_dir();
+    let test_file = write_file(&dir, "config.yaml", "app:\n  port: 8080\n");
+
+    let mut config = Config::load_optional(&test_file, "/", None).unwrap();
+    assert_eq!(config.str("app/port"), "8080");
+
+    let result = config.reload_from("");
+    assert!(result.is_err());
+    match result {
+        Err(ConfigError::IoError { source, .. }) => {
+            assert_eq!(source.kind(), std::io::ErrorKind::InvalidInput);
+        },
+        _ => panic!("Expected IoError(InvalidInput) for empty filename"),
+    }
+
+    // Config is left unchanged — the check fires before any state mutation
+    assert_eq!(config.str("app/port"), "8080");
+    assert_eq!(config.get_filename(), test_file);
+}

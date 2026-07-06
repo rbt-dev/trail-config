@@ -1,5 +1,5 @@
 use super::{Config, ConfigError, YAML};
-use crate::test_util::{temp_dir, write_file};
+use crate::test_util::{temp_dir, write_file, CwdGuard};
 
 #[test]
 fn yaml_parse_error() {
@@ -286,4 +286,38 @@ fn load_errors_carry_filename_and_source() {
         other => panic!("Expected YamlError without file, got: {:?}", other),
     }
     assert!(err.source().is_some());
+}
+
+#[test]
+fn default_returns_empty_config_when_file_missing() {
+    // config.yaml is hardcoded as CWD-relative; isolate via a temp CWD.
+    let dir = temp_dir();
+    let _cwd = CwdGuard::new(dir.path());
+
+    let config = Config::default();
+    assert!(!config.contains("any/path"));
+    assert_eq!(config.str("any/path"), "");
+}
+
+#[test]
+fn default_loads_valid_config_yaml_from_cwd() {
+    let dir = temp_dir();
+    write_file(&dir, "config.yaml", "app:\n  port: 8080\n");
+    let _cwd = CwdGuard::new(dir.path());
+
+    let config = Config::default();
+    assert_eq!(config.str("app/port"), "8080");
+}
+
+#[test]
+#[should_panic(expected = "Config::default() failed to load config.yaml")]
+fn default_panics_on_broken_config_yaml_in_cwd() {
+    // Previously a broken config.yaml was silently swallowed into an empty
+    // config; it must now panic to surface the mistake. CwdGuard restores the
+    // working directory even though default() panics (drop runs on unwind).
+    let dir = temp_dir();
+    write_file(&dir, "config.yaml", "invalid: [unclosed\n");
+    let _cwd = CwdGuard::new(dir.path());
+
+    let _ = Config::default();
 }

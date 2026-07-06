@@ -48,7 +48,7 @@ Trail Config exposes four constructors with a clear, symmetric design:
 | `Config::load_required(filename, sep, env)` | Yes — errors if missing | Production: config must exist |
 | `Config::load_optional(filename, sep, env)` | No — returns empty config if missing | Optional or environment-specific files |
 | `Config::load_or_create(filename, sep, env, defaults)` | No — creates from defaults if missing | First-run config generation |
-| `Config::default()` | No | Shorthand for `load_optional("config.yaml", "/", None)` |
+| `Config::default()` | No | Shorthand for `load_optional("config.yaml", "/", None)`. Empty if missing, **panics if broken** |
 
 ### Required config (production)
 
@@ -77,10 +77,10 @@ let config = Config::load_optional("config.{env}.yaml", "/", Some("dev"))?;
 
 ### Default (shorthand)
 
-Use `Config::default()` when `config.yaml` with `/` separator is acceptable and the file is optional:
+Use `Config::default()` when `config.yaml` with `/` separator is acceptable and the file is optional. A missing file yields an empty config; a present-but-**broken** file panics (use `load_optional` to get the error instead):
 
 ```rust
-let config = Config::default(); // Never panics, gracefully handles missing config.yaml
+let config = Config::default(); // Empty if missing; panics if config.yaml is broken
 ```
 
 ### From a YAML string

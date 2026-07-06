@@ -25,28 +25,40 @@ pub struct Config {
 }
 
 impl Default for Config {
-    /// Creates a Config, attempting to load from `config.yaml` if it exists.
+    /// Creates a `Config`, loading from `config.yaml` in the current directory.
     ///
-    /// If `config.yaml` is found and valid, it will be loaded. If the file doesn't exist
-    /// or fails to parse, this returns an empty config without panicking.
+    /// Shorthand for `Config::load_optional("config.yaml", "/", None)`:
     ///
-    /// Shorthand for `Config::load_optional("config.yaml", "/", None)`.
+    /// - If `config.yaml` does **not exist**, returns an empty config.
+    /// - If `config.yaml` exists and is **valid**, loads it.
+    /// - If `config.yaml` exists but is **broken** (invalid YAML/JSON/TOML,
+    ///   permission denied, ...), this **panics** rather than silently returning
+    ///   an empty config — a present-but-broken config file is almost always a
+    ///   deployment mistake worth surfacing immediately.
+    ///
+    /// `load_optional` already treats "file not found" as an empty config, so the
+    /// only errors that reach this method are genuine failures (parse errors,
+    /// permission denied, ...), and those are surfaced as a panic.
+    ///
+    /// # Panics
+    /// Panics if `config.yaml` exists but cannot be read or parsed. For
+    /// non-panicking behaviour use [`Config::load_optional`] (returns the error
+    /// as a `Result`) or [`Config::load_required`].
     ///
     /// # Example
     /// ```
     /// # use trail_config::Config;
-    /// let config = Config::default(); // Loads config.yaml if it exists, or returns empty config
-    /// // Always succeeds - never panics
+    /// let config = Config::default(); // Loads config.yaml if present and valid
     /// ```
     fn default() -> Self {
-        Self::load_optional("config.yaml", "/", None)
-            .unwrap_or_else(|_| Config {
-                content: Value::Null,
-                filename: String::new(),
-                separator: "/".to_string(),
-                environment: None,
-                overlays: Vec::new(),
-            })
+        Self::load_optional("config.yaml", "/", None).unwrap_or_else(|e| {
+            panic!(
+                "Config::default() failed to load config.yaml: {e}.\n\
+                 A present-but-broken config file is likely a mistake; refusing to silently \
+                 fall back to an empty config. Use Config::load_optional(\"config.yaml\", \
+                 \"/\", None) to obtain the error as a Result, or Config::load_required."
+            )
+        })
     }
 }
 

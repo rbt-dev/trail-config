@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - README: removed the duplicated "Thread Safety" section (merged into "Thread-Safe Shared Config") and documented the `load_or_create` defaults-format behaviour.
 - Tests no longer write fixture files into the crate's working directory. All file-based tests now use per-test temp directories (via a new `tempfile` dev-dependency) that are cleaned up automatically, even when a test panics. Previously, fixed-name files like `test_handle_reload.yaml` were created in the CWD and left behind on failure.
 - Tests that mutate process environment variables (`std::env::set_var` / `remove_var`) are now serialized through a shared lock in a new internal `test_util` module, eliminating races under the parallel test runner.
+- Internal restructure: the 1,108-line `src/config/mod.rs` has been split into focused submodules — `loader` (constructors), `accessor` (value reading), `merge`, `reload`, `path` (path parsing/navigation), `env` (variable interpolation) and `fmt`. `mod.rs` now holds only the `Config` type, its `Default` impl and the metadata accessors. Private helpers that never took `self` (`get_leaf`, `parse_path`, `merge_values`, `resolve_env_vars`, `get_file`, `load_auto`, `to_string`) are now free functions in their respective modules. No public API, behaviour or documentation changes.
 
 ### Fixed
 

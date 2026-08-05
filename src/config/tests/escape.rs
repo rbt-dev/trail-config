@@ -1,4 +1,5 @@
 use super::Config;
+use crate::config::path::parse_path;
 
 #[test]
 fn escaped_separator_in_key() {
@@ -75,36 +76,36 @@ database:
 
 #[test]
 fn parse_path_basic() {
-    let parts = Config::parse_path("a/b/c", "/");
+    let parts = parse_path("a/b/c", "/");
     assert_eq!(parts, vec!["a", "b", "c"]);
 }
 
 #[test]
 fn parse_path_with_escaped_separator() {
-    let parts = Config::parse_path("a/b\\/c/d", "/");
+    let parts = parse_path("a/b\\/c/d", "/");
     assert_eq!(parts, vec!["a", "b/c", "d"]);
 }
 
 #[test]
 fn parse_path_with_escaped_backslash() {
-    let parts = Config::parse_path("a/b\\\\c/d", "/");
+    let parts = parse_path("a/b\\\\c/d", "/");
     assert_eq!(parts, vec!["a", "b\\c", "d"]);
 }
 
 #[test]
 fn parse_path_multiple_escapes() {
-    let parts = Config::parse_path("a\\/b\\/c/d", "/");
+    let parts = parse_path("a\\/b\\/c/d", "/");
     assert_eq!(parts, vec!["a/b/c", "d"]);
 }
 
 #[test]
 fn parse_path_with_custom_separator() {
-    let parts = Config::parse_path("a::b\\::c::d", "::");
+    let parts = parse_path("a::b\\::c::d", "::");
     assert_eq!(parts, vec!["a", "b::c", "d"]);
 }
 
 #[test]
 fn parse_path_escape_requires_full_separator() {
-    let parts = Config::parse_path(r"a::b\:c::d", "::");
+    let parts = parse_path(r"a::b\:c::d", "::");
     assert_eq!(parts, vec!["a", r"b\:c", "d"]);
 }

@@ -141,7 +141,7 @@ mod tests {
 app:
   port: 8080
   debug: true
-  timeout: 3.14
+  timeout: 4.55
 ";
 
     #[test]

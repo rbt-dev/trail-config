@@ -1,5 +1,6 @@
 //! Path parsing and navigation into the config value tree.
 
+use std::mem;
 use yaml_serde::Value;
 
 pub(super) fn get_leaf<'a>(mut content: &'a Value, path: &str, separator: &str) -> Option<&'a Value> {
@@ -26,44 +27,46 @@ pub(super) fn get_leaf<'a>(mut content: &'a Value, path: &str, separator: &str) 
 ///
 /// - `\<sep>` becomes a literal separator in the key (e.g. `\/` for `/`, `\::` for `::`)
 /// - `\\` becomes a literal backslash in the key
+///
+/// Walks the path as a shrinking `&str` suffix and tests it with `strip_prefix`, so
+/// nothing is allocated while scanning — only the returned segments. Matching on the
+/// escape sequence before the separator preserves the precedence a separator that
+/// itself starts with `\` would otherwise disturb.
 pub(super) fn parse_path(path: &str, separator: &str) -> Vec<String> {
+    // An empty separator would make `strip_prefix` match at every position and never
+    // advance. Callers are guarded (`check_separator` on construction, `get_leaf`
+    // above), so this is only a backstop against an infinite loop.
+    if separator.is_empty() {
+        return vec![path.to_string()];
+    }
+
     let mut parts = Vec::new();
     let mut current = String::new();
-    let mut chars = path.chars().peekable();
-    let sep_first_char = separator.chars().next().unwrap_or('/');
+    let mut rest = path;
 
-    while let Some(ch) = chars.next() {
-        if ch == '\\' {
-            let remaining: String = chars.clone().collect();
-            if remaining.starts_with(separator) {
+    while !rest.is_empty() {
+        if let Some(after_escape) = rest.strip_prefix('\\') {
+            if let Some(tail) = after_escape.strip_prefix(separator) {
+                // `\<sep>` — a literal separator inside the key
                 current.push_str(separator);
-                for _ in 0..separator.chars().count() {
-                    chars.next();
-                }
-            } else if let Some(&next) = chars.peek() {
-                if next == '\\' {
-                    current.push('\\');
-                    chars.next();
-                } else {
-                    current.push(ch);
-                }
+                rest = tail;
+            } else if let Some(tail) = after_escape.strip_prefix('\\') {
+                // `\\` — a literal backslash
+                current.push('\\');
+                rest = tail;
             } else {
-                current.push(ch);
+                // A backslash escaping nothing in particular stays as itself
+                current.push('\\');
+                rest = after_escape;
             }
-        } else if ch == sep_first_char {
-            let remaining: String = chars.clone().collect();
-            let expected_rest = &separator[sep_first_char.len_utf8()..];
-            if remaining.starts_with(expected_rest) {
-                parts.push(current.clone());
-                current.clear();
-                for _ in 1..separator.chars().count() {
-                    chars.next();
-                }
-            } else {
-                current.push(ch);
-            }
+        } else if let Some(tail) = rest.strip_prefix(separator) {
+            parts.push(mem::take(&mut current));
+            rest = tail;
         } else {
+            let mut chars = rest.chars();
+            let ch = chars.next().expect("rest is non-empty");
             current.push(ch);
+            rest = chars.as_str();
         }
     }
 

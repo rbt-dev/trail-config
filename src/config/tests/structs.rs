@@ -73,7 +73,7 @@ fn get_as_nested_struct() {
     let config = Config::load_yaml(YAML, "/").unwrap();
     let app: AppConfig = config.get_as_strict("app").unwrap();
 
-    assert_eq!(app.debug, true);
+    assert!(app.debug);
     assert_eq!(app.max_retries, 5);
     assert!((app.timeout - 2.5).abs() < 0.001);
 }
@@ -108,7 +108,7 @@ fn deserialize_strict_full_config() {
     assert_eq!(full.db.redis.server, "127.0.0.1");
     assert_eq!(full.db.redis.port, 6379);
     assert_eq!(full.db.redis.key_expiry, 3600);
-    assert_eq!(full.app.debug, true);
+    assert!(full.app.debug);
     assert_eq!(full.app.max_retries, 5);
     assert!((full.app.timeout - 2.5).abs() < 0.001);
 }

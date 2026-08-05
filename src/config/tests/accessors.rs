@@ -124,7 +124,7 @@ fn get_bool_strict_success() {
 
     let result = config.get_bool_strict("app/debug");
     assert!(result.is_ok());
-    assert_eq!(result.unwrap(), true);
+    assert!(result.unwrap());
 }
 
 #[test]

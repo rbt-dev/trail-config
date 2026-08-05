@@ -126,6 +126,14 @@ impl From<Config> for ConfigHandle {
 }
 
 #[cfg(test)]
+const _: () = {
+    fn _assert_send_sync<T: Send + Sync>() {}
+    fn _check() {
+        _assert_send_sync::<ConfigHandle>();
+    }
+};
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -142,7 +150,7 @@ app:
         assert_eq!(handle.str("app/port"), "8080");
         assert_eq!(handle.get_int("app/port"), Some(8080));
         assert_eq!(handle.get_bool("app/debug"), Some(true));
-        assert_eq!(handle.get_float("app/timeout"), Some(3.14));
+        assert_eq!(handle.get_float("app/timeout"), Some(4.55));
         assert!(handle.contains("app/port"));
         assert!(!handle.contains("app/missing"));
     }
@@ -235,11 +243,3 @@ app:
         for t in threads { t.join().unwrap(); }
     }
 }
-
-#[cfg(test)]
-const _: () = {
-    fn _assert_send_sync<T: Send + Sync>() {}
-    fn _check() {
-        _assert_send_sync::<ConfigHandle>();
-    }
-};

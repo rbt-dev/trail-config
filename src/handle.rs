@@ -8,8 +8,9 @@ use crate::{Config, ConfigError};
 /// Cloning a `ConfigHandle` is cheap — all clones refer to the same
 /// underlying config.
 ///
-/// Reads acquire a shared read lock; [`reload`](ConfigHandle::reload) acquires
-/// an exclusive write lock for the duration of the file read and parse.
+/// Reads acquire a shared read lock. [`reload`](ConfigHandle::reload) does its file
+/// read and parse without holding the write lock, taking it only to swap the finished
+/// config in, so readers are never blocked on disk I/O.
 ///
 /// # Example
 /// ```no_run
@@ -61,9 +62,14 @@ impl ConfigHandle {
 
     /// Reloads the config from disk, re-applying all overlays in order.
     ///
-    /// Acquires a write lock for the duration of the reload. All reads will
-    /// block until the reload completes. If the reload fails, the existing
-    /// configuration is preserved unchanged.
+    /// The file reads and parsing happen with **no lock held**. The source list
+    /// (base filename plus the overlay chain) is copied under a read lock, the new
+    /// config is built off to the side, and the write lock is taken only to swap the
+    /// finished config in. Readers are therefore never blocked on disk I/O — only for
+    /// the swap itself.
+    ///
+    /// If the reload fails, no swap occurs and the existing configuration is preserved
+    /// unchanged.
     ///
     /// # Errors
     /// Returns the same errors as [`Config::reload`].
@@ -78,9 +84,17 @@ impl ConfigHandle {
     /// # }
     /// ```
     pub fn reload(&self) -> Result<(), ConfigError> {
-        self.inner.write()
-            .unwrap_or_else(|e| e.into_inner())
-            .reload()
+        // Read lock: copies filenames and the overlay chain, not the document.
+        // The guard is a temporary and is dropped at the end of this statement.
+        let mut next = self.read().sources();
+
+        // No lock held — disk I/O and parsing happen here. On failure we return
+        // early and the live config is left untouched.
+        next.reload()?;
+
+        // Write lock held for a move, not for I/O.
+        *self.inner.write().unwrap_or_else(|e| e.into_inner()) = next;
+        Ok(())
     }
 
     /// Convenience method — gets a value as a string at the specified path.
@@ -226,6 +240,38 @@ app:
 
         assert!(handle.reload().is_err());
         assert_eq!(handle.str("app/port"), "8080"); // still intact
+    }
+
+    #[test]
+    fn reload_while_readers_are_active() {
+        use crate::test_util::{temp_dir, write_file};
+        use std::{fs, thread};
+
+        let dir = temp_dir();
+        let path = write_file(&dir, "config.yaml", "app:\n  port: 1000\n");
+
+        let handle = ConfigHandle::new(
+            Config::load_required(&path, "/", None).unwrap()
+        );
+
+        // Readers hammer the handle while the reload runs. This would hang if
+        // reload took a read lock and then a write lock without releasing.
+        let readers: Vec<_> = (0..4).map(|_| {
+            let h = handle.clone();
+            thread::spawn(move || {
+                for _ in 0..500 {
+                    // Always a committed value — never a half-swapped state
+                    let port = h.get_int("app/port").unwrap();
+                    assert!(port == 1000 || port == 2000, "unexpected port {}", port);
+                }
+            })
+        }).collect();
+
+        fs::write(&path, "app:\n  port: 2000\n").unwrap();
+        handle.reload().unwrap();
+
+        for r in readers { r.join().unwrap(); }
+        assert_eq!(handle.get_int("app/port"), Some(2000));
     }
 
     #[test]

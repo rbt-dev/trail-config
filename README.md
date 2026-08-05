@@ -548,10 +548,16 @@ let debug = handle.get_bool("app/debug");
 // Full Config access via read guard
 let db: DatabaseConfig = handle.read().get_as_strict("database")?;
 
-// Reload from disk — write-locks for the duration, re-applies all overlays
+// Reload from disk — re-applies all overlays
 handle.reload()?;
 // All clones immediately see the updated values
 ```
+
+`reload()` does its file reads and parsing **without holding the write lock**: it copies
+the source list (base filename plus the overlay chain) under a read lock, builds the new
+config off to the side, and takes the write lock only to swap the finished config in.
+Concurrent readers are never blocked on disk I/O, only for the swap itself. If the reload
+fails, no swap happens and the existing config is left unchanged.
 
 ### Background reload example
 

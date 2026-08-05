@@ -1,6 +1,7 @@
 //! Re-reading the config (and its overlays) from disk at runtime.
 
 use std::io;
+use yaml_serde::Value;
 use crate::error::ConfigError;
 use super::{Config, OverlaySource};
 use super::env::resolve_env_vars;
@@ -66,6 +67,27 @@ impl Config {
 
         self.content = content;
         Ok(())
+    }
+
+    /// Returns a copy of this config's *sources* — base filename, separator, environment
+    /// and the overlay chain — with an empty document.
+    ///
+    /// Calling [`reload`](Config::reload) on the result yields a `Config` equivalent to
+    /// reloading `self`, but without cloning the current document and without needing
+    /// `&mut self`. [`ConfigHandle::reload`](crate::ConfigHandle::reload) uses this to do
+    /// its file I/O off to the side and swap the finished config in afterwards, so readers
+    /// are never blocked on disk.
+    ///
+    /// The overlay chain is preserved, which is why this cannot go through the loader's
+    /// `from_parsed` builder — that always produces an overlay-free config.
+    pub(crate) fn sources(&self) -> Config {
+        Config {
+            content: Value::Null,
+            filename: self.filename.clone(),
+            separator: self.separator.clone(),
+            environment: self.environment.clone(),
+            overlays: self.overlays.clone(),
+        }
     }
 
     /// Reloads the configuration from a different file

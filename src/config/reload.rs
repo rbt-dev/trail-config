@@ -104,6 +104,12 @@ impl Config {
     /// # Errors
     /// Returns `ConfigError::IoError` if the file is missing, the filename is empty, or cannot be read
     /// Returns `ConfigError::YamlError`, `ConfigError::JsonError` or `ConfigError::TomlError` if the file cannot be parsed
+    /// Returns `ConfigError::FormatError` if an environment variable placeholder cannot be resolved
+    ///
+    /// # Note
+    /// If the switch fails for any reason, the existing configuration is preserved
+    /// unchanged — filename, content and the overlay chain are committed together
+    /// only once the new file has been read, parsed and resolved.
     ///
     /// # Example
     /// ```no_run
@@ -116,9 +122,15 @@ impl Config {
         if filename.is_empty() {
             return Err(empty_filename_error());
         }
-        let yaml = load_auto(filename)?;
+
+        // Read, parse and resolve into a local before touching `self`. Every failure
+        // path returns here, leaving the filename, content and overlay chain as they
+        // were — a partial switch would point `reload()` at the new file while the
+        // old overlays were still registered.
+        let content = resolve_env_vars(load_auto(filename)?)?;
+
+        self.content = content;
         self.filename = filename.to_string();
-        self.content = resolve_env_vars(yaml)?;
         self.overlays.clear();
         Ok(())
     }

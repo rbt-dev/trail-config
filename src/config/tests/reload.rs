@@ -168,6 +168,70 @@ fn reload_from_does_not_reapply_stale_overlays() {
 }
 
 #[test]
+fn reload_from_preserves_state_when_env_resolution_fails() {
+    let dir = temp_dir();
+    let base = write_file(&dir, "base.yaml", "app:\n  port: 8080\n");
+    let overlay = write_file(&dir, "overlay.yaml", "app:\n  tag: overlay\n");
+    // Parses fine, then fails during env resolution — the one path that used to
+    // commit the new filename before it could fail
+    let broken = write_file(
+        &dir,
+        "broken.yaml",
+        "app:\n  port: ${TRAIL_CONFIG_TEST_UNSET_RELOAD_FROM}\n",
+    );
+
+    let mut config = Config::load_required(&base, "/", None).unwrap()
+        .merge_required(&overlay, None).unwrap();
+    assert_eq!(config.str("app/port"), "8080");
+    assert_eq!(config.str("app/tag"), "overlay");
+
+    let result = config.reload_from(&broken);
+    match result {
+        Err(ConfigError::FormatError(_)) => (),
+        other => panic!("Expected FormatError for unresolvable env var, got {:?}", other),
+    }
+
+    // Content and filename untouched
+    assert_eq!(config.str("app/port"), "8080");
+    assert_eq!(config.str("app/tag"), "overlay");
+    assert_eq!(config.get_filename(), base);
+
+    // The clinching check: a later reload() must still read the *base* file and
+    // re-apply the overlay. If reload_from had committed the filename it would read
+    // broken.yaml; if it had cleared the overlays, `tag` would be gone.
+    fs::write(&base, "app:\n  port: 1111\n").unwrap();
+    config.reload().unwrap();
+    assert_eq!(config.str("app/port"), "1111");   // base was re-read
+    assert_eq!(config.str("app/tag"), "overlay"); // overlay chain survived
+}
+
+#[test]
+fn reload_from_preserves_state_when_new_file_is_invalid() {
+    let dir = temp_dir();
+    let base = write_file(&dir, "base.yaml", "app:\n  port: 8080\n");
+    let broken = write_file(&dir, "broken.yaml", "invalid: [unclosed\n");
+
+    let mut config = Config::load_required(&base, "/", None).unwrap();
+
+    assert!(config.reload_from(&broken).is_err());
+    assert_eq!(config.str("app/port"), "8080");
+    assert_eq!(config.get_filename(), base);
+}
+
+#[test]
+fn reload_from_preserves_state_when_new_file_is_missing() {
+    let dir = temp_dir();
+    let base = write_file(&dir, "base.yaml", "app:\n  port: 8080\n");
+
+    let mut config = Config::load_required(&base, "/", None).unwrap();
+
+    let missing = format!("{}.nope", base);
+    assert!(config.reload_from(&missing).is_err());
+    assert_eq!(config.str("app/port"), "8080");
+    assert_eq!(config.get_filename(), base);
+}
+
+#[test]
 fn reload_from_rejects_empty_filename() {
     let dir = temp_dir();
     let test_file = write_file(&dir, "config.yaml", "app:\n  port: 8080\n");

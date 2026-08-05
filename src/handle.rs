@@ -1,5 +1,6 @@
 use std::mem;
 use std::sync::{Arc, RwLock};
+use yaml_serde::Value;
 use crate::{Config, ConfigError};
 
 /// A thread-safe, cloneable handle to a [`Config`].
@@ -15,6 +16,21 @@ use crate::{Config, ConfigError};
 /// file read and parse with no lock held, taking the write lock only for a pointer
 /// swap. Readers are never blocked on disk I/O, and holding a snapshot never blocks
 /// a reload.
+///
+/// # Method surface
+///
+/// `ConfigHandle` mirrors the complete **lenient** accessor surface of [`Config`] —
+/// [`get`](ConfigHandle::get), [`str`](ConfigHandle::str), [`list`](ConfigHandle::list),
+/// [`contains`](ConfigHandle::contains), [`get_int`](ConfigHandle::get_int),
+/// [`get_float`](ConfigHandle::get_float), [`get_bool`](ConfigHandle::get_bool),
+/// [`get_as`](ConfigHandle::get_as), [`deserialize`](ConfigHandle::deserialize) and
+/// [`fmt`](ConfigHandle::fmt) — each a one-line shorthand for the same call on a
+/// snapshot.
+///
+/// The `*_strict` variants and the metadata accessors are deliberately not mirrored:
+/// go through [`read`](ConfigHandle::read), which gives access to every [`Config`]
+/// method. Reach for a snapshot anyway when reading several values that must agree,
+/// since each convenience call takes its own.
 ///
 /// # Example
 /// ```no_run
@@ -119,11 +135,32 @@ impl ConfigHandle {
         Ok(())
     }
 
+    /// Convenience method — gets the raw value at the specified path.
+    ///
+    /// Equivalent to `handle.read().get(path)`.
+    pub fn get(&self, path: &str) -> Option<Value> {
+        self.read().get(path)
+    }
+
     /// Convenience method — gets a value as a string at the specified path.
     ///
     /// Equivalent to `handle.read().str(path)`.
     pub fn str(&self, path: &str) -> String {
         self.read().str(path)
+    }
+
+    /// Convenience method — gets a value as a list of strings at the specified path.
+    ///
+    /// Equivalent to `handle.read().list(path)`.
+    pub fn list(&self, path: &str) -> Vec<String> {
+        self.read().list(path)
+    }
+
+    /// Convenience method — checks if a path exists in the configuration.
+    ///
+    /// Equivalent to `handle.read().contains(path)`.
+    pub fn contains(&self, path: &str) -> bool {
+        self.read().contains(path)
     }
 
     /// Convenience method — gets a value as an integer at the specified path.
@@ -147,11 +184,26 @@ impl ConfigHandle {
         self.read().get_bool(path)
     }
 
-    /// Convenience method — checks if a path exists in the configuration.
+    /// Convenience method — deserializes the config subtree at the specified path
+    /// into a typed struct.
     ///
-    /// Equivalent to `handle.read().contains(path)`.
-    pub fn contains(&self, path: &str) -> bool {
-        self.read().contains(path)
+    /// Equivalent to `handle.read().get_as(path)`.
+    pub fn get_as<T: serde::de::DeserializeOwned>(&self, path: &str) -> Option<T> {
+        self.read().get_as(path)
+    }
+
+    /// Convenience method — deserializes the entire config into a typed struct.
+    ///
+    /// Equivalent to `handle.read().deserialize()`.
+    pub fn deserialize<T: serde::de::DeserializeOwned>(&self) -> Option<T> {
+        self.read().deserialize()
+    }
+
+    /// Convenience method — formats sibling config values into a string.
+    ///
+    /// Equivalent to `handle.read().fmt(format, base, keys)`.
+    pub fn fmt(&self, format: &str, base: &str, keys: &[&str]) -> String {
+        self.read().fmt(format, base, keys)
     }
 }
 
@@ -262,6 +314,76 @@ app:
 
         assert!(handle.reload().is_err());
         assert_eq!(handle.str("app/port"), "8080"); // still intact
+    }
+
+    #[test]
+    fn convenience_methods_mirror_config() {
+        use serde::Deserialize;
+
+        const FULL: &str = "
+app:
+  port: 8080
+  debug: true
+db:
+  host: localhost
+  port: 5432
+features:
+  - alpha
+  - beta
+";
+
+        #[derive(Deserialize, PartialEq, Debug)]
+        struct Db {
+            host: String,
+            port: u16,
+        }
+
+        let handle = ConfigHandle::new(Config::load_yaml(FULL, "/").unwrap());
+        let snapshot = handle.read();
+
+        // Each convenience method must agree with the same call on a snapshot
+        assert_eq!(handle.get("app/port"), snapshot.get("app/port"));
+        assert_eq!(handle.str("db/host"), "localhost");
+        assert_eq!(handle.list("features"), vec!["alpha", "beta"]);
+        assert!(handle.contains("db/port"));
+        assert!(!handle.contains("db/missing"));
+        assert_eq!(handle.get_int("app/port"), Some(8080));
+        assert_eq!(handle.get_bool("app/debug"), Some(true));
+        assert_eq!(handle.fmt("{}:{}", "db", &["host", "port"]), "localhost:5432");
+
+        let db: Db = handle.get_as("db").unwrap();
+        assert_eq!(db, Db { host: "localhost".to_string(), port: 5432 });
+
+        // Missing paths stay lenient rather than panicking
+        assert_eq!(handle.get("nope"), None);
+        assert_eq!(handle.str("nope"), "");
+        assert!(handle.list("nope").is_empty());
+        assert_eq!(handle.get_int("nope"), None);
+        assert_eq!(handle.get_float("nope"), None);
+        assert_eq!(handle.get_bool("nope"), None);
+        assert_eq!(handle.get_as::<Db>("nope"), None);
+        assert_eq!(handle.fmt("{}", "nope", &["x"]), "");
+    }
+
+    #[test]
+    fn deserialize_whole_config() {
+        use serde::Deserialize;
+
+        #[derive(Deserialize, PartialEq, Debug)]
+        struct App {
+            port: u16,
+            debug: bool,
+            timeout: f64,
+        }
+        #[derive(Deserialize, PartialEq, Debug)]
+        struct Root {
+            app: App,
+        }
+
+        let handle = ConfigHandle::new(Config::load_yaml(YAML, "/").unwrap());
+        let root: Root = handle.deserialize().unwrap();
+
+        assert_eq!(root.app, App { port: 8080, debug: true, timeout: 4.55 });
     }
 
     #[test]

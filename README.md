@@ -544,6 +544,7 @@ let handle2 = handle.clone();
 // Convenience methods for common accessors
 let port = handle.get_int("app/port");
 let debug = handle.get_bool("app/debug");
+let features = handle.list("features/beta");
 
 // Full Config access via a snapshot (Arc<Config> derefs to Config)
 let db: DatabaseConfig = handle.read().get_as_strict("database")?;
@@ -560,8 +561,14 @@ write lock only for a pointer swap. So readers are never blocked on disk I/O, an
 snapshot never blocks a reload. If the reload fails, no swap happens and the existing config
 is left unchanged.
 
+`ConfigHandle` mirrors the complete **lenient** accessor surface of `Config` — `get`, `str`,
+`list`, `contains`, `get_int`, `get_float`, `get_bool`, `get_as`, `deserialize` and `fmt` — each
+a shorthand for the same call on a snapshot. The `*_strict` variants and the metadata accessors
+(`get_filename`, `environment`) are reached through `read()`, which gives access to every
+`Config` method.
+
 Because a snapshot is immutable, a concurrent reload can never change it underneath you — take
-one snapshot when you need several values to agree:
+one snapshot when you need several values to agree (each convenience call takes its own):
 
 ```rust
 let snapshot = handle.read();

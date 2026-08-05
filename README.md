@@ -214,7 +214,7 @@ Both styles share the same path syntax and navigate nested config values using s
 | Method | Returns | Description |
 | ------ | ------- | ----------- |
 | `fmt(format, base, keys)` | `String` | Format sibling values into a string, empty on error |
-| `fmt_strict(format, base, keys)` | `Result<String, ConfigError>` | Format, errors if any value is missing |
+| `fmt_strict(format, base, keys)` | `Result<String, ConfigError>` | Format, errors if the template is invalid or any value is missing |
 
 ### Metadata and hot reload
 
@@ -447,9 +447,34 @@ let connection = format!("{}:{}", host, port);
 let connection = config.fmt("{}:{}", "database", &["host", "port"]);
 ```
 
-The `fmt()` method takes a format string with `{}` placeholders, a base path to the parent node, 
-and a slice of key names — one per placeholder. It navigates to the base path, then extracts and 
-formats the specified keys in order.
+The `fmt()` method takes a format string, a base path to the parent node, and a slice of key 
+names. It navigates to the base path, then substitutes the specified keys into the template.
+
+### Placeholder syntax
+
+| Syntax | Meaning |
+| ------ | ------- |
+| `{}` | The next unused key, left to right |
+| `{N}` | `keys[N]` — may reorder and repeat keys |
+| `{{` / `}}` | A literal `{` / `}` |
+
+Auto-numbered and indexed placeholders can be mixed, and `{}` counts only its own occurrences — 
+the same rules as `std::format!`:
+
+```rust
+// db:
+//   redis:
+//     server: 127.0.0.1
+//     port: 6379
+
+let s = config.fmt("{{{0}:{1}}} via {0}", "db/redis", &["server", "port"]);
+// Result: "{127.0.0.1:6379} via 127.0.0.1"
+```
+
+Every placeholder must have a corresponding key and every key must be used at least once. A 
+mismatch in either direction is an error (empty string from `fmt`, `FormatError` from 
+`fmt_strict`) rather than a silently half-formatted result. Substituted values are never 
+rescanned, so a config value that itself contains `{}` is emitted verbatim.
 
 ### Multi-value formatting
 

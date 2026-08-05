@@ -201,7 +201,8 @@ impl ConfigHandle {
 
     /// Convenience method — formats sibling config values into a string.
     ///
-    /// Equivalent to `handle.read().fmt(format, base, keys)`.
+    /// Equivalent to `handle.read().fmt(format, base, keys)`. See
+    /// [`Config::fmt_strict`] for the placeholder syntax.
     pub fn fmt(&self, format: &str, base: &str, keys: &[&str]) -> String {
         self.read().fmt(format, base, keys)
     }

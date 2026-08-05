@@ -528,7 +528,7 @@ let value = config.str("a::b\\::c::d");
 ## Thread-Safe Shared Config
 
 `Config` is not `Send + Sync` on its own. Use `ConfigHandle` to share a `Config` across threads 
-and reload it at runtime without restarting. It wraps `Config` in an `Arc<RwLock<...>>` — cloning 
+and reload it at runtime without restarting. It wraps `Config` in an `Arc<RwLock<Arc<Config>>>` — cloning 
 the handle is cheap, and all clones refer to the same underlying config.
 
 ```rust
@@ -545,7 +545,7 @@ let handle2 = handle.clone();
 let port = handle.get_int("app/port");
 let debug = handle.get_bool("app/debug");
 
-// Full Config access via read guard
+// Full Config access via a snapshot (Arc<Config> derefs to Config)
 let db: DatabaseConfig = handle.read().get_as_strict("database")?;
 
 // Reload from disk — re-applies all overlays
@@ -553,11 +553,21 @@ handle.reload()?;
 // All clones immediately see the updated values
 ```
 
-`reload()` does its file reads and parsing **without holding the write lock**: it copies
-the source list (base filename plus the overlay chain) under a read lock, builds the new
-config off to the side, and takes the write lock only to swap the finished config in.
-Concurrent readers are never blocked on disk I/O, only for the swap itself. If the reload
-fails, no swap happens and the existing config is left unchanged.
+Neither reads nor reloads hold a lock for long. `read()` locks only long enough to clone an
+`Arc` and returns an immutable **snapshot**; `reload()` copies the source list (base filename
+plus the overlay chain), does all file reads and parsing with **no lock held**, and takes the
+write lock only for a pointer swap. So readers are never blocked on disk I/O, and holding a
+snapshot never blocks a reload. If the reload fails, no swap happens and the existing config
+is left unchanged.
+
+Because a snapshot is immutable, a concurrent reload can never change it underneath you — take
+one snapshot when you need several values to agree:
+
+```rust
+let snapshot = handle.read();
+let host = snapshot.str("database/host");
+let port = snapshot.get_int("database/port"); // guaranteed to match `host`
+```
 
 ### Background reload example
 

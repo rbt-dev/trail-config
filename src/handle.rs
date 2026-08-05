@@ -1,16 +1,20 @@
-use std::sync::{Arc, RwLock, RwLockReadGuard};
+use std::mem;
+use std::sync::{Arc, RwLock};
 use crate::{Config, ConfigError};
 
 /// A thread-safe, cloneable handle to a [`Config`].
 ///
-/// `ConfigHandle` wraps a `Config` in an `Arc<RwLock<...>>` so it can be
+/// `ConfigHandle` wraps a `Config` in an `Arc<RwLock<Arc<Config>>>` so it can be
 /// shared across threads and reloaded at runtime without restarting.
 /// Cloning a `ConfigHandle` is cheap — all clones refer to the same
 /// underlying config.
 ///
-/// Reads acquire a shared read lock. [`reload`](ConfigHandle::reload) does its file
-/// read and parse without holding the write lock, taking it only to swap the finished
-/// config in, so readers are never blocked on disk I/O.
+/// The config is stored behind an inner `Arc` so that neither side holds a lock for
+/// long: [`read`](ConfigHandle::read) locks only long enough to clone that `Arc` and
+/// hands back an immutable snapshot, and [`reload`](ConfigHandle::reload) does its
+/// file read and parse with no lock held, taking the write lock only for a pointer
+/// swap. Readers are never blocked on disk I/O, and holding a snapshot never blocks
+/// a reload.
 ///
 /// # Example
 /// ```no_run
@@ -33,21 +37,27 @@ use crate::{Config, ConfigError};
 /// ```
 #[derive(Clone, Debug)]
 pub struct ConfigHandle {
-    inner: Arc<RwLock<Config>>,
+    inner: Arc<RwLock<Arc<Config>>>,
 }
 
 impl ConfigHandle {
     /// Creates a new `ConfigHandle` wrapping the given [`Config`].
     pub fn new(config: Config) -> Self {
         Self {
-            inner: Arc::new(RwLock::new(config)),
+            inner: Arc::new(RwLock::new(Arc::new(config))),
         }
     }
 
-    /// Acquires a read lock and returns a guard giving access to the inner [`Config`].
+    /// Returns an immutable snapshot of the current [`Config`].
     ///
-    /// Use this to call any [`Config`] method directly. The lock is released
-    /// when the guard is dropped.
+    /// `Arc<Config>` derefs to `Config`, so every [`Config`] method is available
+    /// directly on the returned value.
+    ///
+    /// The read lock is held only long enough to clone an `Arc`, so a snapshot can be
+    /// kept for as long as you like without blocking [`reload`](ConfigHandle::reload).
+    /// The snapshot is also stable: a concurrent reload swaps a *new* config into the
+    /// handle and leaves this one intact, so a series of reads from one snapshot can
+    /// never straddle a reload.
     ///
     /// # Example
     /// ```
@@ -55,9 +65,14 @@ impl ConfigHandle {
     /// # let config = Config::load_yaml("app:\n  port: 8080", "/").unwrap();
     /// # let handle = ConfigHandle::new(config);
     /// let port = handle.read().get_int("app/port");
+    ///
+    /// // Or keep a snapshot for a consistent multi-value read
+    /// let snapshot = handle.read();
+    /// let host = snapshot.str("app/host");
+    /// let port = snapshot.get_int("app/port");
     /// ```
-    pub fn read(&self) -> RwLockReadGuard<'_, Config> {
-        self.inner.read().unwrap_or_else(|e| e.into_inner())
+    pub fn read(&self) -> Arc<Config> {
+        Arc::clone(&self.inner.read().unwrap_or_else(|e| e.into_inner()))
     }
 
     /// Reloads the config from disk, re-applying all overlays in order.
@@ -84,16 +99,23 @@ impl ConfigHandle {
     /// # }
     /// ```
     pub fn reload(&self) -> Result<(), ConfigError> {
-        // Read lock: copies filenames and the overlay chain, not the document.
-        // The guard is a temporary and is dropped at the end of this statement.
+        // Snapshot the sources: filenames and the overlay chain, not the document.
         let mut next = self.read().sources();
 
         // No lock held — disk I/O and parsing happen here. On failure we return
         // early and the live config is left untouched.
         next.reload()?;
+        let next = Arc::new(next);
 
-        // Write lock held for a move, not for I/O.
-        *self.inner.write().unwrap_or_else(|e| e.into_inner()) = next;
+        // Write lock held for a pointer swap and nothing else.
+        let previous = {
+            let mut guard = self.inner.write().unwrap_or_else(|e| e.into_inner());
+            mem::replace(&mut *guard, next)
+        };
+
+        // Released outside the lock: if no snapshot outlives this handle's reference,
+        // dropping the old config walks and frees the whole document tree.
+        drop(previous);
         Ok(())
     }
 
@@ -240,6 +262,33 @@ app:
 
         assert!(handle.reload().is_err());
         assert_eq!(handle.str("app/port"), "8080"); // still intact
+    }
+
+    #[test]
+    fn read_snapshot_is_stable_across_reload() {
+        use crate::test_util::{temp_dir, write_file};
+        use std::fs;
+
+        let dir = temp_dir();
+        let path = write_file(&dir, "config.yaml", "app:\n  port: 8080\n");
+
+        let handle = ConfigHandle::new(
+            Config::load_required(&path, "/", None).unwrap()
+        );
+
+        let snapshot = handle.read();
+        assert_eq!(snapshot.get_int("app/port"), Some(8080));
+
+        fs::write(&path, "app:\n  port: 9090\n").unwrap();
+
+        // Holding a snapshot must not block the reload. Under the old
+        // guard-returning `read()` this call would have deadlocked.
+        handle.reload().unwrap();
+
+        // The snapshot still sees the config it was taken from...
+        assert_eq!(snapshot.get_int("app/port"), Some(8080));
+        // ...while the handle sees the new one.
+        assert_eq!(handle.get_int("app/port"), Some(9090));
     }
 
     #[test]

@@ -5,7 +5,7 @@ use yaml_serde::Value;
 use crate::error::ConfigError;
 use super::{Config, OverlaySource};
 use super::env::resolve_env_vars;
-use super::loader::empty_filename_error;
+use super::loader::{empty_filename_error, get_file};
 use super::merge::merge_values;
 use super::parser::load_auto;
 
@@ -95,8 +95,13 @@ impl Config {
     /// Changes the config's filename and reloads from the new file.
     /// The separator and environment settings remain the same.
     ///
+    /// The filename may contain an `{env}` placeholder, which is resolved against the
+    /// environment this config already carries — there is no `env` argument because
+    /// `reload_from` preserves it. The *resolved* name is recorded, so a later
+    /// [`reload`](Config::reload) reads the same file.
+    ///
     /// # Arguments
-    /// * `filename` - New config file to load
+    /// * `filename` - New config file to load (can contain `{env}` placeholder)
     ///
     /// # Returns
     /// Returns `Ok(())` on success, or `Err(ConfigError)` if the file cannot be read or parsed
@@ -104,7 +109,8 @@ impl Config {
     /// # Errors
     /// Returns `ConfigError::IoError` if the file is missing, the filename is empty, or cannot be read
     /// Returns `ConfigError::YamlError`, `ConfigError::JsonError` or `ConfigError::TomlError` if the file cannot be parsed
-    /// Returns `ConfigError::FormatError` if an environment variable placeholder cannot be resolved
+    /// Returns `ConfigError::FormatError` if the filename contains `{env}` but this config has no
+    ///     environment, or if an environment variable placeholder cannot be resolved
     ///
     /// # Note
     /// If the switch fails for any reason, the existing configuration is preserved
@@ -123,14 +129,19 @@ impl Config {
             return Err(empty_filename_error());
         }
 
+        // `{env}` is resolved against the environment this config already carries,
+        // which `reload_from` preserves. Storing the *resolved* name keeps `reload()`
+        // working afterwards, exactly as the initial load does.
+        let (file, _) = get_file(filename, self.environment.as_deref())?;
+
         // Read, parse and resolve into a local before touching `self`. Every failure
         // path returns here, leaving the filename, content and overlay chain as they
         // were — a partial switch would point `reload()` at the new file while the
         // old overlays were still registered.
-        let content = resolve_env_vars(load_auto(filename)?)?;
+        let content = resolve_env_vars(load_auto(&file)?)?;
 
         self.content = content;
-        self.filename = filename.to_string();
+        self.filename = file;
         self.overlays.clear();
         Ok(())
     }

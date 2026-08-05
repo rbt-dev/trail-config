@@ -25,14 +25,39 @@ fn get_file_test() {
 }
 
 #[test]
-fn get_file_invalid_template() {
+fn get_file_without_placeholder_keeps_the_environment() {
+    // Not an error: in a layered setup only some files are environment-specific,
+    // but the environment is still worth recording on the Config.
     let result = get_file("config.yaml", Some("dev"));
 
-    assert!(result.is_err());
+    assert!(result.is_ok(), "got {:?}", result);
+    let (file, env) = result.unwrap();
+    assert_eq!(file, "config.yaml");
+    assert_eq!(env, Some(String::from("dev")));
+}
+
+#[test]
+fn get_file_placeholder_without_environment_errors() {
+    // The reverse *is* an error — a literal "config.{env}.yaml" handed to the OS
+    // would come back as a missing file, pointing at the wrong problem.
+    let result = get_file("config_{env}.yaml", None);
+
     match result {
-        Err(ConfigError::FormatError(_)) => (),
-        _ => panic!("Expected FormatError for missing {{env}} placeholder"),
+        Err(ConfigError::FormatError(msg)) => {
+            assert!(msg.contains("{env}"), "message should name the placeholder: {}", msg);
+        },
+        other => panic!("Expected FormatError for unsubstituted {{env}}, got {:?}", other),
     }
+}
+
+#[test]
+fn get_file_without_placeholder_or_environment_is_unchanged() {
+    let result = get_file("config.yaml", None);
+
+    assert!(result.is_ok());
+    let (file, env) = result.unwrap();
+    assert_eq!(file, "config.yaml");
+    assert_eq!(env, None);
 }
 
 #[test]

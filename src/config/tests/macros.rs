@@ -59,6 +59,32 @@ fn full_block_syntax() {
 }
 
 #[test]
+fn env_with_merges_matches_the_readme_example() {
+    // The README's flagship `config!` block: an env is supplied, but only the
+    // required overlay carries an `{env}` placeholder. The base file and the
+    // optional overlay are plain names.
+    let dir = temp_dir();
+    let base = write_file(&dir, "config.yaml", "app:\n  port: 8080\n  name: myapp\n");
+    let prod = write_file(&dir, "config.prod.yaml", "app:\n  port: 9090\n");
+    let local = write_file(&dir, "config.local.yaml", "app:\n  debug: true\n");
+
+    let template = dir.path().join("config.{env}.yaml").to_string_lossy().into_owned();
+    let _ = &prod; // written above; reached through the template
+
+    let config = config! {
+        file: &base,
+        sep: "/",
+        env: "prod",
+        merge: [&template],
+        merge_optional: [&local],
+    }.unwrap();
+
+    assert_eq!(config.str("app/port"), "9090");
+    assert_eq!(config.str("app/name"), "myapp");
+    assert_eq!(config.get_bool("app/debug"), Some(true));
+}
+
+#[test]
 fn missing_file_errors() {
     let result = config!("nonexistent_macro_test.yaml");
     assert!(result.is_err());

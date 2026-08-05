@@ -265,16 +265,27 @@ fn check_separator(sep: &str) -> Result<(), ConfigError> {
     Ok(())
 }
 
+/// Resolves a filename template against an optional environment name, returning the
+/// concrete filename and the environment to record on the `Config`.
+///
+/// An environment supplies a value for `{env}` *if the filename uses it*. A filename
+/// without the placeholder is not an error: in a layered setup only some of the files
+/// are environment-specific, and the environment is still worth recording.
+///
+/// The reverse is an error. A `{env}` with nothing to substitute would otherwise be
+/// handed to the OS verbatim and come back as a missing `config.{env}.yaml`, which
+/// points at the wrong problem.
 pub(super) fn get_file(filename: &str, env: Option<&str>) -> Result<(String, Option<String>), ConfigError> {
-    match env {
-        Some(v) => {
-            if filename.contains("{env}") {
-                Ok((filename.replace("{env}", v), Some(v.to_string())))
-            } else {
-                Err(ConfigError::FormatError(format!("Invalid filename template: '{{env}}' placeholder not found in \"{}\"", filename)))
-            }
-        },
-        None => Ok((String::from(filename), None))
+    let has_placeholder = filename.contains("{env}");
+
+    match (env, has_placeholder) {
+        (Some(value), true) => Ok((filename.replace("{env}", value), Some(value.to_string()))),
+        (Some(value), false) => Ok((filename.to_string(), Some(value.to_string()))),
+        (None, true) => Err(ConfigError::FormatError(format!(
+            "Filename template \"{}\" contains '{{env}}' but no environment was supplied",
+            filename
+        ))),
+        (None, false) => Ok((filename.to_string(), None)),
     }
 }
 

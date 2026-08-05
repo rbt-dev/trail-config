@@ -75,6 +75,36 @@ let config = Config::load_optional("config.yaml", "::", None)?;
 let config = Config::load_optional("config.{env}.yaml", "/", Some("dev"))?;
 ```
 
+### The `{env}` placeholder
+
+Every method that takes a filename also takes an optional environment name. The rule is:
+**the environment supplies a value for `{env}` if the filename uses it.**
+
+| Filename | `env` | Result |
+| -------- | ----- | ------ |
+| `config.{env}.yaml` | `Some("prod")` | Loads `config.prod.yaml` |
+| `config.yaml` | `Some("prod")` | Loads `config.yaml`; the environment is still recorded |
+| `config.{env}.yaml` | `None` | `FormatError` — nothing to substitute |
+| `config.yaml` | `None` | Loads `config.yaml` |
+
+A filename without the placeholder is deliberately **not** an error. In a layered setup only 
+some files are environment-specific, and the same `env` is applied to all of them:
+
+```rust
+let config = Config::load_required("config.yaml", "/", Some("prod"))?  // no placeholder
+    .merge_required("config.{env}.yaml", Some("prod"))?                // placeholder
+    .merge_optional("config.local.yaml", Some("prod"))?;               // no placeholder
+
+assert_eq!(config.environment(), Some("prod"));
+```
+
+The reverse is an error, because a `{env}` with nothing to fill it would otherwise be passed to 
+the OS verbatim and fail as a missing file called `config.{env}.yaml` — an error that points at 
+the wrong problem.
+
+`reload_from()` also accepts `{env}`, resolved against the environment the config already 
+carries; it has no `env` argument because it preserves the existing one.
+
 ### Default (shorthand)
 
 Use `Config::default()` when `config.yaml` with `/` separator is acceptable and the file is optional. A missing file yields an empty config; a present-but-**broken** file panics (use `load_optional` to get the error instead):

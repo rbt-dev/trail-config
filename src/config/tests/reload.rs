@@ -168,6 +168,52 @@ fn reload_from_does_not_reapply_stale_overlays() {
 }
 
 #[test]
+fn reload_from_substitutes_env_placeholder() {
+    let dir = temp_dir();
+    let first = write_file(&dir, "config_dev.yaml", "config:\n  name: dev\n");
+    write_file(&dir, "other_dev.yaml", "config:\n  name: other-dev\n");
+
+    let first_template = dir.path().join("config_{env}.yaml").to_string_lossy().into_owned();
+    let other_template = dir.path().join("other_{env}.yaml").to_string_lossy().into_owned();
+    let _ = &first;
+
+    let mut config = Config::load_required(&first_template, "/", Some("dev")).unwrap();
+    assert_eq!(config.str("config/name"), "dev");
+    assert_eq!(config.environment(), Some("dev"));
+
+    // `{env}` resolves against the environment the config already carries
+    config.reload_from(&other_template).unwrap();
+    assert_eq!(config.str("config/name"), "other-dev");
+    assert_eq!(config.environment(), Some("dev"));
+
+    // The *resolved* name is recorded, so reload() still works afterwards
+    assert!(config.get_filename().ends_with("other_dev.yaml"));
+    config.reload().unwrap();
+    assert_eq!(config.str("config/name"), "other-dev");
+}
+
+#[test]
+fn reload_from_placeholder_without_environment_errors() {
+    let dir = temp_dir();
+    let base = write_file(&dir, "base.yaml", "app:\n  port: 8080\n");
+
+    // Loaded without an environment, so there is nothing to substitute
+    let mut config = Config::load_required(&base, "/", None).unwrap();
+
+    let template = dir.path().join("other_{env}.yaml").to_string_lossy().into_owned();
+    match config.reload_from(&template) {
+        Err(ConfigError::FormatError(msg)) => {
+            assert!(msg.contains("{env}"), "got: {}", msg);
+        },
+        other => panic!("Expected FormatError, got {:?}", other),
+    }
+
+    // And the config is left untouched
+    assert_eq!(config.str("app/port"), "8080");
+    assert_eq!(config.get_filename(), base);
+}
+
+#[test]
 fn reload_from_preserves_state_when_env_resolution_fails() {
     let dir = temp_dir();
     let base = write_file(&dir, "base.yaml", "app:\n  port: 8080\n");

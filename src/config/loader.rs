@@ -74,13 +74,8 @@ impl Config {
         match Self::load_internal(filename, sep, env) {
             Ok(config) => Ok(config),
             Err(ConfigError::IoError { ref source, .. }) if source.kind() == io::ErrorKind::NotFound => {
-                Ok(Config {
-                    content: Value::Null,
-                    filename: String::new(),
-                    separator: sep.to_string(),
-                    environment: env.map(|s| s.to_string()),
-                    overlays: Vec::new(),
-                })
+                // `load_internal` validated `sep` before failing, so this cannot fail on it
+                Self::from_parsed(Value::Null, "", sep, env.map(|s| s.to_string()))
             },
             Err(e) => Err(e),
         }
@@ -148,22 +143,30 @@ impl Config {
         if filename.is_empty() {
             return Err(empty_filename_error());
         }
-        if sep.is_empty() {
-            return Err(ConfigError::FormatError("Separator cannot be empty".to_string()));
-        }
+        check_separator(sep)?;
 
         let (file, env) = get_file(filename, env)?;
+        let parsed = load_auto(&file)?;
 
-        match load_auto(&file) {
-            Ok(yaml) => Ok(Config {
-                content: resolve_env_vars(yaml)?,
-                filename: file,
-                separator: sep.to_string(),
-                environment: env,
-                overlays: Vec::new(),
-            }),
-            Err(e) => Err(e)
-        }
+        Self::from_parsed(parsed, &file, sep, env)
+    }
+
+    /// Builds a `Config` from an already-parsed document, resolving `${VAR}`
+    /// placeholders in its string values.
+    ///
+    /// Every constructor funnels through here, so the shape of a freshly-loaded
+    /// `Config` — no overlays, env vars resolved exactly once — is defined in one place.
+    ///
+    /// Callers validate `sep` with `check_separator` *before* parsing, so that an empty
+    /// separator is reported ahead of any parse error.
+    fn from_parsed(content: Value, filename: &str, sep: &str, env: Option<String>) -> Result<Config, ConfigError> {
+        Ok(Config {
+            content: resolve_env_vars(content)?,
+            filename: filename.to_string(),
+            separator: sep.to_string(),
+            environment: env,
+            overlays: Vec::new(),
+        })
     }
 
     /// Parses a YAML string into a Config object
@@ -172,19 +175,8 @@ impl Config {
     /// Returns `ConfigError::FormatError` if separator is empty
     /// Returns `ConfigError::YamlError` if YAML parsing fails
     pub fn load_yaml(yaml: &str, sep: &str) -> Result<Config, ConfigError> {
-        if sep.is_empty() {
-            return Err(ConfigError::FormatError("Separator cannot be empty".to_string()));
-        }
-
-        let parsed = parser::yaml::parse(yaml)?;
-
-        Ok(Config {
-            content: resolve_env_vars(parsed)?,
-            filename: String::new(),
-            separator: sep.to_string(),
-            environment: None,
-            overlays: Vec::new(),
-        })
+        check_separator(sep)?;
+        Self::from_parsed(parser::yaml::parse(yaml)?, "", sep, None)
     }
 
     /// Loads a Config from a JSON file, returning an error if the file is missing or invalid.
@@ -202,19 +194,8 @@ impl Config {
     /// ```
     #[cfg(feature = "json")]
     pub fn load_json_file(filename: &str, sep: &str) -> Result<Config, ConfigError> {
-        if sep.is_empty() {
-            return Err(ConfigError::FormatError("Separator cannot be empty".to_string()));
-        }
-
-        let parsed = parser::json::load_file(filename)?;
-
-        Ok(Config {
-            content: resolve_env_vars(parsed)?,
-            filename: filename.to_string(),
-            separator: sep.to_string(),
-            environment: None,
-            overlays: Vec::new(),
-        })
+        check_separator(sep)?;
+        Self::from_parsed(parser::json::load_file(filename)?, filename, sep, None)
     }
 
     /// Parses a JSON string into a Config object.
@@ -231,19 +212,8 @@ impl Config {
     /// ```
     #[cfg(feature = "json")]
     pub fn load_json(json_str: &str, sep: &str) -> Result<Config, ConfigError> {
-        if sep.is_empty() {
-            return Err(ConfigError::FormatError("Separator cannot be empty".to_string()));
-        }
-
-        let parsed = parser::json::parse(json_str)?;
-
-        Ok(Config {
-            content: resolve_env_vars(parsed)?,
-            filename: String::new(),
-            separator: sep.to_string(),
-            environment: None,
-            overlays: Vec::new(),
-        })
+        check_separator(sep)?;
+        Self::from_parsed(parser::json::parse(json_str)?, "", sep, None)
     }
 
     /// Loads a Config from a TOML file, returning an error if the file is missing or invalid.
@@ -261,19 +231,8 @@ impl Config {
     /// ```
     #[cfg(feature = "toml")]
     pub fn load_toml_file(filename: &str, sep: &str) -> Result<Config, ConfigError> {
-        if sep.is_empty() {
-            return Err(ConfigError::FormatError("Separator cannot be empty".to_string()));
-        }
-
-        let parsed = parser::toml::load_file(filename)?;
-
-        Ok(Config {
-            content: resolve_env_vars(parsed)?,
-            filename: filename.to_string(),
-            separator: sep.to_string(),
-            environment: None,
-            overlays: Vec::new(),
-        })
+        check_separator(sep)?;
+        Self::from_parsed(parser::toml::load_file(filename)?, filename, sep, None)
     }
 
     /// Parses a TOML string into a Config object.
@@ -290,20 +249,20 @@ impl Config {
     /// ```
     #[cfg(feature = "toml")]
     pub fn load_toml(toml_str: &str, sep: &str) -> Result<Config, ConfigError> {
-        if sep.is_empty() {
-            return Err(ConfigError::FormatError("Separator cannot be empty".to_string()));
-        }
-
-        let parsed = parser::toml::parse(toml_str)?;
-
-        Ok(Config {
-            content: resolve_env_vars(parsed)?,
-            filename: String::new(),
-            separator: sep.to_string(),
-            environment: None,
-            overlays: Vec::new(),
-        })
+        check_separator(sep)?;
+        Self::from_parsed(parser::toml::parse(toml_str)?, "", sep, None)
     }
+}
+
+/// Rejects an empty path separator, which would make every config path unparseable.
+///
+/// Called at the top of each constructor, before parsing, so that an empty separator
+/// is reported ahead of any parse error in the document.
+fn check_separator(sep: &str) -> Result<(), ConfigError> {
+    if sep.is_empty() {
+        return Err(ConfigError::FormatError("Separator cannot be empty".to_string()));
+    }
+    Ok(())
 }
 
 pub(super) fn get_file(filename: &str, env: Option<&str>) -> Result<(String, Option<String>), ConfigError> {

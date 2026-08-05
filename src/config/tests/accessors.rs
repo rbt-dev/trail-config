@@ -268,20 +268,43 @@ fn empty_path() {
 }
 
 #[test]
-fn path_with_only_separator() {
+fn path_of_only_separators_does_not_return_the_whole_tree() {
     let config = Config::load_yaml(YAML, "/").unwrap();
 
-    let result = config.get("/");
-    assert!(result.is_some());
-
-    let result = config.get("//");
-    assert!(result.is_some());
+    // Every segment is empty, so there is nothing to navigate to. Skipping them
+    // used to hand back the entire document.
+    assert!(config.get("/").is_none());
+    assert!(config.get("//").is_none());
+    assert!(!config.contains("/"));
 }
 
 #[test]
-fn path_with_leading_trailing_separator() {
+fn leading_or_trailing_separator_is_rejected() {
     let config = Config::load_yaml(YAML, "/").unwrap();
 
-    let result = config.get("/db/redis/port/");
-    assert!(result.is_some());
+    // The same path without the stray separators resolves
+    assert!(config.get("db/redis/port").is_some());
+
+    assert!(config.get("/db/redis/port").is_none());
+    assert!(config.get("db/redis/port/").is_none());
+    assert!(config.get("/db/redis/port/").is_none());
+}
+
+#[test]
+fn doubled_separator_is_rejected() {
+    let config = Config::load_yaml(YAML, "/").unwrap();
+
+    assert!(config.get("db//redis/port").is_none());
+    assert_eq!(config.str("db//redis/port"), "");
+    assert!(!config.contains("db//redis/port"));
+}
+
+#[test]
+fn empty_segment_reports_the_path_in_strict_methods() {
+    let config = Config::load_yaml(YAML, "/").unwrap();
+
+    match config.str_strict("db//redis/port") {
+        Err(ConfigError::PathNotFound(path)) => assert_eq!(path, "db//redis/port"),
+        other => panic!("Expected PathNotFound, got {:?}", other),
+    }
 }

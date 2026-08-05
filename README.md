@@ -212,6 +212,24 @@ Trail Config organizes methods into two styles. Every method has both a lenient 
 
 Both styles share the same path syntax and navigate nested config values using separators (default: `/`).
 
+### Path syntax
+
+A path is a list of keys joined by the separator. **Every segment must be non-empty**, so a 
+leading, trailing or doubled separator makes the lookup fail rather than being quietly ignored:
+
+| Path | Result |
+| ---- | ------ |
+| `db/redis/port` | Resolves |
+| `/db/redis/port` | Fails — empty leading segment |
+| `db/redis/port/` | Fails — empty trailing segment |
+| `db//redis/port` | Fails — empty middle segment |
+| `/` | Fails — no segments at all |
+| `""` | Fails — empty path |
+
+Failing means `None` / `""` / `[]` from the lenient methods and `PathNotFound` from the strict 
+ones, naming the path as written. A key that genuinely contains the separator is reached with an 
+escape sequence — see [Escape Sequences](#escape-sequences) — not by doubling it.
+
 ### Reading values
 
 | Method | Returns | Description |
@@ -341,8 +359,8 @@ Trail Config validates inputs automatically and returns `FormatError` for invali
 | ----- | ---------- | ----- |
 | Path separator | Cannot be empty | Returns `FormatError` |
 | File paths | Empty filename rejected upfront by every loader (`load_required`, `load_optional`, `load_or_create`) and `reload_from` | Returns `IoError` (`InvalidInput`) |
-| Paths | Empty paths safely handled | Returns `None` or empty |
-| Separators (leading/trailing) | Handled gracefully | No error |
+| Paths | Empty paths rejected | Returns `None` or empty / `PathNotFound` |
+| Path segments | Must be non-empty — leading, trailing and doubled separators are rejected | Returns `None` or empty / `PathNotFound` |
 | Filename templates | Must be valid format strings | Returns `FormatError` |
 
 ```rust

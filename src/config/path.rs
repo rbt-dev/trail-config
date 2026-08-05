@@ -3,21 +3,22 @@
 use std::mem;
 use yaml_serde::Value;
 
+/// Navigates to the value at `path`.
+///
+/// Every segment must be non-empty, so a leading, trailing or doubled separator makes
+/// the lookup fail rather than being skipped. Skipping meant `a//b`, `/a/b` and `a/b/`
+/// all resolved like `a/b`, and a path of just the separator returned the entire
+/// document — turning typos into silently successful lookups.
 pub(super) fn get_leaf<'a>(mut content: &'a Value, path: &str, separator: &str) -> Option<&'a Value> {
     if path.is_empty() || separator.is_empty() {
         return None;
     }
 
-    let parts = parse_path(path, separator);
-
-    for item in parts.iter() {
-        if item.is_empty() {
-            continue;
+    for segment in parse_path(path, separator) {
+        if segment.is_empty() {
+            return None;
         }
-        match content.get(item) {
-            Some(v) => { content = v; },
-            None => return None
-        }
+        content = content.get(&segment)?;
     }
 
     Some(content)

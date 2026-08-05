@@ -155,6 +155,27 @@ fn fmt_strict_errors_on_named_placeholder() {
 }
 
 #[test]
+fn fmt_strict_empty_base_reads_top_level_keys() {
+    // An empty base means "the keys are at the top level" — distinct from a base of
+    // just the separator, which is a malformed path
+    let config = Config::load_yaml("host: localhost\nport: 5432\n", "/").unwrap();
+    let result = config.fmt_strict("{}:{}", "", &["host", "port"]).unwrap();
+    assert_eq!(result, "localhost:5432");
+}
+
+#[test]
+fn fmt_strict_rejects_base_with_empty_segment() {
+    let config = Config::load_yaml(BRACES, "/").unwrap();
+
+    for base in ["/tpl", "tpl/", "//tpl", "/"] {
+        match config.fmt_strict("{}", base, &["b"]) {
+            Err(ConfigError::PathNotFound(path)) => assert_eq!(path, base),
+            other => panic!("Expected PathNotFound for base {:?}, got {:?}", base, other),
+        }
+    }
+}
+
+#[test]
 fn fmt_lenient_returns_empty_on_mismatch() {
     let config = Config::load_yaml(BRACES, "/").unwrap();
     // The lenient variant swallows the error; the point is that it no longer

@@ -3,7 +3,7 @@
 use crate::error::ConfigError;
 use super::Config;
 use super::accessor::to_string;
-use super::path::parse_path;
+use super::path::get_leaf;
 
 /// One resolved piece of a format string.
 ///
@@ -76,16 +76,15 @@ impl Config {
         let pieces = parse_format(format)?;
         check_keys_match(&pieces, keys)?;
 
-        let mut content = &self.content;
-        let parts = parse_path(base, &self.separator);
-
-        for item in parts.iter() {
-            if item.is_empty() { continue; }
-            match content.get(item.as_str()) {
-                Some(v) => { content = v; },
-                None => return Err(ConfigError::PathNotFound(base.to_string()))
-            }
-        }
+        // An empty base means "the keys are at the top level"; anything else navigates
+        // by the same rules as every other accessor, including the rejection of empty
+        // segments. This used to be a second, subtly different copy of `get_leaf`.
+        let content = if base.is_empty() {
+            &self.content
+        } else {
+            get_leaf(&self.content, base, &self.separator)
+                .ok_or_else(|| ConfigError::PathNotFound(base.to_string()))?
+        };
 
         // Resolve every key up front so a value containing `{}` can never be
         // rescanned as a placeholder for a later key.

@@ -55,6 +55,11 @@ impl Config {
 
     /// Gets a value at the specified path, returning an error if not found
     ///
+    /// Returns an owned `Value`, so the subtree at `path` is cloned. When the target is
+    /// a mapping or sequence and you want it as a struct, prefer
+    /// [`get_as_strict`](Config::get_as_strict), which deserializes from a borrow and
+    /// does not clone.
+    ///
     /// # Example
     /// ```
     /// # use trail_config::Config;
@@ -229,7 +234,9 @@ impl Config {
     pub fn get_as_strict<T: serde::de::DeserializeOwned>(&self, path: &str) -> Result<T, ConfigError> {
         let value = get_leaf(&self.content, path, &self.separator)
             .ok_or_else(|| ConfigError::PathNotFound(path.to_string()))?;
-        yaml_serde::from_value(value.clone()).map_err(ConfigError::from)
+        // Deserialize straight from the borrowed subtree. `yaml_serde::from_value`
+        // takes `Value` by value and would force a deep clone of the subtree first.
+        T::deserialize(value).map_err(ConfigError::from)
     }
 
     /// Deserializes the entire config into a typed struct
@@ -282,7 +289,9 @@ impl Config {
     /// assert_eq!(cfg.database.host, "localhost");
     /// ```
     pub fn deserialize_strict<T: serde::de::DeserializeOwned>(&self) -> Result<T, ConfigError> {
-        yaml_serde::from_value(self.content.clone()).map_err(ConfigError::from)
+        // Borrowed, not cloned — see `get_as_strict`. This matters most here, where
+        // the alternative is deep-cloning the entire document on every call.
+        T::deserialize(&self.content).map_err(ConfigError::from)
     }
 }
 

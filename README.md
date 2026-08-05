@@ -768,19 +768,60 @@ assert_eq!(config.str("app/url"), "https://example.com/api");
 | Pattern | Behaviour |
 | ------- | --------- |
 | `${VAR}` | Replaced with the value of `VAR`. Error if not set. |
-| `${VAR:-default}` | Replaced with the value of `VAR`, or `default` if not set. |
+| `${VAR:-default}` | Replaced with the value of `VAR`, or `default` if `VAR` is not set. |
+| `${VAR:-}` | Replaced with the value of `VAR`, or an empty string if not set. |
+| `${VAR:-${OTHER:-x}}` | Defaults may nest — resolution falls through each level in turn. |
+| `$${VAR}` | Escaped — produces the literal text `${VAR}`, with no lookup. |
 | `$VAR` | Not a placeholder — left as-is. |
+| `$` anywhere else | Left as-is (`$100` and `Pa$$w0rd!` pass through unchanged). |
+
+### Set-but-empty is a value, not an absence
+
+A default applies only when the variable is **absent**. If `VAR` is set to an empty string, 
+that empty string is used:
+
+```rust
+// VAR="" (set, empty)
+config.str("app/value") // -> ""  — not "fallback"
+```
+
+This differs from shell `${VAR:-default}`, which falls back when the variable is unset *or* 
+empty. Use `${VAR:-}` when you want "empty if missing" explicitly.
+
+### Escaping
+
+Only `$${` is an escape sequence, producing a literal `${`. Every other `$` is passed through 
+untouched, so passwords and shell snippets survive without modification:
+
+```yaml
+db:
+  password: Pa$$w0rd!               # unchanged
+  template: $${HOME}/data           # -> "${HOME}/data", no lookup
+  price: $100                       # unchanged
+```
 
 ### Resolution timing
 
 Environment variables are resolved at load time and re-resolved on every `reload()` call. 
 This means changes to environment variables are picked up when the config is reloaded.
 
+A variable's *value* is never rescanned, so a secret that happens to contain `${...}` is 
+used verbatim rather than being expanded again.
+
 ### Error handling
 
 If a placeholder references an unset variable and no default is provided, loading returns 
-a `ConfigError::FormatError`. Unclosed placeholders (`${VAR`) and empty variable 
-names (`${:-default}`) also return errors.
+a `ConfigError::FormatError`. These also return errors:
+
+| Input | Reason |
+| ----- | ------ |
+| `${VAR` | Unclosed placeholder |
+| `${VAR:-${X}` | Unclosed — the inner placeholder closes, the outer one does not |
+| `${:-default}` | Empty variable name |
+| `${${PREFIX}_HOST}` | Nesting is supported in defaults, not in the variable name |
+
+The one shape that cannot be expressed is an unbalanced `}` inside a default — `${VAR:-a}b}` 
+ends the placeholder at the first `}`, giving the default `a` followed by the literal `b}`.
 
 ## Auto-Creating Config Files
 

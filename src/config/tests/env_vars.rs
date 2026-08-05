@@ -193,3 +193,112 @@ app:
     let config = Config::load_yaml(yaml, "/").unwrap();
     assert_eq!(config.str("app/optional"), "");
 }
+
+#[test]
+fn escaped_placeholder_is_literal() {
+    let _env = env_lock();
+    env::set_var("TRAIL_TEST_ESCAPED", "should-not-appear");
+    let yaml = "
+app:
+  template: $${TRAIL_TEST_ESCAPED}
+";
+    let config = Config::load_yaml(yaml, "/").unwrap();
+    assert_eq!(config.str("app/template"), "${TRAIL_TEST_ESCAPED}");
+    env::remove_var("TRAIL_TEST_ESCAPED");
+}
+
+#[test]
+fn escaped_placeholder_does_not_require_the_var_to_exist() {
+    let _env = env_lock();
+    env::remove_var("TRAIL_TEST_NEVER_SET");
+    // Escaped, so the missing variable must not be an error
+    let config = Config::load_yaml("app:\n  t: $${TRAIL_TEST_NEVER_SET}", "/").unwrap();
+    assert_eq!(config.str("app/t"), "${TRAIL_TEST_NEVER_SET}");
+}
+
+#[test]
+fn dollar_dollar_not_before_brace_is_unchanged() {
+    // Only `$${` is an escape — a password like Pa$$w0rd! must survive intact
+    let config = Config::load_yaml("db:\n  password: Pa$$w0rd!", "/").unwrap();
+    assert_eq!(config.str("db/password"), "Pa$$w0rd!");
+}
+
+#[test]
+fn nested_default_falls_back_through_both_levels() {
+    let _env = env_lock();
+    env::remove_var("TRAIL_TEST_OUTER");
+    env::remove_var("TRAIL_TEST_INNER");
+    let yaml = "
+db:
+  host: ${TRAIL_TEST_OUTER:-${TRAIL_TEST_INNER:-fallback}}
+";
+    let config = Config::load_yaml(yaml, "/").unwrap();
+    assert_eq!(config.str("db/host"), "fallback");
+}
+
+#[test]
+fn nested_default_resolves_inner_variable() {
+    let _env = env_lock();
+    env::remove_var("TRAIL_TEST_OUTER2");
+    env::set_var("TRAIL_TEST_INNER2", "inner-value");
+    let yaml = "
+db:
+  host: ${TRAIL_TEST_OUTER2:-${TRAIL_TEST_INNER2}}
+";
+    let config = Config::load_yaml(yaml, "/").unwrap();
+    assert_eq!(config.str("db/host"), "inner-value");
+    env::remove_var("TRAIL_TEST_INNER2");
+}
+
+#[test]
+fn nested_placeholder_in_variable_name_errors() {
+    let _env = env_lock();
+    env::set_var("TRAIL_TEST_PREFIX", "APP");
+    let result = Config::load_yaml("db:\n  host: ${${TRAIL_TEST_PREFIX}_HOST}", "/");
+    match result {
+        Err(ConfigError::FormatError(msg)) => {
+            assert!(
+                msg.contains("Nested") && msg.contains("name"),
+                "message should say nesting is not allowed in the variable name: {}",
+                msg
+            );
+        },
+        other => panic!("Expected FormatError, got: {:?}", other),
+    }
+    env::remove_var("TRAIL_TEST_PREFIX");
+}
+
+#[test]
+fn unclosed_nested_placeholder_errors() {
+    let _env = env_lock();
+    env::remove_var("TRAIL_TEST_UNCLOSED_OUTER");
+    // The inner placeholder closes, the outer one never does
+    let result = Config::load_yaml("db:\n  host: ${TRAIL_TEST_UNCLOSED_OUTER:-${X}", "/");
+    match result {
+        Err(ConfigError::FormatError(msg)) => {
+            assert!(msg.contains("Unclosed"), "got: {}", msg);
+        },
+        other => panic!("Expected FormatError, got: {:?}", other),
+    }
+}
+
+#[test]
+fn unbalanced_closing_brace_in_default_ends_the_placeholder() {
+    let _env = env_lock();
+    env::remove_var("TRAIL_TEST_UNBALANCED");
+    // Documented limitation: a bare '}' cannot appear in a default. The placeholder
+    // ends at the first unmatched '}', so the rest is literal.
+    let config = Config::load_yaml("app:\n  v: ${TRAIL_TEST_UNBALANCED:-a}b}", "/").unwrap();
+    assert_eq!(config.str("app/v"), "ab}");
+}
+
+#[test]
+fn set_but_empty_variable_does_not_fall_back_to_default() {
+    let _env = env_lock();
+    // Unlike shell `${VAR:-default}`, an empty *set* value is a value:
+    // the default applies only when the variable is absent
+    env::set_var("TRAIL_TEST_SET_EMPTY", "");
+    let config = Config::load_yaml("app:\n  v: ${TRAIL_TEST_SET_EMPTY:-fallback}", "/").unwrap();
+    assert_eq!(config.str("app/v"), "");
+    env::remove_var("TRAIL_TEST_SET_EMPTY");
+}

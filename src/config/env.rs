@@ -29,54 +29,115 @@ pub(super) fn resolve_env_vars(value: Value) -> Result<Value, ConfigError> {
 }
 
 /// Resolves all `${VAR}` and `${VAR:-default}` placeholders in a single string.
+///
+/// `$${` escapes to a literal `${`. A `$` that does not begin `${` is literal, so
+/// values like `$100` and `Pa$$w0rd!` pass through untouched.
 fn resolve_env_string(input: &str) -> Result<String, ConfigError> {
     let mut result = String::with_capacity(input.len());
-    let mut chars = input.chars().peekable();
+    let mut rest = input;
 
-    while let Some(ch) = chars.next() {
-        if ch == '$' && chars.peek() == Some(&'{') {
-            chars.next(); // consume '{'
-            let mut placeholder = String::new();
-            let mut found_close = false;
+    while !rest.is_empty() {
+        // Everything up to the next '$' is literal
+        match rest.find('$') {
+            Some(0) => {},
+            Some(at) => {
+                let (literal, tail) = rest.split_at(at);
+                result.push_str(literal);
+                rest = tail;
+            },
+            None => {
+                result.push_str(rest);
+                break;
+            },
+        }
 
-            for c in chars.by_ref() {
-                if c == '}' {
-                    found_close = true;
-                    break;
-                }
-                placeholder.push(c);
-            }
-
-            if !found_close {
-                return Err(ConfigError::FormatError(
-                    format!("Unclosed env var placeholder in: {}", input)
-                ));
-            }
-
-            let (var_name, default) = match placeholder.find(":-") {
-                Some(pos) => (&placeholder[..pos], Some(&placeholder[pos + 2..])),
-                None => (placeholder.as_str(), None),
-            };
-
-            if var_name.is_empty() {
-                return Err(ConfigError::FormatError(
-                    format!("Empty env var name in: {}", input)
-                ));
-            }
-
-            match env::var(var_name) {
-                Ok(val) => result.push_str(&val),
-                Err(_) => match default {
-                    Some(d) => result.push_str(d),
-                    None => return Err(ConfigError::FormatError(
-                        format!("Environment variable '{}' is not set and no default provided", var_name)
-                    )),
-                }
-            }
+        if let Some(tail) = rest.strip_prefix("$${") {
+            // Escaped — emit the placeholder syntax instead of expanding it.
+            // Deliberately narrow: only `$${` is an escape, so a `$$` anywhere
+            // else (a password, a shell snippet) is left exactly as written.
+            result.push_str("${");
+            rest = tail;
+        } else if let Some(after) = rest.strip_prefix("${") {
+            let (spec, tail) = split_placeholder(after, input)?;
+            result.push_str(&resolve_placeholder(spec, input)?);
+            rest = tail;
         } else {
-            result.push(ch);
+            // A '$' that does not begin a placeholder
+            result.push('$');
+            rest = &rest[1..];
         }
     }
 
     Ok(result)
+}
+
+/// Splits `after` — the text following an opening `${` — into the placeholder body
+/// and the remainder after its matching `}`.
+///
+/// Counts nesting depth rather than stopping at the first `}`, so a placeholder may
+/// contain a complete `${...}` of its own. Scanning by byte is safe because `$`, `{`
+/// and `}` are ASCII, which never appear inside a multi-byte UTF-8 sequence.
+fn split_placeholder<'a>(after: &'a str, input: &str) -> Result<(&'a str, &'a str), ConfigError> {
+    let bytes = after.as_bytes();
+    let mut depth = 1usize;
+    let mut i = 0;
+
+    while i < bytes.len() {
+        if bytes[i] == b'$' && bytes.get(i + 1) == Some(&b'{') {
+            depth += 1;
+            i += 2;
+        } else if bytes[i] == b'}' {
+            depth -= 1;
+            if depth == 0 {
+                return Ok((&after[..i], &after[i + 1..]));
+            }
+            i += 1;
+        } else {
+            i += 1;
+        }
+    }
+
+    Err(ConfigError::FormatError(
+        format!("Unclosed env var placeholder in: {}", input)
+    ))
+}
+
+/// Resolves one placeholder body — `VAR` or `VAR:-default`.
+///
+/// The default is itself run through [`resolve_env_string`], so defaults may nest:
+/// `${A:-${B:-c}}` falls back through both levels.
+fn resolve_placeholder(spec: &str, input: &str) -> Result<String, ConfigError> {
+    let (var_name, default) = match spec.find(":-") {
+        Some(pos) => (&spec[..pos], Some(&spec[pos + 2..])),
+        None => (spec, None),
+    };
+
+    if var_name.is_empty() {
+        return Err(ConfigError::FormatError(
+            format!("Empty env var name in: {}", input)
+        ));
+    }
+
+    // Indirect names (`${${PREFIX}_HOST}`) would otherwise reach `env::var` as a
+    // literal and fail with a confusing "not set" error
+    if var_name.contains("${") {
+        return Err(ConfigError::FormatError(format!(
+            "Nested placeholder in the variable name of '${{{}}}' in: {} \
+             — nesting is supported in defaults only",
+            spec, input
+        )));
+    }
+
+    match env::var(var_name) {
+        // A variable that is set but empty is a value, not an absence: the default
+        // applies only when the variable is missing. This differs from shell `:-`.
+        Ok(value) => Ok(value),
+        Err(_) => match default {
+            Some(default) => resolve_env_string(default),
+            None => Err(ConfigError::FormatError(format!(
+                "Environment variable '{}' is not set and no default provided",
+                var_name
+            ))),
+        },
+    }
 }

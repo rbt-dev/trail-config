@@ -5,13 +5,7 @@ use yaml_serde::Value;
 use crate::error::ConfigError;
 use super::Config;
 use super::env::resolve_env_vars;
-use super::yaml;
-
-#[cfg(feature = "json")]
-use super::json;
-
-#[cfg(feature = "toml")]
-use super::toml;
+use super::parser::{self, load_auto};
 
 impl Config {
     /// Loads a Config from a file, returning an error if the file is missing or invalid.
@@ -182,7 +176,7 @@ impl Config {
             return Err(ConfigError::FormatError("Separator cannot be empty".to_string()));
         }
 
-        let parsed = yaml::parse(yaml)?;
+        let parsed = parser::yaml::parse(yaml)?;
 
         Ok(Config {
             content: resolve_env_vars(parsed)?,
@@ -212,7 +206,7 @@ impl Config {
             return Err(ConfigError::FormatError("Separator cannot be empty".to_string()));
         }
 
-        let parsed = json::load_file(filename)?;
+        let parsed = parser::json::load_file(filename)?;
 
         Ok(Config {
             content: resolve_env_vars(parsed)?,
@@ -241,7 +235,7 @@ impl Config {
             return Err(ConfigError::FormatError("Separator cannot be empty".to_string()));
         }
 
-        let parsed = json::parse(json_str)?;
+        let parsed = parser::json::parse(json_str)?;
 
         Ok(Config {
             content: resolve_env_vars(parsed)?,
@@ -271,7 +265,7 @@ impl Config {
             return Err(ConfigError::FormatError("Separator cannot be empty".to_string()));
         }
 
-        let parsed = toml::load_file(filename)?;
+        let parsed = parser::toml::load_file(filename)?;
 
         Ok(Config {
             content: resolve_env_vars(parsed)?,
@@ -300,7 +294,7 @@ impl Config {
             return Err(ConfigError::FormatError("Separator cannot be empty".to_string()));
         }
 
-        let parsed = toml::parse(toml_str)?;
+        let parsed = parser::toml::parse(toml_str)?;
 
         Ok(Config {
             content: resolve_env_vars(parsed)?,
@@ -323,20 +317,6 @@ pub(super) fn get_file(filename: &str, env: Option<&str>) -> Result<(String, Opt
         },
         None => Ok((String::from(filename), None))
     }
-}
-
-pub(super) fn load_auto(filename: &str) -> Result<Value, ConfigError> {
-    #[cfg(feature = "json")]
-    if filename.ends_with(".json") {
-        return json::load_file(filename);
-    }
-
-    #[cfg(feature = "toml")]
-    if filename.ends_with(".toml") {
-        return toml::load_file(filename);
-    }
-
-    yaml::load_file(filename)
 }
 
 /// The error returned when a config filename is empty.

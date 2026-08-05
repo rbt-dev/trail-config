@@ -1,18 +1,11 @@
 use yaml_serde::Value;
 
-mod yaml;
-
-#[cfg(feature = "json")]
-mod json;
-
-#[cfg(feature = "toml")]
-mod toml;
-
 mod accessor;
 mod env;
 mod fmt;
 mod loader;
 mod merge;
+mod parser;
 mod path;
 mod reload;
 

@@ -4,8 +4,9 @@ use std::io;
 use crate::error::ConfigError;
 use super::{Config, OverlaySource};
 use super::env::resolve_env_vars;
-use super::loader::{empty_filename_error, load_auto};
+use super::loader::empty_filename_error;
 use super::merge::merge_values;
+use super::parser::load_auto;
 
 impl Config {
     /// Reloads the configuration from disk, re-applying all overlays in order.

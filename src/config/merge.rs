@@ -5,7 +5,8 @@ use yaml_serde::Value;
 use crate::error::ConfigError;
 use super::{Config, OverlaySource};
 use super::env::resolve_env_vars;
-use super::loader::{get_file, load_auto};
+use super::loader::get_file;
+use super::parser::load_auto;
 
 impl Config {
     /// Merges a required overlay file into this config, returning a new `Config`.

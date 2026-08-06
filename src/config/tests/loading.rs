@@ -367,3 +367,20 @@ fn default_panics_on_broken_config_yaml_in_cwd() {
 
     let _ = Config::default();
 }
+
+
+#[test]
+fn load_or_create_does_not_create_parent_directories() {
+    // Documented: only the file itself is created. A missing parent is reported
+    // rather than conjured, so a typo'd path cannot leave junk directories behind.
+    let dir = temp_dir();
+    let nested = dir.path().join("sub").join("config.yaml").to_string_lossy().into_owned();
+
+    let result = Config::load_or_create(&nested, "/", None, "app:\n  port: 1\n");
+
+    match result {
+        Err(ConfigError::IoError { .. }) => {},
+        other => panic!("Expected IoError for a missing parent directory, got {:?}", other.err()),
+    }
+    assert!(!dir.path().join("sub").exists(), "no directory should have been created");
+}

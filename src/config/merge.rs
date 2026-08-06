@@ -25,7 +25,8 @@ impl Config {
     ///
     /// # Arguments
     /// * `filename` - Path to the overlay file (can contain `{env}` placeholder)
-    /// * `env` - Optional environment name to substitute in filename
+    /// * `env` - Optional environment name to substitute in filename. Interpolated into a
+    ///   filesystem path with no validation — do not pass untrusted input
     ///
     /// # Errors
     /// Returns `ConfigError::IoError` if the filename is empty, or the file is missing or cannot be read
@@ -72,7 +73,8 @@ impl Config {
     ///
     /// # Arguments
     /// * `filename` - Path to the overlay file (can contain `{env}` placeholder)
-    /// * `env` - Optional environment name to substitute in filename
+    /// * `env` - Optional environment name to substitute in filename. Interpolated into a
+    ///   filesystem path with no validation — do not pass untrusted input
     ///
     /// # Errors
     /// Returns `ConfigError::IoError` if the filename is empty — a caller bug, unlike an

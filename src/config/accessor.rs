@@ -1,4 +1,9 @@
 //! Reading values out of a config: raw, string, typed, and deserialized.
+//!
+//! Paths navigate **mappings only**. A sequence has no addressable elements: `items/0`
+//! is not a path into the first element, just a lookup for a key named `0`, and it fails
+//! like any other missing key. Read a sequence whole with [`Config::list`], or into a
+//! typed field with [`Config::get_as`] / [`Config::deserialize`].
 
 use yaml_serde::Value;
 use crate::error::ConfigError;

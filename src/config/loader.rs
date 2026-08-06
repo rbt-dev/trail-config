@@ -16,7 +16,8 @@ impl Config {
     /// # Arguments
     /// * `filename` - Path to the config file (can contain `{env}` placeholder)
     /// * `sep` - Path separator for accessing nested values
-    /// * `env` - Optional environment name to substitute in filename
+    /// * `env` - Optional environment name to substitute in filename. Interpolated into a
+    ///   filesystem path with no validation — do not pass untrusted input
     ///
     /// # Returns
     /// Returns `Ok(Config)` if the file is found and valid, or `Err(ConfigError)` otherwise
@@ -53,7 +54,8 @@ impl Config {
     /// # Arguments
     /// * `filename` - Path to the config file (can contain `{env}` placeholder)
     /// * `sep` - Path separator for accessing nested values
-    /// * `env` - Optional environment name to substitute in filename
+    /// * `env` - Optional environment name to substitute in filename. Interpolated into a
+    ///   filesystem path with no validation — do not pass untrusted input
     ///
     /// # Returns
     /// Returns `Ok(Config)` on success or if the file is not found
@@ -102,10 +104,15 @@ impl Config {
     /// has a matching extension and the corresponding feature is enabled. The created config
     /// records the filename, so [`reload`](Config::reload) works after a first run.
     ///
+    /// Only the file is created — **parent directories are not**. A missing parent returns
+    /// `IoError` rather than being created, so a mistyped path cannot leave a junk directory
+    /// tree behind; call [`std::fs::create_dir_all`] first if the directory may not exist.
+    ///
     /// # Arguments
     /// * `filename` - Path to the config file (can contain `{env}` placeholder)
     /// * `sep` - Path separator for accessing nested values
-    /// * `env` - Optional environment name to substitute in filename
+    /// * `env` - Optional environment name to substitute in filename. Interpolated into a
+    ///   filesystem path with no validation — do not pass untrusted input
     /// * `defaults` - Config string to write and use if the file does not exist, in the file's format
     ///
     /// # Returns
@@ -302,6 +309,11 @@ fn check_separator(sep: &str) -> Result<(), ConfigError> {
 /// The reverse is an error. A `{env}` with nothing to substitute would otherwise be
 /// handed to the OS verbatim and come back as a missing `config.{env}.yaml`, which
 /// points at the wrong problem.
+///
+/// `env` is substituted into a filesystem path with no validation, so a value of
+/// `../../secrets` builds exactly that path. Callers pass a literal or a trusted
+/// `APP_ENV`, which is what makes this acceptable; the constructors' rustdoc says
+/// not to pass untrusted input.
 pub(super) fn get_file(filename: &str, env: Option<&str>) -> Result<(String, Option<String>), ConfigError> {
     let has_placeholder = filename.contains("{env}");
 

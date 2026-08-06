@@ -308,3 +308,21 @@ fn empty_segment_reports_the_path_in_strict_methods() {
         other => panic!("Expected PathNotFound, got {:?}", other),
     }
 }
+
+
+#[test]
+fn sequence_elements_are_not_addressable_by_index() {
+    // Documented design line: paths navigate mappings only. `list` is the way into
+    // a sequence — a numeric segment is just a key that does not exist.
+    let config = Config::load_yaml("sources:\n  - one\n  - two\n", "/").unwrap();
+
+    assert_eq!(config.get("sources/0"), None);
+    assert!(!config.contains("sources/0"));
+    assert_eq!(config.str("sources/0"), "");
+    assert!(matches!(
+        config.get_strict("sources/0"),
+        Err(ConfigError::PathNotFound(_))
+    ));
+
+    assert_eq!(config.list("sources"), vec!["one", "two"]);
+}

@@ -117,6 +117,11 @@ the wrong problem.
 `reload_from()` also accepts `{env}`, resolved against the environment the config already 
 carries; it has no `env` argument because it preserves the existing one.
 
+**`env` is substituted into a filesystem path verbatim**, with no validation — an `env` of 
+`../../secrets` builds exactly that path. This is fine for the normal case of a literal or a 
+trusted `APP_ENV`, but do not pass a value that came from an untrusted source such as a request 
+parameter or an uploaded file.
+
 ### Default (shorthand)
 
 Use `Config::default()` when `config.yaml` with `/` separator is acceptable and the file is optional. A missing file yields an empty config; a present-but-**broken** file panics (use `load_optional` to get the error instead):
@@ -241,6 +246,11 @@ leading, trailing or doubled separator makes the lookup fail rather than being q
 Failing means `None` / `""` / `[]` from the lenient methods and `PathNotFound` from the strict 
 ones, naming the path as written. A key that genuinely contains the separator is reached with an 
 escape sequence — see [Escape Sequences](#escape-sequences) — not by doubling it.
+
+**Paths navigate mappings only.** A sequence has no addressable elements: `items/0` is not a 
+path into the first element, just a lookup for a key named `0`, and it fails like any other 
+missing key. Read the whole sequence with `list(path)`, or deserialize it into a typed field 
+with `get_as` / `deserialize`.
 
 ### Reading values
 
@@ -953,6 +963,11 @@ The defaults string must be in the same format as the file: YAML by default, or
 JSON/TOML when the filename has a matching extension and the corresponding feature
 is enabled. The created config records its filename, so `reload()` works after a
 first run.
+
+Only the file itself is created — **parent directories are not**. Writing to
+`config/app.yaml` when `config/` does not exist returns an `IoError` rather than
+creating the directory, so a mistyped path cannot leave a junk directory tree behind.
+Call `std::fs::create_dir_all` yourself first if the directory may be missing.
 
 The defaults string is written as-is, preserving formatting and any comments you include:
 

@@ -5,6 +5,10 @@ use yaml_serde::Value;
 
 /// Navigates to the value at `path`.
 ///
+/// Mappings only — `Value::get` takes a key, so a numeric segment addresses a key named
+/// `0` rather than a sequence element. Sequences are read whole, by `list` or by
+/// deserializing.
+///
 /// Every segment must be non-empty, so a leading, trailing or doubled separator makes
 /// the lookup fail rather than being skipped. Skipping meant `a//b`, `/a/b` and `a/b/`
 /// all resolved like `a/b`, and a path of just the separator returned the entire

@@ -18,6 +18,10 @@ pub(crate) fn parse_in(toml_str: &str, filename: &str) -> Result<Value, ConfigEr
 }
 
 fn parse_internal(toml_str: &str, file: Option<&str>) -> Result<Value, ConfigError> {
+    // `toml` skips a BOM already; stripping here anyway keeps the rule uniform across
+    // the three formats rather than dependent on each parser's leniency. See
+    // `super::strip_bom`.
+    let toml_str = super::strip_bom(toml_str);
     let toml_value: toml::Value = toml::from_str(toml_str)
         .map_err(|e| ConfigError::toml_in(file, e))?;
     // Conversion into the YAML value model happens in yaml_serde, so a

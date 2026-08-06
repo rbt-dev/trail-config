@@ -11,6 +11,29 @@ pub(super) mod json;
 #[cfg(feature = "toml")]
 pub(super) mod toml;
 
+/// Removes a leading UTF-8 byte-order mark, if there is one.
+///
+/// Written once here for the same reason as [`format_of`]: the three formats must not
+/// disagree about a file that every editor displays identically. `yaml_serde` and `toml`
+/// skip a BOM of their own accord, `serde_json` rejects it — so without this, the same
+/// bytes loaded as `.yaml` and `.toml` and failed as `.json` with "expected value at
+/// line 1 column 1", pointing at a file that looks perfectly correct.
+///
+/// That is a Windows-shaped trap in particular: PowerShell's `>`, `>>` and `Out-File`
+/// write UTF-8 **with** BOM by default, as do older versions of Notepad, so a config
+/// produced by a setup script could be unreadable by the crate the script installed.
+///
+/// Applied to strings as well as to file content. A BOM in a string literal is the
+/// caller's doing rather than an editor's, but having `load_json(s)` and
+/// `load_json_file(f)` disagree about the same bytes would be its own surprise, and
+/// consistency costs nothing.
+///
+/// Only a *leading* BOM, and only one: U+FEFF anywhere else is a legitimate (if
+/// deprecated) zero-width no-break space and belongs to the document.
+fn strip_bom(content: &str) -> &str {
+    content.strip_prefix('\u{feff}').unwrap_or(content)
+}
+
 /// The parser a filename selects.
 enum Format {
     Yaml,

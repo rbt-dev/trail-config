@@ -9,10 +9,20 @@ pub(crate) fn load_file(filename: &str) -> Result<Value, ConfigError> {
 }
 
 pub(crate) fn parse(yaml: &str) -> Result<Value, ConfigError> {
-    from_str(yaml).map_err(ConfigError::from)
+    parse_internal(yaml, None)
 }
 
 /// Parses YAML that belongs to `filename`, naming it in any error.
 pub(crate) fn parse_in(yaml: &str, filename: &str) -> Result<Value, ConfigError> {
-    from_str(yaml).map_err(|e| ConfigError::yaml_in(filename, e))
+    parse_internal(yaml, Some(filename))
+}
+
+fn parse_internal(yaml: &str, file: Option<&str>) -> Result<Value, ConfigError> {
+    // Every YAML path — file or string — passes through here, so the BOM rule is
+    // applied exactly once per format. See `super::strip_bom`.
+    let yaml = super::strip_bom(yaml);
+    from_str(yaml).map_err(|e| match file {
+        Some(filename) => ConfigError::yaml_in(filename, e),
+        None => ConfigError::from(e),
+    })
 }

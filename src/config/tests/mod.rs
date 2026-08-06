@@ -1,4 +1,5 @@
 mod accessors;
+mod bom;
 mod debug;
 mod env_vars;
 mod escape;

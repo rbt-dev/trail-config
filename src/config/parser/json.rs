@@ -18,6 +18,10 @@ pub(crate) fn parse_in(json: &str, filename: &str) -> Result<Value, ConfigError>
 }
 
 fn parse_internal(json: &str, file: Option<&str>) -> Result<Value, ConfigError> {
+    // `serde_json` is the one parser of the three that rejects a BOM rather than
+    // skipping it, so without this the same bytes load as YAML and TOML and fail here.
+    // See `super::strip_bom`.
+    let json = super::strip_bom(json);
     let json_value: serde_json::Value = serde_json::from_str(json)
         .map_err(|e| ConfigError::json_in(file, e))?;
     // Conversion into the YAML value model happens in yaml_serde, so a

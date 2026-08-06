@@ -244,7 +244,8 @@ impl Config {
     ///
     /// # Errors
     /// Returns `ConfigError::PathNotFound` if the path does not exist
-    /// Returns `ConfigError::YamlError` if the value cannot be deserialized into `T`
+    /// Returns `ConfigError::DeserializeError`, naming the path and the file, if the
+    ///     value cannot be deserialized into `T`
     ///
     /// # Example
     /// ```
@@ -267,7 +268,7 @@ impl Config {
             .ok_or_else(|| ConfigError::PathNotFound(path.to_string()))?;
         // Deserialize straight from the borrowed subtree. `yaml_serde::from_value`
         // takes `Value` by value and would force a deep clone of the subtree first.
-        T::deserialize(value).map_err(ConfigError::from)
+        T::deserialize(value).map_err(|e| self.deserialize_error(Some(path), e))
     }
 
     /// Deserializes the entire config into a typed struct
@@ -297,7 +298,8 @@ impl Config {
     /// Deserializes the entire config into a typed struct, returning an error if deserialization fails
     ///
     /// # Errors
-    /// Returns `ConfigError::YamlError` if the config cannot be deserialized into `T`
+    /// Returns `ConfigError::DeserializeError`, naming the file, if the config cannot be
+    ///     deserialized into `T`
     ///
     /// # Example
     /// ```
@@ -322,7 +324,23 @@ impl Config {
     pub fn deserialize_strict<T: serde::de::DeserializeOwned>(&self) -> Result<T, ConfigError> {
         // Borrowed, not cloned — see `get_as_strict`. This matters most here, where
         // the alternative is deep-cloning the entire document on every call.
-        T::deserialize(&self.content).map_err(ConfigError::from)
+        T::deserialize(&self.content).map_err(|e| self.deserialize_error(None, e))
+    }
+
+    /// Builds the error for a failed deserialization, attributing it to this config's
+    /// file and — for [`get_as_strict`](Config::get_as_strict) — the subtree path.
+    ///
+    /// These used to go through `From<yaml_serde::Error>` and surface as `YamlError`,
+    /// rendering as "YAML parse error: …" even for a config loaded from `.toml`.
+    /// Mechanically true — deserialization runs through the `yaml_serde` value model
+    /// whatever the source format — but a caller has to know the crate's internals for
+    /// that to make sense, and nothing was parsed at this point in any case.
+    fn deserialize_error(&self, path: Option<&str>, source: yaml_serde::Error) -> ConfigError {
+        ConfigError::DeserializeError {
+            file: (!self.filename.is_empty()).then(|| self.filename.clone()),
+            path: path.map(str::to_string),
+            source,
+        }
     }
 }
 

@@ -208,6 +208,35 @@ fn metadata_is_readable_and_a_string_config_has_no_filename() {
 }
 
 #[test]
+fn outline_lists_resolvable_paths_without_values() {
+    let config = Config::load_yaml("db:\n  password: hunter2\n  port: 5432\n", "/").unwrap();
+    let outline = config.outline();
+
+    assert!(!outline.contains("hunter2"), "outline leaked a value: {outline}");
+
+    // Every line is a path the accessors resolve, spelled as they take it
+    for line in outline.lines() {
+        let path = line.rsplit_once(": ").expect("every line names a type").0;
+        assert!(config.contains(path), "outline printed an unresolvable path: {path}");
+    }
+}
+
+#[test]
+fn environment_placeholders_are_resolved_in_values_but_not_in_keys() {
+    // Interpolating keys would make the set of valid *paths* depend on the environment.
+    // The variable here is certainly unset, so if keys were interpolated this would be
+    // a FormatError instead of a config with a literal key.
+    let config = Config::load_yaml("${TRAIL_CONFIG_UNSET_KEY}: 1\n", "/").unwrap();
+
+    assert_eq!(config.get_int("${TRAIL_CONFIG_UNSET_KEY}"), Some(1));
+    assert_eq!(config.outline(), "${TRAIL_CONFIG_UNSET_KEY}: <number>\n");
+
+    // ...while the same text in a *value* position does resolve
+    let config = Config::load_yaml("key: ${TRAIL_CONFIG_UNSET_KEY:-resolved}\n", "/").unwrap();
+    assert_eq!(config.str("key"), "resolved");
+}
+
+#[test]
 fn debug_output_never_contains_a_value() {
     // The secrets guarantee, from the outside: `{:?}` on a Config prints its shape only
     let config = Config::load_yaml("db:\n  password: hunter2\n", "/").unwrap();

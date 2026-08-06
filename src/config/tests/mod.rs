@@ -9,6 +9,7 @@ mod json;
 mod loading;
 mod macros;
 mod merge;
+mod outline;
 mod reload;
 mod structs;
 #[cfg(feature = "toml")]

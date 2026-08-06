@@ -98,6 +98,38 @@ fn the_underlying_error_is_reachable_through_source() {
     assert!(not_found.source().is_none());
 }
 
+// TOML-gated: the clearest statement of the point is a config whose format is not YAML
+#[cfg(feature = "toml")]
+#[test]
+fn a_deserialization_mismatch_is_not_reported_as_a_parse_error() {
+    use serde::Deserialize;
+
+    #[derive(Deserialize, Debug)]
+    #[allow(dead_code)]
+    struct Wrong {
+        totally_made_up_field: String,
+    }
+
+    let dir = temp_dir();
+    // A TOML config, so "YAML parse error" would name a format the caller never used —
+    // and nothing was being parsed at this point in any case
+    let file = write_file(&dir, "config.toml", "[app]\nport = 8080\n");
+    let config = Config::load_required(&file, "/", None).unwrap();
+
+    match config.get_as_strict::<Wrong>("app") {
+        Err(ConfigError::DeserializeError { file: named, path, source }) => {
+            assert_eq!(named.as_deref(), Some(file.as_str()));
+            assert_eq!(path.as_deref(), Some("app"));
+            assert!(!source.to_string().is_empty());
+        },
+        other => panic!("expected DeserializeError, got {:?}", other.err()),
+    }
+
+    let message = config.deserialize_strict::<Wrong>().unwrap_err().to_string();
+    assert!(message.starts_with("Cannot deserialize "), "got {message}");
+    assert!(message.contains("config.toml"), "got {message}");
+}
+
 #[test]
 fn path_not_found_carries_the_path_as_written() {
     let config = Config::load_yaml("a:\n  b: 1\n", "/").unwrap();

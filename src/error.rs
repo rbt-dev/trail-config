@@ -46,6 +46,24 @@ pub enum ConfigError {
         source: toml::de::Error,
     },
 
+    /// A document (or a subtree of one) could not be deserialized into the requested type.
+    ///
+    /// Distinct from the parse errors above, which report a file that could not be *read*
+    /// as its format. Here the file parsed fine, whatever that format was, and the
+    /// mismatch is between the resulting document and the Rust type asked for — so this
+    /// variant names no format. Deserialization runs through the `yaml_serde` value model
+    /// for JSON and TOML configs too, which is why the underlying error is a
+    /// [`yaml_serde::Error`] regardless of where the document came from.
+    #[error("Cannot deserialize {}: {source}", fmt_target(.path, .file))]
+    DeserializeError {
+        /// The file the document came from, or `None` for a config parsed from a string.
+        file: Option<String>,
+        /// The path of the subtree being deserialized, or `None` for the whole document.
+        path: Option<String>,
+        /// The underlying error from the value model.
+        source: yaml_serde::Error,
+    },
+
     /// Configuration path not found in the document.
     #[error("Path not found in config: {0}")]
     PathNotFound(String),
@@ -59,6 +77,16 @@ fn fmt_file(file: &Option<String>) -> String {
     match file {
         Some(f) => format!(" in {}", f),
         None => String::new(),
+    }
+}
+
+/// Names what a deserialization was attempted on: a subtree, a file, both, or neither.
+fn fmt_target(path: &Option<String>, file: &Option<String>) -> String {
+    match (path.as_deref(), file.as_deref()) {
+        (Some(path), Some(file)) => format!("{} in {}", path, file),
+        (Some(path), None) => path.to_string(),
+        (None, Some(file)) => file.to_string(),
+        (None, None) => "the config".to_string(),
     }
 }
 

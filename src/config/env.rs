@@ -13,6 +13,13 @@ const MAX_DEFAULT_DEPTH: usize = 32;
 
 /// Recursively walks the Value tree and resolves `${VAR}` and `${VAR:-default}`
 /// placeholders in all string values using environment variables.
+///
+/// **Values only — never keys.** Each key is reinserted unchanged and only its value is
+/// recursed into, so a `${VAR}` written as a key stays the literal text `${VAR}` and is
+/// addressed by that text. This is deliberate: interpolating keys would make the set of
+/// valid config *paths* depend on the environment, so a path that resolves on one machine
+/// would silently miss on another, and an unset variable would turn into a missing key
+/// rather than an error. It is stated here because this function's name implies otherwise.
 pub(super) fn resolve_env_vars(value: Value) -> Result<Value, ConfigError> {
     match value {
         Value::String(s) => {

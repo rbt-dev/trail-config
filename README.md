@@ -328,6 +328,7 @@ incompatible `Value` types.
 | `environment()` | `Option<&str>` | Environment name used when loading |
 | `reload()` | `Result<(), ConfigError>` | Reload from current file |
 | `reload_from(filename)` | `Result<(), ConfigError>` | Load from a different file |
+| `outline()` | `String` | Every path in the document, with values replaced by their types |
 
 ## Debug Output
 
@@ -346,6 +347,32 @@ not secrets, and they are what you need when a `reload()` does not do what you e
 
 To inspect actual values, read them explicitly with the accessors.
 
+### Listing the paths a config contains
+
+`outline()` answers "why is this path not resolving" by printing the paths that **do** 
+resolve, one per line, with values replaced by their types:
+
+```rust
+let config = Config::load_required("config.yaml", "/", None)?;
+println!("{}", config.outline());
+```
+
+```text
+app/name: <string>
+app/port: <number>
+db/redis/server: <string>
+features: <2 items>
+```
+
+Each line is spelled exactly as an accessor takes it — the config's own separator, with 
+keys containing a separator or a backslash escaped — so a line can be pasted straight into 
+`str()` or `get()`. Keys appear in document order.
+
+Values are never printed, only their types, which is what makes the output safe to log or 
+paste into an issue: `${DB_PASSWORD}` is already interpolated by the time a `Config` 
+exists. If you do want the whole document, deserialize it into a `Value` or `Mapping` and 
+serialize that yourself — an explicit act at the call site.
+
 ## Error Handling
 
 Trail Config uses a custom `ConfigError` enum:
@@ -357,9 +384,17 @@ use trail_config::ConfigError;
 // - YamlError { file, source }  - YAML parsing or deserialization errors
 // - JsonError { file, source }  - JSON parse errors (requires `json` feature)
 // - TomlError { file, source }  - TOML parse errors (requires `toml` feature)
+// - DeserializeError { file, path, source }
+//                               - A document or subtree did not match the requested Rust type
 // - PathNotFound(String)        - Configuration path not found in document
 // - FormatError(String)         - String formatting or configuration errors
 ```
+
+`DeserializeError` is deliberately separate from the parse errors: the file was read and
+parsed successfully, whatever its format, and the mismatch is between the resulting
+document and the type you asked for. It names no format — a `.toml` config that fails to
+deserialize used to report a "YAML parse error", which pointed at both the wrong format
+and a phase that had already succeeded.
 
 Load and parse errors record the offending file (`file` is `None` when parsing from a
 string) and preserve the original underlying error in `source`, which is also returned
@@ -544,8 +579,9 @@ let db: DatabaseConfig = config.get_as_strict("database")?; // Strict — return
 let db: Option<DatabaseConfig> = config.get_as("database"); // Lenient — returns None if path is missing or struct doesn't match
 ```
 
-`deserialize_strict` returns `YamlError` if the config can't be deserialized into `T`.
-`get_as_strict` additionally returns `PathNotFound` if the path doesn't exist.
+`deserialize_strict` returns `DeserializeError` if the config can't be deserialized into 
+`T`, naming the file and — for `get_as_strict` — the subtree path. `get_as_strict` 
+additionally returns `PathNotFound` if the path doesn't exist.
 
 Sample YAML:
 
@@ -988,6 +1024,20 @@ This means changes to environment variables are picked up when the config is rel
 
 A variable's *value* is never rescanned, so a secret that happens to contain `${...}` is 
 used verbatim rather than being expanded again.
+
+### Scope: values, never keys
+
+Interpolation applies to string **values** only. A `${VAR}` written as a mapping key stays 
+the literal text `${VAR}` and is addressed by that text:
+
+```yaml
+${DB_HOST}: value      # a key literally named "${DB_HOST}" — no lookup, no error
+host: ${DB_HOST}       # interpolated
+```
+
+This is deliberate. Interpolating keys would make the set of valid config *paths* depend 
+on the environment, so a path that resolves on one machine would silently miss on another, 
+and an unset variable would become a missing key rather than an error.
 
 ### Error handling
 

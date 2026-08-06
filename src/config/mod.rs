@@ -5,6 +5,7 @@ mod env;
 mod fmt;
 mod loader;
 mod merge;
+mod outline;
 mod parser;
 mod path;
 mod reload;

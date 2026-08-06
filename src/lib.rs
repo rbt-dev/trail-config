@@ -88,7 +88,15 @@
 //!
 //! String values are interpolated at load time, and again on every reload:
 //! `${VAR}` requires the variable to be set, `${VAR:-default}` falls back if it is
-//! absent, and `$${` is a literal `${`.
+//! absent, and `$${` is a literal `${`. Values only — a `${VAR}` written as a *key* stays
+//! literal, so the set of valid config paths never depends on the environment.
+//!
+//! # Debugging
+//!
+//! [`Config::outline`] lists every path in the document with the values replaced by their
+//! types, spelled exactly as the accessors take them. `Debug` and `outline` both elide
+//! values on purpose: interpolation has already happened by the time a `Config` exists, so
+//! anything that printed the document would print the secrets in it.
 //!
 //! # Feature flags
 //!

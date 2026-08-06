@@ -148,3 +148,33 @@ fn merge_optional_with_env_substitution() {
     assert_eq!(config.str("app/port"), "8080");
     assert_eq!(config.get_bool("app/debug"), Some(true));
 }
+
+#[test]
+fn merge_required_rejects_empty_filename() {
+    // Previously reached the OS and failed with `IO error in : ...` — the misleading
+    // message the InvalidInput guard exists to prevent
+    let base = Config::load_yaml("app:\n  port: 8080", "/").unwrap();
+    let result = base.merge_required("", None);
+
+    match result {
+        Err(ConfigError::IoError { source, .. }) => {
+            assert_eq!(source.kind(), std::io::ErrorKind::InvalidInput);
+        },
+        _ => panic!("Expected IoError(InvalidInput) for empty filename, got {:?}", result),
+    }
+}
+
+#[test]
+fn merge_optional_rejects_empty_filename() {
+    // Previously this silently no-opped: reading an empty path yields NotFound,
+    // which is exactly the case merge_optional is designed to ignore
+    let base = Config::load_yaml("app:\n  port: 8080", "/").unwrap();
+    let result = base.merge_optional("", None);
+
+    match result {
+        Err(ConfigError::IoError { source, .. }) => {
+            assert_eq!(source.kind(), std::io::ErrorKind::InvalidInput);
+        },
+        _ => panic!("Expected IoError(InvalidInput) for empty filename, got {:?}", result),
+    }
+}

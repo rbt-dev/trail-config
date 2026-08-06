@@ -5,7 +5,7 @@ use yaml_serde::Value;
 use crate::error::ConfigError;
 use super::{Config, OverlaySource};
 use super::env::resolve_env_vars;
-use super::loader::get_file;
+use super::loader::{empty_filename_error, get_file};
 use super::parser::load_auto;
 
 impl Config {
@@ -28,7 +28,7 @@ impl Config {
     /// * `env` - Optional environment name to substitute in filename
     ///
     /// # Errors
-    /// Returns `ConfigError::IoError` if the file is missing or cannot be read
+    /// Returns `ConfigError::IoError` if the filename is empty, or the file is missing or cannot be read
     /// Returns `ConfigError::YamlError`, `ConfigError::JsonError` or `ConfigError::TomlError` if the file cannot be parsed
     /// Returns `ConfigError::FormatError` if the filename template is invalid
     ///
@@ -44,6 +44,10 @@ impl Config {
     /// ```
     #[must_use = "merge returns a new Config; the original is consumed"]
     pub fn merge_required(mut self, filename: &str, env: Option<&str>) -> Result<Config, ConfigError> {
+        if filename.is_empty() {
+            return Err(empty_filename_error());
+        }
+
         let (file, _) = get_file(filename, env)?;
         let overlay = resolve_env_vars(load_auto(&file)?)?;
         self.content = merge_values(self.content, overlay);
@@ -71,6 +75,8 @@ impl Config {
     /// * `env` - Optional environment name to substitute in filename
     ///
     /// # Errors
+    /// Returns `ConfigError::IoError` if the filename is empty — a caller bug, unlike an
+    ///     absent file, which is the case this method exists to tolerate
     /// Returns `ConfigError::YamlError`, `ConfigError::JsonError` or `ConfigError::TomlError` if the file cannot be parsed
     /// Returns `ConfigError::FormatError` if the filename template is invalid
     ///
@@ -86,6 +92,14 @@ impl Config {
     /// ```
     #[must_use = "merge returns a new Config; the original is consumed"]
     pub fn merge_optional(mut self, filename: &str, env: Option<&str>) -> Result<Config, ConfigError> {
+        // Checked even though this method tolerates a missing file: reading an empty
+        // path yields `NotFound`, which is exactly the case it is designed to ignore,
+        // so without this an empty filename would silently no-op and then push a dead
+        // overlay that every later `reload()` re-walks.
+        if filename.is_empty() {
+            return Err(empty_filename_error());
+        }
+
         let (file, _) = get_file(filename, env)?;
         match load_auto(&file) {
             Ok(yaml) => {

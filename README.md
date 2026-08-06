@@ -370,7 +370,7 @@ Trail Config validates inputs automatically and returns `FormatError` for invali
 | Input | Constraint | Error |
 | ----- | ---------- | ----- |
 | Path separator | Cannot be empty | Returns `FormatError` |
-| File paths | Empty filename rejected upfront by every loader (`load_required`, `load_optional`, `load_or_create`) and `reload_from` | Returns `IoError` (`InvalidInput`) |
+| File paths | Empty filename rejected upfront by every loader (`load_required`, `load_optional`, `load_or_create`), both merges (`merge_required`, `merge_optional`) and `reload_from` | Returns `IoError` (`InvalidInput`) |
 | Paths | Empty paths rejected | Returns `None` or empty / `PathNotFound` |
 | Path segments | Must be non-empty — leading, trailing and doubled separators are rejected | Returns `None` or empty / `PathNotFound` |
 | Filename templates | Must be valid format strings | Returns `FormatError` |
@@ -389,6 +389,10 @@ assert!(result.is_err()); // IoError (InvalidInput) — no longer silently retur
 
 let result = Config::load_or_create("", "/", None, "app:\n  port: 1\n");
 assert!(result.is_err()); // IoError (InvalidInput)
+
+// Same for the merges — an empty overlay filename is a caller bug, not an absent file
+let result = Config::load_required("config.yaml", "/", None)?.merge_optional("", None);
+assert!(result.is_err()); // IoError (InvalidInput) — no longer a silent no-op
 
 // Missing file with load_required - error
 let result = Config::load_required("missing.yaml", "/", None);

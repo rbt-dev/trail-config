@@ -7,6 +7,7 @@ mod formatting;
 mod internals;
 #[cfg(feature = "json")]
 mod json;
+mod key_order;
 mod loading;
 mod macros;
 mod merge;

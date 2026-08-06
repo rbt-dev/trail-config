@@ -56,8 +56,10 @@ enum Format {
 /// halves failed differently and the JSON one was the worse: `.TOML` produced a parse
 /// error that pointed at the wrong problem entirely (`[table]` headers read as a second
 /// YAML document), while `.JSON` appeared to *work*, because YAML is a superset of JSON —
-/// silently applying YAML's duplicate-key and number rules instead of `serde_json`'s,
-/// until a config exercised one of the differences.
+/// silently applying YAML's number and quoting rules instead of `serde_json`'s, until a
+/// config exercised one of the differences. (Duplicate keys were on that list too, until
+/// the JSON path started deserializing into this crate's value model and inherited its
+/// rejection of them; the remaining differences are enough on their own.)
 ///
 /// Matching is on the extension rather than on the end of the string, which also settles
 /// the one case where they differ: a file named literally `.json` is a dotfile with no

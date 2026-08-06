@@ -990,6 +990,11 @@ depend on the order of the overlays. This is invisible through the scalar access
 visible to anything order-preserving — deserializing into a `Mapping`, an `IndexMap` or a 
 `Vec<(K, V)>`, and any re-serialization you do downstream.
 
+Document order holds for all three formats, including a chain that mixes them. Both 
+`serde_json` and `toml` store objects in a `BTreeMap` by default, which would sort every 
+`.json` and `.toml` config's keys alphabetically before this crate ever saw the file; 
+neither does here.
+
 The overlay filenames are recorded so that `reload()` can re-read and re-apply them in 
 order — required overlays that are missing on reload return an error, optional overlays that 
 are missing are silently skipped.

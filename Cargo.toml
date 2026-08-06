@@ -38,7 +38,18 @@ toml = ["dep:toml"]
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", optional = true }
 thiserror = "2"
-toml = { version = "1.1", optional = true }
+# `preserve_order` backs `toml::map::Map` with an `IndexMap` instead of a `BTreeMap`.
+# Without it every TOML config's keys arrive sorted alphabetically, and the document order
+# is gone before this crate sees it — making `outline`'s "keys appear in document order"
+# and the merge's key-order preservation untrue for `.toml` files alone. `indexmap` is
+# already in the tree (`yaml_serde`'s `Mapping` is built on it) and is one of the two
+# crates setting the 1.85 MSRV, so this adds no dependency and moves no floor.
+#
+# The JSON side of the same problem is solved without a feature flag — see
+# `src/config/parser/json.rs` — because `serde_json` is common enough in a dependency
+# graph that enabling `preserve_order` on it would change other crates' behaviour too.
+# `toml::Value` has no such reach, and the datetime handling in `parser/toml.rs` needs it.
+toml = { version = "1.1", optional = true, features = ["preserve_order"] }
 yaml_serde = "0.10"
 
 [dev-dependencies]

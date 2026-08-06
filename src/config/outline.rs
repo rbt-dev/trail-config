@@ -43,7 +43,9 @@ impl Config {
     /// paths, so its type is printed alone.
     ///
     /// Keys appear in document order, the same order the merge preserves — so the outline
-    /// of a layered config also shows where each key ended up.
+    /// of a layered config also shows where each key ended up. That holds for all three
+    /// formats: JSON and TOML would otherwise arrive alphabetically sorted, since both
+    /// crates' own value types are `BTreeMap`-backed by default.
     ///
     /// # Example
     /// ```

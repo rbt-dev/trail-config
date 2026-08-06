@@ -250,6 +250,52 @@ db:
     env::remove_var("TRAIL_TEST_INNER2");
 }
 
+/// Builds `${VAR:-${VAR:-…x…}}` nested `levels` deep.
+fn nested_defaults(var: &str, levels: usize) -> String {
+    let mut s = String::new();
+    for _ in 0..levels {
+        s.push_str(&format!("${{{}:-", var));
+    }
+    s.push('x');
+    for _ in 0..levels {
+        s.push('}');
+    }
+    s
+}
+
+#[test]
+fn nesting_at_the_depth_limit_still_resolves() {
+    let _env = env_lock();
+    env::remove_var("TRAIL_TEST_DEPTH_OK");
+    // 32 is MAX_DEFAULT_DEPTH — far beyond any legitimate config, but allowed
+    let yaml = format!("app:\n  v: {}", nested_defaults("TRAIL_TEST_DEPTH_OK", 32));
+    let config = Config::load_yaml(&yaml, "/").unwrap();
+    assert_eq!(config.str("app/v"), "x");
+}
+
+#[test]
+fn nesting_past_the_depth_limit_errors() {
+    let _env = env_lock();
+    env::remove_var("TRAIL_TEST_DEPTH_OVER");
+    let yaml = format!("app:\n  v: {}", nested_defaults("TRAIL_TEST_DEPTH_OVER", 33));
+    match Config::load_yaml(&yaml, "/") {
+        Err(ConfigError::FormatError(msg)) => {
+            assert!(msg.contains("depth"), "got: {}", msg);
+        },
+        other => panic!("Expected FormatError, got: {:?}", other),
+    }
+}
+
+#[test]
+fn pathological_nesting_errors_instead_of_overflowing_the_stack() {
+    let _env = env_lock();
+    env::remove_var("TRAIL_TEST_DEPTH_BOMB");
+    // Without the depth cap this recurses 10_000 frames deep and aborts the process
+    // with a stack overflow — not a catchable panic
+    let yaml = format!("app:\n  v: {}", nested_defaults("TRAIL_TEST_DEPTH_BOMB", 10_000));
+    assert!(Config::load_yaml(&yaml, "/").is_err());
+}
+
 #[test]
 fn nested_placeholder_in_variable_name_errors() {
     let _env = env_lock();

@@ -867,6 +867,11 @@ a `ConfigError::FormatError`. These also return errors:
 | `${VAR:-${X}` | Unclosed — the inner placeholder closes, the outer one does not |
 | `${:-default}` | Empty variable name |
 | `${${PREFIX}_HOST}` | Nesting is supported in defaults, not in the variable name |
+| `${A:-${A:-${A:-…}}}` | Defaults nested more than 32 levels deep |
+
+Defaults may nest, but only to a fixed depth of 32 — far beyond the two or three
+fallback levels any real config uses. A deeper chain is a `FormatError` rather than an
+unbounded recursion that would abort the process.
 
 The one shape that cannot be expressed is an unbalanced `}` inside a default — `${VAR:-a}b}` 
 ends the placeholder at the first `}`, giving the default `a` followed by the literal `b}`.

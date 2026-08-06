@@ -4,12 +4,19 @@ use std::env;
 use yaml_serde::Value;
 use crate::error::ConfigError;
 
+/// How deeply `${VAR:-default}` fallbacks may nest.
+///
+/// Each level recurses, so an unbounded chain — `${A:-${A:-${A:-…}}}` — would
+/// overflow the stack and abort the process rather than surface an error. Two or
+/// three fallback levels is the deepest sensible config, so this leaves ample room.
+const MAX_DEFAULT_DEPTH: usize = 32;
+
 /// Recursively walks the Value tree and resolves `${VAR}` and `${VAR:-default}`
 /// placeholders in all string values using environment variables.
 pub(super) fn resolve_env_vars(value: Value) -> Result<Value, ConfigError> {
     match value {
         Value::String(s) => {
-            let resolved = resolve_env_string(&s)?;
+            let resolved = resolve_env_string(&s, 0)?;
             Ok(Value::String(resolved))
         },
         Value::Mapping(map) => {
@@ -32,7 +39,9 @@ pub(super) fn resolve_env_vars(value: Value) -> Result<Value, ConfigError> {
 ///
 /// `$${` escapes to a literal `${`. A `$` that does not begin `${` is literal, so
 /// values like `$100` and `Pa$$w0rd!` pass through untouched.
-fn resolve_env_string(input: &str) -> Result<String, ConfigError> {
+///
+/// `depth` is how many nested defaults deep this call is; the top-level call passes 0.
+fn resolve_env_string(input: &str, depth: usize) -> Result<String, ConfigError> {
     let mut result = String::with_capacity(input.len());
     let mut rest = input;
 
@@ -59,7 +68,7 @@ fn resolve_env_string(input: &str) -> Result<String, ConfigError> {
             rest = tail;
         } else if let Some(after) = rest.strip_prefix("${") {
             let (spec, tail) = split_placeholder(after, input)?;
-            result.push_str(&resolve_placeholder(spec, input)?);
+            result.push_str(&resolve_placeholder(spec, input, depth)?);
             rest = tail;
         } else {
             // A '$' that does not begin a placeholder
@@ -105,8 +114,10 @@ fn split_placeholder<'a>(after: &'a str, input: &str) -> Result<(&'a str, &'a st
 /// Resolves one placeholder body — `VAR` or `VAR:-default`.
 ///
 /// The default is itself run through [`resolve_env_string`], so defaults may nest:
-/// `${A:-${B:-c}}` falls back through both levels.
-fn resolve_placeholder(spec: &str, input: &str) -> Result<String, ConfigError> {
+/// `${A:-${B:-c}}` falls back through both levels. That recursion is capped at
+/// [`MAX_DEFAULT_DEPTH`] levels so a pathological chain errors instead of overflowing
+/// the stack.
+fn resolve_placeholder(spec: &str, input: &str, depth: usize) -> Result<String, ConfigError> {
     let (var_name, default) = match spec.find(":-") {
         Some(pos) => (&spec[..pos], Some(&spec[pos + 2..])),
         None => (spec, None),
@@ -133,7 +144,12 @@ fn resolve_placeholder(spec: &str, input: &str) -> Result<String, ConfigError> {
         // applies only when the variable is missing. This differs from shell `:-`.
         Ok(value) => Ok(value),
         Err(_) => match default {
-            Some(default) => resolve_env_string(default),
+            Some(_) if depth >= MAX_DEFAULT_DEPTH => Err(ConfigError::FormatError(format!(
+                "Env var default nesting exceeds the maximum depth of {} at '{}' \
+                 — check for a runaway ${{VAR:-...}} chain",
+                MAX_DEFAULT_DEPTH, var_name
+            ))),
+            Some(default) => resolve_env_string(default, depth + 1),
             None => Err(ConfigError::FormatError(format!(
                 "Environment variable '{}' is not set and no default provided",
                 var_name

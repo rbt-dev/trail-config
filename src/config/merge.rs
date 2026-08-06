@@ -1,6 +1,6 @@
 //! Layering overlay files on top of a base config via deep merge.
 
-use std::io;
+use std::{io, mem};
 use yaml_serde::Value;
 use crate::error::ConfigError;
 use super::{Config, OverlaySource};
@@ -114,15 +114,30 @@ impl Config {
     }
 }
 
+/// Deep-merges `overlay` onto `base`, preserving the base's key order.
+///
+/// Overridden keys keep their position in the base document and genuinely-new overlay
+/// keys are appended. This matters because `yaml_serde::Mapping` wraps an `IndexMap` and
+/// is insertion-ordered, so the merged order is visible to anything that preserves it —
+/// `get_as` / `deserialize` into a `Value`, a `Mapping` or an `IndexMap`, and any
+/// re-serialization the caller does downstream.
 pub(super) fn merge_values(base: Value, overlay: Value) -> Value {
     match (base, overlay) {
         (Value::Mapping(mut base_map), Value::Mapping(overlay_map)) => {
             for (key, overlay_val) in overlay_map {
-                let merged = match base_map.remove(&key) {
-                    Some(base_val) => merge_values(base_val, overlay_val),
-                    None => overlay_val,
-                };
-                base_map.insert(key, merged);
+                match base_map.get_mut(&key) {
+                    // Merged in place. `Mapping::remove` is `swap_remove`, so
+                    // remove-then-insert would move the map's *last* entry into the
+                    // vacated slot and append the overridden key at the end — two keys
+                    // displaced for a single-key overlay.
+                    Some(slot) => {
+                        let base_val = mem::replace(slot, Value::Null);
+                        *slot = merge_values(base_val, overlay_val);
+                    },
+                    None => {
+                        base_map.insert(key, overlay_val);
+                    },
+                }
             }
             Value::Mapping(base_map)
         },

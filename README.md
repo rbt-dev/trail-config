@@ -749,6 +749,12 @@ Use `merge_required` / `merge_optional` to layer configs on top of each other. V
 the overlay take precedence over the base; nested mappings are merged recursively so sibling 
 keys are preserved. Sequences are replaced wholesale. The base config's separator is preserved.
 
+Key order follows the base document: an overridden key keeps its position and genuinely-new 
+overlay keys are appended, at every level of nesting. The merged order therefore does not 
+depend on the order of the overlays. This is invisible through the scalar accessors but 
+visible to anything order-preserving — deserializing into a `Mapping`, an `IndexMap` or a 
+`Vec<(K, V)>`, and any re-serialization you do downstream.
+
 The overlay filenames are recorded so that `reload()` can re-read and re-apply them in 
 order — required overlays that are missing on reload return an error, optional overlays that 
 are missing are silently skipped.

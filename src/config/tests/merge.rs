@@ -178,3 +178,67 @@ fn merge_optional_rejects_empty_filename() {
         _ => panic!("Expected IoError(InvalidInput) for empty filename, got {:?}", result),
     }
 }
+
+/// Top-level key order of a config, as seen by a caller deserializing the whole
+/// document into an order-preserving type.
+fn key_order(config: &Config) -> Vec<String> {
+    let map: yaml_serde::Mapping = config.deserialize_strict().unwrap();
+    map.keys().map(|k| k.as_str().unwrap().to_string()).collect()
+}
+
+#[test]
+fn merge_preserves_base_key_order() {
+    let dir = temp_dir();
+    let overlay_file = write_file(&dir, "overlay.yaml", "a: 9\n");
+
+    // `Mapping::remove` is `swap_remove`: overriding `a` used to move `c` into its
+    // slot and append `a` at the end, giving c, b, a
+    let base = Config::load_yaml("a: 1\nb: 2\nc: 3", "/").unwrap();
+    let config = base.merge_required(&overlay_file, None).unwrap();
+
+    assert_eq!(key_order(&config), ["a", "b", "c"]);
+    assert_eq!(config.get_int("a"), Some(9));
+    assert_eq!(config.get_int("c"), Some(3));
+}
+
+#[test]
+fn merge_appends_genuinely_new_keys() {
+    let dir = temp_dir();
+    let overlay_file = write_file(&dir, "overlay.yaml", "d: 4\nb: 9\n");
+
+    let base = Config::load_yaml("a: 1\nb: 2\nc: 3", "/").unwrap();
+    let config = base.merge_required(&overlay_file, None).unwrap();
+
+    // Overridden keys hold their place; only `d` is new, so it goes last
+    assert_eq!(key_order(&config), ["a", "b", "c", "d"]);
+    assert_eq!(config.get_int("b"), Some(9));
+}
+
+#[test]
+fn merge_preserves_key_order_in_nested_mappings() {
+    let dir = temp_dir();
+    let overlay_file = write_file(&dir, "overlay.yaml", "db:\n  host: prodserver\n");
+
+    let base = Config::load_yaml("db:\n  host: localhost\n  port: 5432\n  name: myapp", "/").unwrap();
+    let config = base.merge_required(&overlay_file, None).unwrap();
+
+    let db: yaml_serde::Mapping = config.get_as_strict("db").unwrap();
+    let keys: Vec<&str> = db.keys().map(|k| k.as_str().unwrap()).collect();
+    assert_eq!(keys, ["host", "port", "name"]);
+    assert_eq!(config.str("db/host"), "prodserver");
+}
+
+#[test]
+fn merge_key_order_does_not_depend_on_overlay_order() {
+    let dir = temp_dir();
+    let forward = write_file(&dir, "forward.yaml", "a: 9\nc: 7\n");
+    let reverse = write_file(&dir, "reverse.yaml", "c: 7\na: 9\n");
+
+    let one = Config::load_yaml("a: 1\nb: 2\nc: 3", "/").unwrap()
+        .merge_required(&forward, None).unwrap();
+    let two = Config::load_yaml("a: 1\nb: 2\nc: 3", "/").unwrap()
+        .merge_required(&reverse, None).unwrap();
+
+    assert_eq!(key_order(&one), ["a", "b", "c"]);
+    assert_eq!(key_order(&one), key_order(&two));
+}

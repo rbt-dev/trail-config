@@ -77,6 +77,13 @@
 //! [`ConfigHandle`] wraps a `Config` for sharing across threads, handing out immutable
 //! snapshots and reloading without blocking readers on disk I/O.
 //!
+//! # Value model
+//!
+//! [`Value`] — what [`Config::get`] returns — and the error types behind [`ConfigError`]'s
+//! parse variants are re-exported here, along with [`Mapping`], [`Sequence`] and
+//! [`Number`]. Name them through this crate rather than adding the underlying crates as
+//! dependencies, so the types always match the versions this crate resolved.
+//!
 //! # Environment variables
 //!
 //! String values are interpolated at load time, and again on every reload:
@@ -103,6 +110,43 @@ mod test_util;
 pub use error::ConfigError;
 pub use config::Config;
 pub use handle::ConfigHandle;
+
+// The value model and the underlying error types appear in this crate's public API —
+// `get` returns a `Value`, and every parse-error variant of `ConfigError` carries the
+// originating error as a public `source` field. Without these re-exports a caller could
+// not *name* what those APIs hand back: `get` was usable only through `Debug`, and
+// matching on `ConfigError::YamlError { source }` gave a binding of an unnameable type.
+// The alternative — adding `yaml_serde` as a direct dependency — meant guessing the
+// version this crate resolved, and picking a different one produces two incompatible
+// `Value` types whose error message names the same path twice.
+//
+// Re-exporting does not settle the larger question of whether the value model should be
+// a crate-local type so `yaml_serde` (still 0.x, where every minor bump is breaking) can
+// be upgraded without a breaking release here. It makes the current API honest, and
+// forecloses nothing.
+
+/// The parsed value model, re-exported from [`yaml_serde`](https://docs.rs/yaml_serde).
+///
+/// [`Config::get`] and [`Config::get_strict`] return a [`Value`], and its variants carry
+/// [`Mapping`], [`Sequence`] and [`Number`]. Prefer [`Config::get_as`] for a typed struct;
+/// reach for these when you want the raw document.
+pub use yaml_serde::{Mapping, Number, Sequence, Value};
+
+/// The error carried by [`ConfigError::YamlError`], re-exported from
+/// [`yaml_serde`](https://docs.rs/yaml_serde).
+///
+/// Covers both YAML parse failures and failures to deserialize a document into a type.
+pub use yaml_serde::Error as YamlError;
+
+/// The error carried by [`ConfigError::JsonError`], re-exported from
+/// [`serde_json`](https://docs.rs/serde_json).
+#[cfg(feature = "json")]
+pub use serde_json::Error as JsonError;
+
+/// The error carried by [`ConfigError::TomlError`], re-exported from
+/// [`toml`](https://docs.rs/toml).
+#[cfg(feature = "toml")]
+pub use toml::de::Error as TomlError;
 
 /// Macro for building a [`Config`] with a concise syntax.
 ///

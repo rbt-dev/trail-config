@@ -258,13 +258,34 @@ with `get_as` / `deserialize`.
 
 | Method | Returns | Description |
 | ------ | ------- | ----------- |
-| `get(path)` | `Option<Value>` | Raw `yaml_serde::Value` |
+| `get(path)` | `Option<Value>` | Raw value — `trail_config::Value` |
 | `get_strict(path)` | `Result<Value, ConfigError>` | Raw value, errors if missing |
 | `str(path)` | `String` | String representation, empty if missing |
 | `str_strict(path)` | `Result<String, ConfigError>` | String, errors if missing |
 | `list(path)` | `Vec<String>` | Sequence as string vector, empty if missing |
 | `list_strict(path)` | `Result<Vec<String>, ConfigError>` | Sequence, errors if missing |
 | `contains(path)` | `bool` | Returns `true` if path exists |
+
+The raw value type and the errors behind `ConfigError` are re-exported, so nothing the API
+hands back needs a second dependency to name:
+
+```rust
+use trail_config::{Config, ConfigError, Value, YamlError};
+
+let config = Config::load_required("config.yaml", "/", None)?;
+
+match config.get("app/port") {
+    Some(Value::Number(n)) => println!("port {}", n),
+    Some(other) => eprintln!("app/port is not a number: {:?}", other),
+    None => eprintln!("app/port is not set"),
+}
+```
+
+`Value`, `Mapping`, `Sequence`, `Number` and `YamlError` come from
+[`yaml_serde`](https://docs.rs/yaml_serde); `JsonError` and `TomlError` are re-exported
+with the corresponding feature. Use these names rather than depending on the underlying
+crates directly — a version that differs from the one this crate resolved produces two
+incompatible `Value` types.
 
 ### Typed access
 

@@ -60,8 +60,9 @@
 //!
 //! [`merge_required`](Config::merge_required) and [`merge_optional`](Config::merge_optional)
 //! deep-merge overlay files onto a base, preserving sibling keys and the base's key order.
-//! The overlay chain is recorded, so [`reload`](Config::reload) re-reads and re-applies
-//! everything in order:
+//! An overlay value takes precedence whatever it is, so a key set to null clears the base
+//! value rather than being ignored. The overlay chain is recorded, so
+//! [`reload`](Config::reload) re-reads and re-applies everything in order:
 //!
 //! ```no_run
 //! # use trail_config::{Config, ConfigError};

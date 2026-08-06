@@ -179,6 +179,82 @@ fn merge_optional_rejects_empty_filename() {
     }
 }
 
+#[test]
+fn merge_null_overlay_value_clears_base_value() {
+    let dir = temp_dir();
+    // YAML's bare `key:` form — the way a null is written by accident as often as
+    // on purpose. Previously discarded, leaving the base credential in place.
+    let overlay_file = write_file(&dir, "overlay.yaml", "app:\n  token:\n");
+
+    let base = Config::load_yaml("app:\n  name: real\n  token: secret\n  retries: 3", "/").unwrap();
+    let config = base.merge_required(&overlay_file, None).unwrap();
+
+    assert_eq!(config.str("app/token"), "");
+    assert_eq!(config.get("app/token"), Some(yaml_serde::Value::Null));
+    // The key is cleared, not removed — it is present holding a null
+    assert!(config.contains("app/token"));
+    // Siblings untouched
+    assert_eq!(config.str("app/name"), "real");
+    assert_eq!(config.get_int("app/retries"), Some(3));
+}
+
+#[test]
+fn merge_explicit_null_overlay_value_clears_base_value() {
+    let dir = temp_dir();
+    let overlay_file = write_file(&dir, "overlay.yaml", "app:\n  token: null\n");
+
+    let base = Config::load_yaml("app:\n  token: secret", "/").unwrap();
+    let config = base.merge_required(&overlay_file, None).unwrap();
+
+    assert_eq!(config.str("app/token"), "");
+}
+
+#[test]
+fn merge_null_overlay_clears_whole_subtree() {
+    let dir = temp_dir();
+    let overlay_file = write_file(&dir, "overlay.yaml", "app:\nkeep: 1\n");
+
+    let base = Config::load_yaml("app:\n  name: real\n  token: secret\nkeep: 0", "/").unwrap();
+    let config = base.merge_required(&overlay_file, None).unwrap();
+
+    assert_eq!(config.str("app/name"), "");
+    assert_eq!(config.str("app/token"), "");
+    assert!(!config.contains("app/name"));
+    assert_eq!(config.get_int("keep"), Some(1));
+}
+
+#[test]
+fn merge_empty_overlay_document_is_a_no_op() {
+    let dir = temp_dir();
+    // An empty document parses to the same `Value::Null` as a cleared key, but at the
+    // document level it means "nothing to overlay" — the distinction `merge_documents`
+    // exists to draw. A comment-only file is the same case.
+    let empty = write_file(&dir, "empty.yaml", "");
+    let comments = write_file(&dir, "comments.yaml", "# nothing here\n");
+
+    let config = Config::load_yaml("app:\n  port: 8080\n  debug: false", "/").unwrap()
+        .merge_required(&empty, None).unwrap()
+        .merge_optional(&comments, None).unwrap();
+
+    assert_eq!(config.str("app/port"), "8080");
+    assert_eq!(config.get_bool("app/debug"), Some(false));
+}
+
+#[test]
+fn reload_reapplies_null_clearing_overlay() {
+    let dir = temp_dir();
+    let base_file = write_file(&dir, "base.yaml", "app:\n  token: secret\n");
+    let overlay_file = write_file(&dir, "overlay.yaml", "app:\n  token:\n");
+
+    let mut config = Config::load_required(&base_file, "/", None).unwrap()
+        .merge_required(&overlay_file, None).unwrap();
+    assert_eq!(config.str("app/token"), "");
+
+    // The clear must survive a reload, which rebuilds the merge from scratch
+    config.reload().unwrap();
+    assert_eq!(config.str("app/token"), "");
+}
+
 /// Top-level key order of a config, as seen by a caller deserializing the whole
 /// document into an order-preserving type.
 fn key_order(config: &Config) -> Vec<String> {

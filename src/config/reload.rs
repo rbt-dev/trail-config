@@ -6,7 +6,7 @@ use crate::error::ConfigError;
 use super::{Config, OverlaySource};
 use super::env::resolve_env_vars;
 use super::loader::{empty_filename_error, get_file};
-use super::merge::merge_values;
+use super::merge::merge_documents;
 use super::parser::load_auto;
 
 impl Config {
@@ -55,12 +55,12 @@ impl Config {
             match overlay {
                 OverlaySource::Required(filename) => {
                     let yaml = resolve_env_vars(load_auto(filename)?)?;
-                    content = merge_values(content, yaml);
+                    content = merge_documents(content, yaml);
                 },
                 OverlaySource::Optional(filename) => {
                     match load_auto(filename) {
                         Ok(yaml) => {
-                            content = merge_values(content, resolve_env_vars(yaml)?);
+                            content = merge_documents(content, resolve_env_vars(yaml)?);
                         },
                         Err(ConfigError::IoError { ref source, .. }) if source.kind() == io::ErrorKind::NotFound => {},
                         Err(e) => return Err(e),

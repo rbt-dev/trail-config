@@ -16,6 +16,14 @@ impl Config {
     /// without clobbering sibling keys. Sequences are replaced wholesale rather than
     /// merged element-by-element.
     ///
+    /// A null in the overlay is a value like any other and takes precedence, so a key set
+    /// to null — including through YAML's bare `key:` form — clears the base value, and a
+    /// subtree set to null clears the entire subtree. The key itself remains present
+    /// holding a null: [`contains`](Config::contains) still reports `true`, while
+    /// [`str`](Config::str) returns `""` and the typed accessors return `None`. An overlay
+    /// file that is *entirely* empty is the one exception — it is a no-op, not a
+    /// document-wide clear.
+    ///
     /// The overlay filename is recorded so that [`reload`](Config::reload) can re-read and
     /// re-apply it. If the overlay file is missing during a reload, an error is returned.
     ///
@@ -51,7 +59,7 @@ impl Config {
 
         let (file, _) = get_file(filename, env)?;
         let overlay = resolve_env_vars(load_auto(&file)?)?;
-        self.content = merge_values(self.content, overlay);
+        self.content = merge_documents(self.content, overlay);
         self.overlays.push(OverlaySource::Required(file));
         Ok(self)
     }
@@ -62,6 +70,14 @@ impl Config {
     /// nested mappings are merged recursively so individual leaf values can be overridden
     /// without clobbering sibling keys. Sequences are replaced wholesale rather than
     /// merged element-by-element.
+    ///
+    /// A null in the overlay is a value like any other and takes precedence, so a key set
+    /// to null — including through YAML's bare `key:` form — clears the base value, and a
+    /// subtree set to null clears the entire subtree. The key itself remains present
+    /// holding a null: [`contains`](Config::contains) still reports `true`, while
+    /// [`str`](Config::str) returns `""` and the typed accessors return `None`. An overlay
+    /// file that is *entirely* empty is the one exception — it is a no-op, not a
+    /// document-wide clear.
     ///
     /// The overlay filename is recorded so that [`reload`](Config::reload) can re-read and
     /// re-apply it. If the overlay file is missing during a reload, it is silently skipped.
@@ -106,13 +122,31 @@ impl Config {
         match load_auto(&file) {
             Ok(yaml) => {
                 let overlay = resolve_env_vars(yaml)?;
-                self.content = merge_values(self.content, overlay);
+                self.content = merge_documents(self.content, overlay);
             },
             Err(ConfigError::IoError { ref source, .. }) if source.kind() == io::ErrorKind::NotFound => {},
             Err(e) => return Err(e),
         }
         self.overlays.push(OverlaySource::Optional(file));
         Ok(self)
+    }
+}
+
+/// Deep-merges a whole overlay *document* onto a base document.
+///
+/// An empty document is a no-op, leaving the base untouched — that is what an absent
+/// file tolerated by [`Config::merge_optional`], an empty file and a comment-only file
+/// all parse to. The check belongs here, at the document level, because it is a property
+/// of the overlay *as a whole*: inside a document an explicit null is an ordinary value
+/// that overrides the base, and `merge_values` cannot tell the two apart — both arrive
+/// as `Value::Null`.
+///
+/// Every merge of a complete file goes through this function; `merge_values` recurses
+/// only into keys, where the empty-document rule must not apply.
+pub(super) fn merge_documents(base: Value, overlay: Value) -> Value {
+    match overlay {
+        Value::Null => base,
+        overlay => merge_values(base, overlay),
     }
 }
 
@@ -123,7 +157,7 @@ impl Config {
 /// is insertion-ordered, so the merged order is visible to anything that preserves it —
 /// `get_as` / `deserialize` into a `Value`, a `Mapping` or an `IndexMap`, and any
 /// re-serialization the caller does downstream.
-pub(super) fn merge_values(base: Value, overlay: Value) -> Value {
+fn merge_values(base: Value, overlay: Value) -> Value {
     match (base, overlay) {
         (Value::Mapping(mut base_map), Value::Mapping(overlay_map)) => {
             for (key, overlay_val) in overlay_map {
@@ -143,9 +177,9 @@ pub(super) fn merge_values(base: Value, overlay: Value) -> Value {
             }
             Value::Mapping(base_map)
         },
-        // A null overlay (e.g. from an empty Config) is a no-op — preserve the base
-        (base, Value::Null) => base,
-        // Sequences are replaced wholesale; all other types are overridden by overlay
+        // Sequences are replaced wholesale; all other types are overridden by the
+        // overlay — including an explicit null, which is how a key is cleared. The
+        // whole-document case is handled in `merge_documents`, above.
         (_, overlay) => overlay,
     }
 }

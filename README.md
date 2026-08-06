@@ -794,6 +794,28 @@ The overlay filenames are recorded so that `reload()` can re-read and re-apply t
 order — required overlays that are missing on reload return an error, optional overlays that 
 are missing are silently skipped.
 
+### Clearing a value with null
+
+An overlay value takes precedence whatever it is, including null — so setting a key to null 
+is how an overlay clears an inherited value:
+
+```yaml
+# config.local.yaml
+database:
+  password:        # bare `key:` is YAML for null — clears the base password
+telemetry: null    # explicit form, identical in effect
+cache:             # a subtree set to null clears the whole subtree
+```
+
+The key is *cleared*, not removed: it remains present holding a null, so `contains` still 
+returns `true` while `str` returns `""` and the typed accessors (`get_int`, `get_bool`, …) 
+return `None`. `get(path)` tells the two apart: a cleared key yields `Some` holding a null 
+value, a key that was never set yields `None`.
+
+An overlay file that is **entirely** empty — zero bytes, or nothing but comments — is the one 
+exception. It is a no-op rather than a document-wide clear, which is what makes an absent 
+`merge_optional` file and an empty one behave the same way.
+
 ```rust
 use trail_config::Config;
 

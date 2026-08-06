@@ -68,7 +68,13 @@ impl Config {
         self.environment.as_deref()
     }
 
-    /// Returns the filename of the loaded config file
+    /// Returns the filename of the loaded config file.
+    ///
+    /// This is the *resolved* name, with any `{env}` placeholder substituted. A config
+    /// loaded optionally from a file that does not exist still reports that filename —
+    /// it is the file a later [`reload`](Config::reload) will read. Only a config parsed
+    /// from a string ([`load_yaml`](Config::load_yaml), [`load_json`](Config::load_json),
+    /// [`load_toml`](Config::load_toml)) has no filename, and returns `""`.
     pub fn get_filename(&self) -> &str {
         &self.filename
     }

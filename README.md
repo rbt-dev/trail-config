@@ -75,6 +75,18 @@ let config = Config::load_optional("config.yaml", "::", None)?;
 let config = Config::load_optional("config.{env}.yaml", "/", Some("dev"))?;
 ```
 
+A missing file yields an empty config that still **remembers the filename it looked for**, 
+so a file created later is picked up by `reload()`:
+
+```rust
+let mut config = Config::load_optional("config.local.yaml", "/", None)?;
+assert_eq!(config.get_filename(), "config.local.yaml"); // recorded even though absent
+
+// Errors with IoError (NotFound) while the file is still missing, leaving the
+// config unchanged; succeeds as soon as it appears.
+config.reload()?;
+```
+
 ### The `{env}` placeholder
 
 Every method that takes a filename also takes an optional environment name. The rule is:
@@ -268,7 +280,7 @@ escape sequence — see [Escape Sequences](#escape-sequences) — not by doublin
 
 | Method | Returns | Description |
 | ------ | ------- | ----------- |
-| `get_filename()` | `&str` | Filename of the loaded config |
+| `get_filename()` | `&str` | Resolved filename of the config; `""` only for configs parsed from a string |
 | `environment()` | `Option<&str>` | Environment name used when loading |
 | `reload()` | `Result<(), ConfigError>` | Reload from current file |
 | `reload_from(filename)` | `Result<(), ConfigError>` | Load from a different file |

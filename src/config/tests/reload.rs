@@ -50,6 +50,53 @@ fn reload_preserves_separator() {
 }
 
 #[test]
+fn missing_optional_file_records_its_filename() {
+    let dir = temp_dir();
+    let missing = dir.path().join("absent.yaml").to_string_lossy().into_owned();
+
+    let config = Config::load_optional(&missing, "/", None).unwrap();
+    assert_eq!(config.get_filename(), missing);
+    assert_eq!(config.str("app/port"), "");
+}
+
+#[test]
+fn missing_optional_file_is_picked_up_once_it_appears() {
+    let dir = temp_dir();
+    let file = dir.path().join("late.yaml").to_string_lossy().into_owned();
+
+    // Loaded before the file exists — empty, but not sourceless
+    let mut config = Config::load_optional(&file, "/", None).unwrap();
+    assert_eq!(config.str("app/port"), "");
+
+    // Still absent: reload names the missing file rather than refusing outright
+    match config.reload() {
+        Err(ConfigError::IoError { .. }) => {},
+        other => panic!("Expected IoError, got: {:?}", other),
+    }
+
+    fs::write(&file, "app:\n  port: 8080\n").unwrap();
+
+    config.reload().unwrap();
+    assert_eq!(config.str("app/port"), "8080");
+}
+
+#[test]
+fn missing_optional_file_records_the_resolved_env_filename() {
+    let dir = temp_dir();
+    let template = dir.path().join("config.{env}.yaml").to_string_lossy().into_owned();
+    let resolved = dir.path().join("config.prod.yaml").to_string_lossy().into_owned();
+
+    let mut config = Config::load_optional(&template, "/", Some("prod")).unwrap();
+    // The placeholder is substituted before the name is recorded
+    assert_eq!(config.get_filename(), resolved);
+    assert_eq!(config.environment(), Some("prod"));
+
+    fs::write(&resolved, "app:\n  port: 8080\n").unwrap();
+    config.reload().unwrap();
+    assert_eq!(config.str("app/port"), "8080");
+}
+
+#[test]
 fn reload_from_string_config_fails() {
     let yaml = "test: value";
     let mut config = Config::load_yaml(yaml, "/").unwrap();

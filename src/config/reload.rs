@@ -22,7 +22,11 @@ impl Config {
     ///
     /// # Errors
     /// Returns `ConfigError::FormatError` if no file path is associated with this config
-    /// Returns `ConfigError::IoError` if the base file or a required overlay is missing or cannot be read
+    ///     (only a config parsed from a string has none)
+    /// Returns `ConfigError::IoError` if the base file or a required overlay is missing or cannot be read.
+    ///     This includes a base file that was absent at load time via
+    ///     [`load_optional`](Config::load_optional) and is still absent — the config keeps its
+    ///     filename, so the reload succeeds once the file appears
     /// Returns `ConfigError::YamlError`, `ConfigError::JsonError` or `ConfigError::TomlError` if any file cannot be parsed
     ///
     /// # Note

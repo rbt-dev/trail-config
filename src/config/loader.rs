@@ -45,6 +45,11 @@ impl Config {
     ///
     /// For a file that must exist, use [`load_required`](Config::load_required).
     ///
+    /// The resolved filename is recorded even when the file is missing, so a config
+    /// loaded before its file exists can pick it up on a later [`reload`](Config::reload).
+    /// Until the file appears, `reload` returns `IoError` (`NotFound`) and leaves the
+    /// config unchanged.
+    ///
     /// # Arguments
     /// * `filename` - Path to the config file (can contain `{env}` placeholder)
     /// * `sep` - Path separator for accessing nested values
@@ -74,8 +79,13 @@ impl Config {
         match Self::load_internal(filename, sep, env) {
             Ok(config) => Ok(config),
             Err(ConfigError::IoError { ref source, .. }) if source.kind() == io::ErrorKind::NotFound => {
-                // `load_internal` validated `sep` before failing, so this cannot fail on it
-                Self::from_parsed(Value::Null, "", sep, env.map(|s| s.to_string()))
+                // Record the file this config *would* have come from. Discarding it
+                // would leave the config with no source at all, and `reload()` refuses
+                // to run without one — so a file that appears later could never be
+                // picked up. `load_internal` resolved both `sep` and the filename
+                // template before failing, so neither can fail here.
+                let (file, env) = get_file(filename, env)?;
+                Self::from_parsed(Value::Null, &file, sep, env)
             },
             Err(e) => Err(e),
         }

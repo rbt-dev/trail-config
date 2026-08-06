@@ -1,7 +1,10 @@
 [package]
 name = "trail-config"
-version = "0.4.0"
+version = "0.5.0"
 edition = "2021"
+# Set by the dependency tree, not by this crate's own code: indexmap 2.14 (via yaml_serde) and toml 1.1 both require 1.85. 
+# Dev-dependencies need more than this (criterion 0.8 requires 1.86), so `cargo bench` has a higher floor than using the library does.
+rust-version = "1.85"
 authors = ["Robert Lampreht <robert.lampreht@gmail.com>"]
 description = "A Rust library for reading config files with path-based access, typed deserialization, environment overlays, deep merging, env variable interpolation, and hot reload support."
 readme = "README.md"

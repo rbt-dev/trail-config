@@ -13,6 +13,7 @@ pub enum ConfigError {
     IoError {
         /// The file being read or written, if the error relates to one.
         file: Option<String>,
+        /// The underlying I/O error.
         source: io::Error,
     },
 
@@ -21,6 +22,7 @@ pub enum ConfigError {
     YamlError {
         /// The file being parsed, or `None` for string input or `from_value` failures.
         file: Option<String>,
+        /// The underlying YAML error, from parsing or from deserializing into a type.
         source: yaml_serde::Error,
     },
 
@@ -30,6 +32,7 @@ pub enum ConfigError {
     JsonError {
         /// The file being parsed, or `None` for string input.
         file: Option<String>,
+        /// The underlying JSON parse error.
         source: serde_json::Error,
     },
 
@@ -39,6 +42,7 @@ pub enum ConfigError {
     TomlError {
         /// The file being parsed, or `None` for string input.
         file: Option<String>,
+        /// The underlying TOML parse error.
         source: toml::de::Error,
     },
 

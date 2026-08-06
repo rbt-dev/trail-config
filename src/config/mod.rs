@@ -15,6 +15,21 @@ enum OverlaySource {
     Optional(String),
 }
 
+/// A loaded configuration document, with the settings used to read it.
+///
+/// A `Config` owns the parsed document, the separator its paths are written with, the
+/// environment it was loaded for, and the chain of overlays merged onto it — everything
+/// [`reload`](Config::reload) needs to rebuild itself from disk.
+///
+/// Construct one with [`load_required`](Config::load_required),
+/// [`load_optional`](Config::load_optional), [`load_or_create`](Config::load_or_create)
+/// or [`Config::default`], read values with the lenient
+/// (`get`, `str`, `list`, `get_int`, ...) or strict (`*_strict`) accessors, and layer
+/// files with [`merge_required`](Config::merge_required) /
+/// [`merge_optional`](Config::merge_optional).
+///
+/// `Config` is not `Send + Sync`; use [`ConfigHandle`](crate::ConfigHandle) to share one
+/// across threads.
 #[derive(Clone)]
 pub struct Config {
     content: Value,

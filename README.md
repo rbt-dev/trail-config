@@ -145,7 +145,7 @@ Enable the `json` feature in your `Cargo.toml`:
 
 ```toml
 [dependencies]
-trail-config = { version = "0.4", features = ["json"] }
+trail-config = { version = "0.5", features = ["json"] }
 ```
 
 JSON files are auto-detected by extension:
@@ -170,7 +170,7 @@ Enable the `toml` feature in your `Cargo.toml`:
 
 ```toml
 [dependencies]
-trail-config = { version = "0.4", features = ["toml"] }
+trail-config = { version = "0.5", features = ["toml"] }
 ```
 
 TOML files are auto-detected by extension:

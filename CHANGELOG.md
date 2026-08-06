@@ -5,7 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.5.0] - Not released
+## [0.5.0] - Unreleased
+
+<!-- Cargo.toml is bumped to 0.5.0 ahead of the release; set the date here when publishing. -->
+
 
 ### Changed
 
@@ -28,6 +31,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `ConfigHandle::reload` no longer holds the write lock across disk I/O and parsing. It now copies the config's source list (base filename plus the overlay chain) under a read lock, builds the new config with no lock held, and takes the write lock only to swap the finished config in. Readers previously blocked for the full duration of every file read and parse; they now block only for the swap. Failure behaviour is unchanged — if the reload fails, no swap occurs and the existing config is preserved.
 - JSON/TOML → YAML value conversion failures (previously stringified into `JsonError`/`TomlError`) now surface as `YamlError`, since the conversion happens in the YAML layer. Parse errors still surface as `JsonError`/`TomlError`.
 - `get_leaf` returns a borrowed `&Value` instead of deep-cloning the subtree on every access. `contains`, `str`, `list` and the typed accessors no longer clone; only `get`/`get_strict` and `get_as`/`get_as_strict` clone, where an owned value is actually produced. No public API changes.
+- Added a crate-level doc comment. `src/lib.rs` had none, so the docs.rs landing page was bare despite the README: it now covers loading, the lenient/strict split, path syntax, layering and reloading, environment interpolation and the feature flags, with compiled examples. The README deliberately remains the long-form guide and is not included as crate docs — the hidden-line scaffolding needed to compile its examples as doctests renders literally on GitHub and crates.io.
+- Added `#![warn(missing_docs)]`, and documented the six items it flagged: the crate itself, `Config`, and the `source` field of the four `ConfigError` struct variants (public API since `dbf152f`).
+- Added `rust-version = "1.85"` (MSRV) to `Cargo.toml`, so Cargo diagnoses a too-old toolchain instead of failing with a confusing compile error. The floor comes from the dependency tree — indexmap 2.14 via yaml_serde, and toml 1.1 — not from this crate's own code. Dev-dependencies require more (criterion 0.8 needs 1.86), so `cargo bench` has a higher floor than using the library.
 - Added `[package.metadata.docs.rs] all-features = true` so the feature-gated JSON/TOML APIs appear in the docs.rs documentation.
 - Documented three behaviours that were previously unstated, none of which change: paths navigate **mappings only**, so `items/0` is a lookup for a key named `0` rather than a sequence element (read sequences whole with `list`, `get_as` or `deserialize`); `load_or_create` creates the file but **not** its parent directories, so a missing parent is an `IoError` rather than a conjured directory tree; and `env` is interpolated into a filesystem path **without validation**, so it must not come from an untrusted source. Each is now stated in the README and in the relevant rustdoc, and pinned by a test.
 - README: removed the duplicated "Thread Safety" section (merged into "Thread-Safe Shared Config") and documented the `load_or_create` defaults-format behaviour.

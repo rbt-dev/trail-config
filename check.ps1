@@ -23,14 +23,23 @@
     Also run the criterion benchmarks. Off by default — they take several minutes, and
     criterion's run-to-run comparison is not trustworthy on a loaded machine.
 
+.PARAMETER Docsrs
+    Also build the docs the way docs.rs does — nightly, `--all-features` and
+    `--cfg docsrs` — which requires that toolchain (`rustup toolchain install nightly`).
+    This is the only configuration in which the `#[cfg_attr(docsrs, doc(cfg(...)))]`
+    feature labels compile at all, so a mistake in one is otherwise invisible until the
+    crate is published and the rendered page is wrong.
+
 .EXAMPLE
     .\check.ps1
     .\check.ps1 -Msrv
+    .\check.ps1 -Docsrs
 #>
 [CmdletBinding()]
 param(
     [switch]$Msrv,
-    [switch]$Bench
+    [switch]$Bench,
+    [switch]$Docsrs
 )
 
 $ErrorActionPreference = 'Continue'
@@ -92,6 +101,31 @@ if ($Msrv) {
         Write-Host "==> MSRV $MsrvVersion skipped: toolchain not installed" -ForegroundColor Yellow
         Write-Host "    rustup toolchain install $MsrvVersion" -ForegroundColor DarkGray
         $failures.Add("MSRV $MsrvVersion (toolchain missing)")
+    }
+}
+
+if ($Docsrs) {
+    $installed = & rustup toolchain list
+    if ($installed -match 'nightly') {
+        # Mirrors [package.metadata.docs.rs] in Cargo.toml. `doc_cfg` is a nightly
+        # feature requested behind the `docsrs` cfg, so nothing below this line is
+        # exercised by any other step in this script.
+        $previous = $env:RUSTDOCFLAGS
+        $env:RUSTDOCFLAGS = '--cfg docsrs'
+        try {
+            Invoke-Step 'docs.rs docs [nightly, --cfg docsrs]' @('+nightly', 'doc', '--all-features', '--no-deps')
+        } finally {
+            if ($null -eq $previous) {
+                Remove-Item Env:\RUSTDOCFLAGS -ErrorAction SilentlyContinue
+            } else {
+                $env:RUSTDOCFLAGS = $previous
+            }
+        }
+    } else {
+        Write-Host ''
+        Write-Host '==> docs.rs docs skipped: nightly toolchain not installed' -ForegroundColor Yellow
+        Write-Host '    rustup toolchain install nightly' -ForegroundColor DarkGray
+        $failures.Add('docs.rs docs (nightly missing)')
     }
 }
 

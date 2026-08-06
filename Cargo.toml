@@ -15,7 +15,16 @@ license = "MIT"
 repository = "https://github.com/rbt-dev/trail-config.git"
 
 [package.metadata.docs.rs]
+# `all-features` makes docs.rs *build* the gated items; `--cfg docsrs` makes it
+# *label* them. Without the second, `load_json`, `load_toml`, `JsonError`, `TomlError`
+# and friends render alongside `load_yaml` with nothing to say they need a feature flag.
 all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+# `docsrs` is set only by the docs.rs build above, never by a normal one, so the
+# compiler would otherwise flag it as an unrecognised cfg name.
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(docsrs)'] }
 
 [lib]
 name = "trail_config"

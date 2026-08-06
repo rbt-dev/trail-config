@@ -59,6 +59,7 @@ pub enum ConfigError {
 
     /// JSON parsing failure (requires the `json` feature).
     #[cfg(feature = "json")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
     #[error("JSON parse error{}: {source}", fmt_file(.file))]
     #[non_exhaustive]
     JsonError {
@@ -70,6 +71,7 @@ pub enum ConfigError {
 
     /// TOML parsing failure (requires the `toml` feature).
     #[cfg(feature = "toml")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "toml")))]
     #[error("TOML parse error{}: {source}", fmt_file(.file))]
     #[non_exhaustive]
     TomlError {

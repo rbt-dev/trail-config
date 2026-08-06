@@ -233,6 +233,7 @@ impl Config {
     ///     .expect("Failed to load config.json");
     /// ```
     #[cfg(feature = "json")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
     pub fn load_json_file(filename: &str, sep: &str) -> Result<Config, ConfigError> {
         check_separator(sep)?;
         Self::from_parsed(parser::json::load_file(filename)?, filename, sep, None)
@@ -251,6 +252,7 @@ impl Config {
     /// assert_eq!(config.get_int("app/port"), Some(8080));
     /// ```
     #[cfg(feature = "json")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
     pub fn load_json(json_str: &str, sep: &str) -> Result<Config, ConfigError> {
         check_separator(sep)?;
         Self::from_parsed(parser::json::parse(json_str)?, "", sep, None)
@@ -270,6 +272,7 @@ impl Config {
     ///     .expect("Failed to load config.toml");
     /// ```
     #[cfg(feature = "toml")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "toml")))]
     pub fn load_toml_file(filename: &str, sep: &str) -> Result<Config, ConfigError> {
         check_separator(sep)?;
         Self::from_parsed(parser::toml::load_file(filename)?, filename, sep, None)
@@ -288,6 +291,7 @@ impl Config {
     /// assert_eq!(config.get_int("app/port"), Some(8080));
     /// ```
     #[cfg(feature = "toml")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "toml")))]
     pub fn load_toml(toml_str: &str, sep: &str) -> Result<Config, ConfigError> {
         check_separator(sep)?;
         Self::from_parsed(parser::toml::parse(toml_str)?, "", sep, None)

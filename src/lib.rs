@@ -109,6 +109,11 @@
 //! See the [README](https://github.com/rbt-dev/trail-config) for the full guide.
 
 #![warn(missing_docs)]
+// Lets rustdoc render a "Available on crate feature `json`" banner beside each
+// feature-gated item. `doc_cfg` is nightly-only, so it is requested behind `docsrs` —
+// a cfg set exclusively by the docs.rs build (see `Cargo.toml`), never by an ordinary
+// `cargo build` or `cargo doc`. The MSRV is therefore untouched.
+#![cfg_attr(docsrs, feature(doc_cfg))]
 
 mod error;
 mod config;
@@ -151,11 +156,13 @@ pub use yaml_serde::Error as YamlError;
 /// The error carried by [`ConfigError::JsonError`], re-exported from
 /// [`serde_json`](https://docs.rs/serde_json).
 #[cfg(feature = "json")]
+#[cfg_attr(docsrs, doc(cfg(feature = "json")))]
 pub use serde_json::Error as JsonError;
 
 /// The error carried by [`ConfigError::TomlError`], re-exported from
 /// [`toml`](https://docs.rs/toml).
 #[cfg(feature = "toml")]
+#[cfg_attr(docsrs, doc(cfg(feature = "toml")))]
 pub use toml::de::Error as TomlError;
 
 /// Macro for building a [`Config`] with a concise syntax.

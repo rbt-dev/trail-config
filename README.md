@@ -1348,7 +1348,13 @@ feature combination, the doctests, and the doc build:
 .\check.ps1           # clippy + tests × 5 feature combinations, doctests, docs
 .\check.ps1 -Msrv     # also `cargo +1.85 check` (needs `rustup toolchain install 1.85`)
 .\check.ps1 -Bench    # also the criterion benchmarks
+.\check.ps1 -Docsrs   # also builds docs as docs.rs does (needs `rustup toolchain install nightly`)
 ```
+
+`-Docsrs` builds with nightly and `--cfg docsrs`, which is the only configuration where the
+`#[cfg_attr(docsrs, doc(cfg(feature = "...")))]` labels on the feature-gated items compile.
+Without it a mistake in one of those is invisible until the crate is published and the
+rendered page is wrong.
 
 The feature combinations matter: `json` and `toml` are additive gates, so code that
 compiles with both enabled can still fail to compile with neither.

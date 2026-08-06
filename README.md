@@ -775,6 +775,14 @@ write lock only for a pointer swap. So readers are never blocked on disk I/O, an
 snapshot never blocks a reload. If the reload fails, no swap happens and the existing config
 is left unchanged.
 
+Reloads are serialized against each other by a separate lock that readers never touch, so a
+second concurrent reload waits for the first rather than reading the files alongside it.
+Without that, two overlapping reloads would each build a config off to the side and the
+*slower* one would swap last — leaving the handle serving a superseded document indefinitely
+even though both calls returned `Ok`. Two call sites that can reload independently is all it
+takes: a debounced file watcher that fires twice on one write, or a watcher plus a SIGHUP
+handler. The wait is paid only by reloads.
+
 `ConfigHandle` mirrors the complete **lenient** accessor surface of `Config` — `get`, `str`,
 `list`, `contains`, `get_int`, `get_float`, `get_bool`, `get_as`, `deserialize` and `fmt` — each
 a shorthand for the same call on a snapshot. The `*_strict` variants and the metadata accessors

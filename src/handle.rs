@@ -1,6 +1,6 @@
 use std::fmt;
 use std::mem;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 use yaml_serde::Value;
 use crate::{Config, ConfigError};
 
@@ -17,6 +17,10 @@ use crate::{Config, ConfigError};
 /// file read and parse with no lock held, taking the write lock only for a pointer
 /// swap. Readers are never blocked on disk I/O, and holding a snapshot never blocks
 /// a reload.
+///
+/// Reloads are serialized against each other by a second lock that readers never
+/// touch, so two concurrent reloads cannot race to swap and leave the handle serving
+/// the older document. See [`reload`](ConfigHandle::reload).
 ///
 /// # Method surface
 ///
@@ -55,6 +59,10 @@ use crate::{Config, ConfigError};
 #[derive(Clone)]
 pub struct ConfigHandle {
     inner: Arc<RwLock<Arc<Config>>>,
+    /// Held for the whole of [`reload`](ConfigHandle::reload) so that two reloads
+    /// cannot overlap. Separate from `inner` on purpose: a reader takes only the
+    /// `RwLock`, so serializing reloads costs readers nothing.
+    reloading: Arc<Mutex<()>>,
 }
 
 impl fmt::Debug for ConfigHandle {
@@ -79,6 +87,7 @@ impl ConfigHandle {
     pub fn new(config: Config) -> Self {
         Self {
             inner: Arc::new(RwLock::new(Arc::new(config))),
+            reloading: Arc::new(Mutex::new(())),
         }
     }
 
@@ -120,6 +129,14 @@ impl ConfigHandle {
     /// If the reload fails, no swap occurs and the existing configuration is preserved
     /// unchanged.
     ///
+    /// Reloads are serialized against each other: a second concurrent reload waits for
+    /// the first to finish rather than reading the files alongside it. Without that,
+    /// two overlapping reloads would each build a config off to the side and the
+    /// *slower* one would swap last, leaving the handle serving a superseded document
+    /// indefinitely even though both calls returned `Ok`. The wait is paid only by
+    /// reloads — the lock is never taken by [`read`](ConfigHandle::read) or any of the
+    /// convenience accessors, so readers still never block on disk I/O.
+    ///
     /// # Errors
     /// Returns the same errors as [`Config::reload`].
     ///
@@ -133,6 +150,11 @@ impl ConfigHandle {
     /// # }
     /// ```
     pub fn reload(&self) -> Result<(), ConfigError> {
+        // Held until this method returns, so the read-parse-swap sequence below is
+        // atomic with respect to another reload. Whoever reads the files last is then
+        // also the one who swaps last, which is what makes the newest document win.
+        let _reloading = self.reloading.lock().unwrap_or_else(|e| e.into_inner());
+
         // Snapshot the sources: filenames and the overlay chain, not the document.
         let mut next = self.read().sources();
 
@@ -462,6 +484,84 @@ features:
 
         for r in readers { r.join().unwrap(); }
         assert_eq!(handle.get_int("app/port"), Some(2000));
+    }
+
+    #[test]
+    fn concurrent_reloads_settle_on_the_newest_document() {
+        use crate::test_util::{temp_dir, write_file};
+        use std::{fs, thread, time::Duration};
+
+        // A document big enough that parsing it dominates a reload. The file read
+        // itself stays a single fast syscall, so the rewrite below lands while the
+        // first reload is parsing rather than reading — no torn read, but a wide
+        // window for a second reload to overlap the first.
+        let mut big = String::from("app:\n  port: 1\n");
+        for i in 0..20_000 {
+            big.push_str(&format!("filler{i}: value{i}\n"));
+        }
+
+        // Repeated because one interleaving proves little. Before reloads were
+        // serialized this lost the update on every iteration.
+        for _ in 0..20 {
+            let dir = temp_dir();
+            let path = write_file(&dir, "config.yaml", &big);
+
+            let handle = ConfigHandle::new(
+                Config::load_required(&path, "/", None).unwrap()
+            );
+            assert_eq!(handle.get_int("app/port"), Some(1));
+
+            // Starts reloading the large v1 and is still parsing it a moment later.
+            let h = handle.clone();
+            let slow = thread::spawn(move || h.reload().unwrap());
+            thread::sleep(Duration::from_millis(10));
+
+            // Supersede it: the disk now holds v2, and this reload reads it.
+            fs::write(&path, "app:\n  port: 2\n").unwrap();
+            handle.reload().unwrap();
+
+            slow.join().unwrap();
+
+            // Both calls returned Ok, so the handle must agree with the disk.
+            // Unserialized, the slow reload swaps its stale v1 in last and the
+            // handle serves port 1 forever.
+            assert_eq!(
+                handle.get_int("app/port"),
+                Some(2),
+                "a superseded reload swapped over a newer one"
+            );
+        }
+    }
+
+    #[test]
+    fn serializing_reloads_does_not_block_readers() {
+        use crate::test_util::{temp_dir, write_file};
+        use std::{sync::mpsc, thread, time::Duration};
+
+        let dir = temp_dir();
+        let path = write_file(&dir, "config.yaml", "app:\n  port: 1000\n");
+
+        let handle = ConfigHandle::new(
+            Config::load_required(&path, "/", None).unwrap()
+        );
+
+        // Stand in for a reload in flight: the reload lock is held for the whole
+        // of `reload`, so this is the state a reader meets during one.
+        let _reloading = handle.reloading.lock().unwrap();
+
+        let (tx, rx) = mpsc::channel();
+        let h = handle.clone();
+        thread::spawn(move || {
+            let _ = tx.send((h.get_int("app/port"), h.read().get_filename().to_string()));
+        });
+
+        // Readers take only the RwLock, so this must arrive without the reload
+        // lock being released. A fix that locked readers out too would time out.
+        let (port, filename) = rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("a reader blocked while a reload held the reload lock");
+        assert_eq!(port, Some(1000));
+        assert_eq!(filename, path);
     }
 
     #[test]

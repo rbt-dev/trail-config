@@ -4,9 +4,9 @@
     combination.
 
 .DESCRIPTION
-    This project has no CI by design (IMPROVEMENTS.md, item 12), so the four feature
-    combinations, the doctests and the clippy runs are verified by hand. Doing that by
-    hand is twelve invocations and easy to half-finish; this is one.
+    This project has no CI by design, so the four feature combinations, the doctests 
+    and the clippy runs are verified by hand. Doing that by hand is twelve invocations 
+    and easy to half-finish; this is one.
 
     Each combination is a separate compilation of the crate: `json` and `toml` are
     additive feature gates, so code that compiles with both enabled can still fail to

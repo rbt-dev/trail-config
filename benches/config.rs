@@ -4,14 +4,6 @@
 //! `pub(super)` and unreachable from a bench target anyway, but measuring through
 //! the surface users actually call is also the point: `str(path)` exercises path
 //! parsing and tree navigation together, which is how the cost is really paid.
-//!
-//! Groups map to the areas called out in `IMPROVEMENTS.md` #13:
-//!
-//! - `path_traversal` / `path_traversal_escaped` — guards items 6 and 17
-//!   (path splitting allocations).
-//! - `typed_access` — guards item 14 (`deserialize_strict` clones the whole tree,
-//!   `get_as_strict` clones a subtree).
-//! - `loading` / `reload` — parse and hot-reload cost across config sizes.
 
 use std::collections::HashMap;
 use std::hint::black_box;

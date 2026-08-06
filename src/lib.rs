@@ -177,6 +177,16 @@ pub use toml::de::Error as TomlError;
 ///     merge_optional: ["config.local.yaml"]
 /// };
 /// ```
+///
+/// The macro can equally be called by its full path, with nothing imported:
+///
+/// ```no_run
+/// let cfg = trail_config::config! {
+///     file: "config.yaml",
+///     sep: "::",
+///     env: "prod",
+/// };
+/// ```
 #[macro_export]
 macro_rules! config {
     // Minimal: config!("file.yaml")
@@ -205,8 +215,12 @@ macro_rules! config {
 
     // Block syntax: config! { file: "...", ... }
     ( file: $file:expr $(, sep: $sep:expr)? $(, env: $env:expr)? $(, merge: [$($req:expr),* $(,)?])? $(, merge_optional: [$($opt:expr),* $(,)?])? $(,)? ) => {{
-        let _sep = config!(@sep $($sep)?);
-        let _env: Option<&str> = config!(@env $($env)?);
+        // `$crate::`, not a bare `config!`: macro_rules expansion is textual and
+        // resolved at the call site, so an unqualified recursion compiles only when
+        // the caller happens to have `use trail_config::config;` in scope. The
+        // documented `trail_config::config! { .. }` form has no such import.
+        let _sep = $crate::config!(@sep $($sep)?);
+        let _env: Option<&str> = $crate::config!(@env $($env)?);
 
         let _cfg = $crate::Config::load_required($file, _sep, _env);
 

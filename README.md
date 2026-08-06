@@ -821,6 +821,9 @@ let db: DatabaseConfig = handle.read().get_as_strict("database")?;
 // Reload from disk — re-applies all overlays
 handle.reload()?;
 // All clones immediately see the updated values
+
+// Or switch to a different file, clearing the overlay chain
+handle.reload_from("other_config.yaml")?;
 ```
 
 Neither reads nor reloads hold a lock for long. `read()` locks only long enough to clone an
@@ -841,8 +844,20 @@ handler. The wait is paid only by reloads.
 `ConfigHandle` mirrors the complete **lenient** accessor surface of `Config` — `get`, `str`,
 `list`, `contains`, `get_int`, `get_float`, `get_bool`, `get_as`, `deserialize` and `fmt` — each
 a shorthand for the same call on a snapshot. The `*_strict` variants and the metadata accessors
-(`get_filename`, `environment`) are reached through `read()`, which gives access to every
-`Config` method.
+(`get_filename`, `environment`) are reached through `read()`, which gets you every `Config`
+method taking `&self`.
+
+The methods that don't take `&self` can't be reached that way, since a snapshot only ever
+derefs to `&Config`:
+
+| `Config` method | Reaching it from a handle |
+| --------------- | ------------------------- |
+| `reload` (`&mut self`) | Mirrored as `handle.reload()` |
+| `reload_from` (`&mut self`) | Mirrored as `handle.reload_from(file)` |
+| `merge_required` / `merge_optional` (consume `self`) | Not offered — layer the files, *then* wrap the result in a handle |
+
+So a handle is not bound to its file for life, but its overlay chain is fixed at
+construction: `reload` re-applies it, `reload_from` clears it.
 
 Because a snapshot is immutable, a concurrent reload can never change it underneath you — take
 one snapshot when you need several values to agree (each convenience call takes its own):

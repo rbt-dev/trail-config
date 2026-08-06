@@ -38,9 +38,21 @@ use crate::{Config, ConfigError};
 /// snapshot.
 ///
 /// The `*_strict` variants and the metadata accessors are deliberately not mirrored:
-/// go through [`read`](ConfigHandle::read), which gives access to every [`Config`]
-/// method. Reach for a snapshot anyway when reading several values that must agree,
-/// since each convenience call takes its own.
+/// go through [`read`](ConfigHandle::read), which reaches every [`Config`] method that
+/// takes `&self`. Reach for a snapshot anyway when reading several values that must
+/// agree, since each convenience call takes its own.
+///
+/// The methods that do **not** take `&self` cannot be reached that way, since a
+/// snapshot only ever derefs to `&Config`:
+///
+/// - [`Config::reload`] and [`Config::reload_from`] take `&mut self`, so both are
+///   mirrored here as [`reload`](ConfigHandle::reload) and
+///   [`reload_from`](ConfigHandle::reload_from). They are the whole point of the type.
+/// - [`Config::merge_required`] and [`Config::merge_optional`] consume `self` and
+///   return a new `Config`. They belong to *building* a config, which happens before
+///   it goes into a handle; layer the files first, then wrap the result. A handle's
+///   overlay chain is otherwise fixed — `reload` re-applies it, `reload_from` clears
+///   it.
 ///
 /// # Example
 /// ```no_run
@@ -155,6 +167,54 @@ impl ConfigHandle {
     /// # }
     /// ```
     pub fn reload(&self) -> Result<(), ConfigError> {
+        self.rebuild(Config::reload)
+    }
+
+    /// Switches the handle to a different config file, discarding the overlay chain.
+    ///
+    /// The handle-level counterpart to [`Config::reload_from`], with the same locking
+    /// discipline as [`reload`](ConfigHandle::reload): the file is read and parsed with
+    /// no lock held and swapped in afterwards, and the reload lock is taken for the
+    /// duration so a concurrent `reload` and `reload_from` cannot race each other. All
+    /// clones of the handle see the new file.
+    ///
+    /// This has to be mirrored rather than reached through
+    /// [`read`](ConfigHandle::read): `Config::reload_from` takes `&mut self`, and a
+    /// snapshot only ever derefs to `&Config`. Without it a handle would be bound to
+    /// its file for life while a bare `Config` is not.
+    ///
+    /// The separator and environment are preserved, so an `{env}` placeholder in
+    /// `filename` resolves against the environment the config already carries — which
+    /// is why, like `Config::reload_from`, this takes no `env` argument.
+    ///
+    /// # Errors
+    /// Returns the same errors as [`Config::reload_from`]. On failure no swap occurs
+    /// and the handle keeps serving the config it already had.
+    ///
+    /// # Example
+    /// ```no_run
+    /// # use trail_config::{Config, ConfigHandle, ConfigError};
+    /// # fn main() -> Result<(), ConfigError> {
+    /// # let handle = ConfigHandle::new(Config::load_required("config.yaml", "/", None)?);
+    /// handle.reload_from("other_config.yaml")?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn reload_from(&self, filename: &str) -> Result<(), ConfigError> {
+        self.rebuild(|config| config.reload_from(filename))
+    }
+
+    /// The shared body of [`reload`](ConfigHandle::reload) and
+    /// [`reload_from`](ConfigHandle::reload_from): build the next config off to the
+    /// side, then swap it in.
+    ///
+    /// Both go through here so the locking discipline is written once. Getting it
+    /// subtly different between the two is exactly how the lost update this mutex
+    /// exists to prevent would come back.
+    fn rebuild(
+        &self,
+        build: impl FnOnce(&mut Config) -> Result<(), ConfigError>,
+    ) -> Result<(), ConfigError> {
         // Held until this method returns, so the read-parse-swap sequence below is
         // atomic with respect to another reload. Whoever reads the files last is then
         // also the one who swaps last, which is what makes the newest document win.
@@ -165,7 +225,7 @@ impl ConfigHandle {
 
         // No lock held — disk I/O and parsing happen here. On failure we return
         // early and the live config is left untouched.
-        next.reload()?;
+        build(&mut next)?;
         let next = Arc::new(next);
 
         // Write lock held for a pointer swap and nothing else.
@@ -541,6 +601,143 @@ features:
                 "a superseded reload swapped over a newer one"
             );
         }
+    }
+
+    #[test]
+    fn reload_from_switches_the_file_for_every_clone() {
+        use crate::test_util::{temp_dir, write_file};
+
+        let dir = temp_dir();
+        let first = write_file(&dir, "first.yaml", "app:\n  port: 1111\n");
+        let second = write_file(&dir, "second.yaml", "app:\n  port: 2222\n");
+
+        let handle = ConfigHandle::new(
+            Config::load_required(&first, "/", None).unwrap()
+        );
+        let clone = handle.clone();
+        let snapshot = handle.read();
+
+        handle.reload_from(&second).unwrap();
+
+        assert_eq!(clone.get_int("app/port"), Some(2222), "every clone sees the switch");
+        assert_eq!(handle.read().get_filename(), second);
+        // A snapshot is immutable, exactly as across a `reload`
+        assert_eq!(snapshot.get_int("app/port"), Some(1111));
+
+        // The handle now reloads the *new* file
+        std::fs::write(&second, "app:\n  port: 3333\n").unwrap();
+        handle.reload().unwrap();
+        assert_eq!(handle.get_int("app/port"), Some(3333));
+    }
+
+    #[test]
+    fn reload_from_clears_the_overlay_chain() {
+        use crate::test_util::{temp_dir, write_file};
+        use std::fs;
+
+        let dir = temp_dir();
+        let base = write_file(&dir, "base.yaml", "app:\n  port: 1111\n  name: base\n");
+        let overlay = write_file(&dir, "over.yaml", "app:\n  name: overlaid\n");
+        let other = write_file(&dir, "other.yaml", "app:\n  port: 2222\n  name: other\n");
+
+        let handle = ConfigHandle::new(
+            Config::load_required(&base, "/", None)
+                .unwrap()
+                .merge_required(&overlay, None)
+                .unwrap(),
+        );
+        assert_eq!(handle.str("app/name"), "overlaid");
+
+        handle.reload_from(&other).unwrap();
+        assert_eq!(handle.str("app/name"), "other");
+
+        // The overlay must be gone, not merely inactive — a later reload that
+        // re-applied it would be the stale-chain bug `Config::reload_from` fixes.
+        fs::write(&overlay, "app:\n  name: should_not_appear\n").unwrap();
+        handle.reload().unwrap();
+        assert_eq!(handle.str("app/name"), "other");
+        assert_eq!(handle.get_int("app/port"), Some(2222));
+    }
+
+    #[test]
+    fn reload_from_preserves_the_config_on_failure() {
+        use crate::test_util::{temp_dir, write_file};
+
+        let dir = temp_dir();
+        let first = write_file(&dir, "first.yaml", "app:\n  port: 1111\n");
+        let broken = write_file(&dir, "broken.yaml", "invalid: [unclosed\n");
+
+        let handle = ConfigHandle::new(
+            Config::load_required(&first, "/", None).unwrap()
+        );
+
+        assert!(handle.reload_from(&broken).is_err());
+        assert!(handle.reload_from("no_such_file_xyz.yaml").is_err());
+
+        // No swap happened, so the filename is intact too — not just the values
+        assert_eq!(handle.get_int("app/port"), Some(1111));
+        assert_eq!(handle.read().get_filename(), first);
+    }
+
+    #[test]
+    fn reload_from_resolves_env_against_the_carried_environment() {
+        use crate::test_util::{temp_dir, write_file};
+
+        let dir = temp_dir();
+        let base = write_file(&dir, "config.prod.yaml", "app:\n  port: 1111\n");
+        write_file(&dir, "other.prod.yaml", "app:\n  port: 2222\n");
+        let template = dir.path().join("other.{env}.yaml").to_string_lossy().into_owned();
+
+        let handle = ConfigHandle::new(
+            Config::load_required(&base, "/", Some("prod")).unwrap()
+        );
+
+        // `sources()` carries the environment across, so the placeholder resolves —
+        // this is the case that fails if the handle rebuilds from anything less.
+        handle.reload_from(&template).unwrap();
+        assert_eq!(handle.get_int("app/port"), Some(2222));
+        assert_eq!(handle.read().environment(), Some("prod"));
+    }
+
+    #[test]
+    fn reload_from_is_serialized_against_reload() {
+        use crate::test_util::{temp_dir, write_file};
+        use std::{sync::mpsc, thread, time::Duration};
+
+        let dir = temp_dir();
+        let first = write_file(&dir, "first.yaml", "app:\n  port: 1111\n");
+        let second = write_file(&dir, "second.yaml", "app:\n  port: 2222\n");
+
+        let handle = ConfigHandle::new(
+            Config::load_required(&first, "/", None).unwrap()
+        );
+
+        let (tx, rx) = mpsc::channel();
+        let worker = {
+            let h = handle.clone();
+            let second = second.clone();
+            // Hold the reload lock, standing in for a reload already in flight
+            let guard = handle.reloading.lock().unwrap();
+            let worker = thread::spawn(move || {
+                h.reload_from(&second).unwrap();
+                let _ = tx.send(());
+            });
+
+            // `reload_from` must take the same lock as `reload`, so it cannot finish
+            // while this is held. A short wait is enough to tell "blocked" from
+            // "raced past" — if it were not serialized it would complete immediately.
+            assert!(
+                rx.recv_timeout(Duration::from_millis(200)).is_err(),
+                "reload_from swapped while a reload held the lock"
+            );
+            drop(guard);
+            worker
+        };
+
+        worker.join().unwrap();
+        rx.recv_timeout(Duration::from_secs(5))
+            .expect("reload_from should complete once the lock is free");
+        assert_eq!(handle.get_int("app/port"), Some(2222));
     }
 
     #[test]

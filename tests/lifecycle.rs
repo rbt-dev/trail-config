@@ -115,6 +115,24 @@ fn reload_from_switches_file_and_drops_the_overlay_chain() {
 }
 
 #[test]
+fn a_handle_can_switch_files_without_being_rebuilt() {
+    // A handle used to be bound to its file for life, while a bare `Config` was not:
+    // `Config::reload_from` takes `&mut self`, and `read()` only ever yields
+    // `&Config`, so there was no route to it from a live handle at all.
+    let dir = temp_dir();
+    let base = write_file(&dir, "base.yaml", "app:\n  port: 8080\n");
+    let other = write_file(&dir, "other.yaml", "app:\n  port: 3000\n");
+
+    let handle = ConfigHandle::new(Config::load_required(&base, "/", None).unwrap());
+    let clone = handle.clone();
+
+    handle.reload_from(&other).unwrap();
+
+    assert_eq!(clone.get_int("app/port"), Some(3000), "every clone follows the switch");
+    assert_eq!(clone.read().get_filename(), other);
+}
+
+#[test]
 fn a_failed_reload_leaves_the_configuration_unchanged() {
     let dir = temp_dir();
     let file = write_file(&dir, "config.yaml", "app:\n  port: 8080\n");

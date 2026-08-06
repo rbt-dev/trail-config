@@ -1070,10 +1070,12 @@ assert_eq!(config.str("app/url"), "https://example.com/api");
 | `$VAR` | Not a placeholder — left as-is. |
 | `$` anywhere else | Left as-is (`$100` and `Pa$$w0rd!` pass through unchanged). |
 
-### Set-but-empty is a value, not an absence
+### Set is not absent
 
-A default applies only when the variable is **absent**. If `VAR` is set to an empty string, 
-that empty string is used:
+A default applies only when the variable is **absent**. There are two ways a variable can 
+be set and still not give you a usable string, and neither falls back.
+
+**Set but empty.** The empty string is used:
 
 ```rust
 // VAR="" (set, empty)
@@ -1082,6 +1084,18 @@ config.str("app/value") // -> ""  — not "fallback"
 
 This differs from shell `${VAR:-default}`, which falls back when the variable is unset *or* 
 empty. Use `${VAR:-}` when you want "empty if missing" explicitly.
+
+**Set but not valid Unicode.** A `FormatError` naming that as the cause — the default is 
+not applied:
+
+```text
+Environment variable 'DB_HOST' is set but is not valid Unicode ("a\u{d800}")
+  — the default, if any, is not applied because the variable is set
+```
+
+Applying the default here would be the worse outcome: the deployment would run on a 
+fallback value while you believed your setting had taken effect. Reporting it as "not set" 
+would be almost as bad, sending you to verify an export that is already correct.
 
 ### Escaping
 
@@ -1129,6 +1143,7 @@ a `ConfigError::FormatError`. These also return errors:
 | `${:-default}` | Empty variable name |
 | `${${PREFIX}_HOST}` | Nesting is supported in defaults, not in the variable name |
 | `${A:-${A:-${A:-…}}}` | Defaults nested more than 32 levels deep |
+| `${VAR}` / `${VAR:-x}` where `VAR` is set to non-Unicode bytes | Set is not absent — the default does not apply |
 
 Defaults may nest, but only to a fixed depth of 32 — far beyond the two or three
 fallback levels any real config uses. A deeper chain is a `FormatError` rather than an

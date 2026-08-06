@@ -348,3 +348,79 @@ fn set_but_empty_variable_does_not_fall_back_to_default() {
     assert_eq!(config.str("app/v"), "");
     env::remove_var("TRAIL_TEST_SET_EMPTY");
 }
+
+/// An environment value that is genuinely *set* but not valid Unicode.
+///
+/// Both platforms permit it in their own encoding, which is why `env::var` returns a
+/// `Result` at all: an unpaired surrogate in Windows' UTF-16, a stray continuation
+/// byte in Unix' bytes. Either makes `env::var` return `VarError::NotUnicode` — a
+/// distinct case from `NotPresent`, and the one this exercises.
+#[cfg(windows)]
+fn set_but_not_unicode() -> std::ffi::OsString {
+    use std::os::windows::ffi::OsStringExt;
+    // 'a' followed by a lone high surrogate: a legal UTF-16 code-unit sequence to the
+    // OS, but not convertible to UTF-8
+    std::ffi::OsString::from_wide(&[0x0061, 0xD800])
+}
+
+#[cfg(unix)]
+fn set_but_not_unicode() -> std::ffi::OsString {
+    use std::os::unix::ffi::OsStringExt;
+    std::ffi::OsString::from_vec(vec![0x61, 0xFF])
+}
+
+#[cfg(any(windows, unix))]
+#[test]
+fn set_but_not_unicode_variable_is_an_error_naming_the_real_cause() {
+    let _env = env_lock();
+    env::set_var("TRAIL_TEST_NOT_UNICODE", set_but_not_unicode());
+
+    // Guard the premise: if a platform ever started accepting these, the assertions
+    // below would be testing the `NotPresent` path by accident.
+    assert!(
+        matches!(env::var("TRAIL_TEST_NOT_UNICODE"), Err(env::VarError::NotUnicode(_))),
+        "the test fixture is meant to be set-but-not-Unicode"
+    );
+
+    let result = Config::load_yaml("db:\n  host: ${TRAIL_TEST_NOT_UNICODE}", "/");
+    match result {
+        Err(ConfigError::FormatError(msg)) => {
+            // Reporting "is not set" sent the operator to verify an export that was
+            // already correct, and left them nowhere to go
+            assert!(msg.contains("not valid Unicode"), "got: {}", msg);
+            assert!(!msg.contains("is not set"), "the cause is misreported: {}", msg);
+            assert!(msg.contains("TRAIL_TEST_NOT_UNICODE"), "got: {}", msg);
+        },
+        other => panic!("Expected FormatError, got: {:?}", other),
+    }
+
+    env::remove_var("TRAIL_TEST_NOT_UNICODE");
+}
+
+#[cfg(any(windows, unix))]
+#[test]
+fn set_but_not_unicode_variable_does_not_fall_back_to_default() {
+    let _env = env_lock();
+    env::set_var("TRAIL_TEST_NOT_UNICODE_DEFAULTED", set_but_not_unicode());
+
+    // The worse half of the old behaviour, and the reason this is not merely a
+    // message fix: the default applied *silently*, so a deployment ran on the
+    // fallback while the operator believed their setting had taken effect. Set but
+    // unreadable is not an absence — the same rule as set-but-empty above.
+    let result = Config::load_yaml(
+        "db:\n  host: ${TRAIL_TEST_NOT_UNICODE_DEFAULTED:-fallback}",
+        "/",
+    );
+    match result {
+        Err(ConfigError::FormatError(msg)) => {
+            assert!(msg.contains("not valid Unicode"), "got: {}", msg);
+        },
+        Ok(config) => panic!(
+            "the default was applied silently: db/host = {:?}",
+            config.str("db/host")
+        ),
+        other => panic!("Expected FormatError, got: {:?}", other),
+    }
+
+    env::remove_var("TRAIL_TEST_NOT_UNICODE_DEFAULTED");
+}

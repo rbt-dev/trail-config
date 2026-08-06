@@ -124,6 +124,10 @@ fn split_placeholder<'a>(after: &'a str, input: &str) -> Result<(&'a str, &'a st
 /// `${A:-${B:-c}}` falls back through both levels. That recursion is capped at
 /// [`MAX_DEFAULT_DEPTH`] levels so a pathological chain errors instead of overflowing
 /// the stack.
+///
+/// A default applies only when the variable is **absent**. Both ways of being *set*
+/// without yielding a usable string — empty, and not valid Unicode — are values rather
+/// than absences, and neither falls back.
 fn resolve_placeholder(spec: &str, input: &str, depth: usize) -> Result<String, ConfigError> {
     let (var_name, default) = match spec.find(":-") {
         Some(pos) => (&spec[..pos], Some(&spec[pos + 2..])),
@@ -150,7 +154,20 @@ fn resolve_placeholder(spec: &str, input: &str, depth: usize) -> Result<String, 
         // A variable that is set but empty is a value, not an absence: the default
         // applies only when the variable is missing. This differs from shell `:-`.
         Ok(value) => Ok(value),
-        Err(_) => match default {
+
+        // Set, but holding bytes that are not valid Unicode. By the same reasoning as
+        // set-but-empty, this is not an absence — so the default is deliberately *not*
+        // consulted. Folding it in with `NotPresent` produced one of two wrong answers:
+        // an error claiming the variable "is not set" when it demonstrably is, leaving
+        // the operator nowhere to go; or, with a default, silently running the
+        // deployment on the fallback while they believed their setting had taken.
+        Err(env::VarError::NotUnicode(raw)) => Err(ConfigError::FormatError(format!(
+            "Environment variable '{}' is set but is not valid Unicode ({:?}) \
+             — the default, if any, is not applied because the variable is set",
+            var_name, raw
+        ))),
+
+        Err(env::VarError::NotPresent) => match default {
             Some(_) if depth >= MAX_DEFAULT_DEPTH => Err(ConfigError::FormatError(format!(
                 "Env var default nesting exceeds the maximum depth of {} at '{}' \
                  — check for a runaway ${{VAR:-...}} chain",

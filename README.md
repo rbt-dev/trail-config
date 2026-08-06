@@ -1196,6 +1196,25 @@ features:
     - advanced_search
 ```
 
+## Development
+
+`check.ps1` runs the full pre-release check in one command — clippy and tests across every
+feature combination, the doctests, and the doc build:
+
+```powershell
+.\check.ps1           # clippy + tests × 5 feature combinations, doctests, docs
+.\check.ps1 -Msrv     # also `cargo +1.85 check` (needs `rustup toolchain install 1.85`)
+.\check.ps1 -Bench    # also the criterion benchmarks
+```
+
+The feature combinations matter: `json` and `toml` are additive gates, so code that
+compiles with both enabled can still fail to compile with neither.
+
+Tests live in two places. `src/**/tests/` holds unit tests with access to internals;
+`tests/` exercises the crate as a downstream consumer sees it, which is the only vantage
+point that can catch a type missing from the public exports or a `$crate` path breaking
+in the `config!` macro.
+
 ## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details

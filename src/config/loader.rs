@@ -1,6 +1,6 @@
 //! Constructors: loading a `Config` from files or strings.
 
-use std::{fs, io};
+use std::{fs, io, io::Write};
 use yaml_serde::Value;
 use crate::error::ConfigError;
 use super::Config;
@@ -104,6 +104,11 @@ impl Config {
     /// has a matching extension and the corresponding feature is enabled. The created config
     /// records the filename, so [`reload`](Config::reload) works after a first run.
     ///
+    /// Defaults that do not parse are rejected **before** anything is written, so a failure
+    /// here leaves no file behind and the next run retries the creation from scratch. The
+    /// file is created exclusively: if a second process wins the race to create it, this
+    /// call loads that file rather than overwriting it.
+    ///
     /// Only the file is created — **parent directories are not**. A missing parent returns
     /// `IoError` rather than being created, so a mistyped path cannot leave a junk directory
     /// tree behind; call [`std::fs::create_dir_all`] first if the directory may not exist.
@@ -119,9 +124,10 @@ impl Config {
     /// Returns `Ok(Config)` with the file content, or the defaults if the file was created
     ///
     /// # Errors
-    /// Returns `ConfigError::IoError` if the filename is empty, the file exists but cannot be read, or if writing fails
+    /// Returns `ConfigError::IoError` if the filename is empty, the file exists but cannot be read, or if creating or writing the file fails
     /// Returns `ConfigError::YamlError`, `ConfigError::JsonError` or `ConfigError::TomlError` if the file
-    ///     or the defaults string cannot be parsed in the format matching the file extension
+    ///     or the defaults string cannot be parsed in the format matching the file extension.
+    ///     A defaults string that fails to parse is reported without the file having been created
     /// Returns `ConfigError::FormatError` if the separator is empty or contains a backslash, or the filename template is invalid
     ///
     /// # Example
@@ -146,10 +152,27 @@ impl Config {
             Ok(config) => Ok(config),
             Err(ConfigError::IoError { ref source, .. }) if source.kind() == io::ErrorKind::NotFound => {
                 let (file, _) = get_file(filename, env)?;
-                fs::write(&file, defaults).map_err(|e| ConfigError::io_in(&file, e))?;
-                // Load the file we just wrote, so the defaults are parsed
-                // according to the file's format (YAML/JSON/TOML by extension)
-                // and the filename is recorded for reload()
+
+                // Validate the defaults *before* writing them. Writing first and parsing
+                // second left a broken file on disk when the defaults did not parse in the
+                // file's format — and because the file then existed, this branch never ran
+                // again: every subsequent run read the same broken file and failed
+                // identically, turning a first-run error into a permanent one.
+                parser::parse_auto(defaults, &file)?;
+
+                // The parsed value is deliberately discarded and the file re-read below,
+                // so the created config is built by exactly the same path as an existing
+                // one — filename recorded, `reload()` working, no second code path to
+                // keep in step.
+                match create_new_file(&file, defaults) {
+                    Ok(()) => {},
+                    // Another process created the file between the not-found check and
+                    // here — the first-run race this method exists for. `create_new`
+                    // means we did not clobber it; fall through and load what they wrote.
+                    Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {},
+                    Err(e) => return Err(ConfigError::io_in(&file, e)),
+                }
+
                 Self::load_internal(filename, sep, env)
             },
             Err(e) => Err(e),
@@ -269,6 +292,25 @@ impl Config {
         check_separator(sep)?;
         Self::from_parsed(parser::toml::parse(toml_str)?, "", sep, None)
     }
+}
+
+/// Creates `file` and writes `contents`, failing with `AlreadyExists` if it is already there.
+///
+/// `fs::write` truncates, so it would silently clobber a config written by a second process
+/// starting at the same moment — precisely the first-run scenario `load_or_create` exists
+/// for. `create_new` makes the existence check and the creation a single atomic operation,
+/// and turns the loser of the race into an `AlreadyExists` the caller can handle by loading
+/// the winner's file.
+///
+/// The file is created empty and filled a moment later, so a racing reader can still
+/// observe it part-written. Closing that would need a write-to-temp-and-rename dance, and
+/// rename replaces the destination — reintroducing the clobbering this call prevents.
+pub(super) fn create_new_file(file: &str, contents: &str) -> io::Result<()> {
+    fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(file)?
+        .write_all(contents.as_bytes())
 }
 
 /// Rejects a path separator that cannot work: empty, or containing a backslash.

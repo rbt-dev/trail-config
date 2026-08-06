@@ -193,6 +193,25 @@ fn load_or_create_invalid_defaults_returns_error() {
 }
 
 #[test]
+fn load_or_create_invalid_defaults_leaves_no_file_behind() {
+    use std::fs;
+
+    // The failure that made this permanent: the broken defaults were written first and
+    // parsed second, so the file existed on every later run and the create branch was
+    // never taken again — the same error forever, indistinguishable from a hand-edited
+    // broken config.
+    let dir = temp_dir();
+    let test_file = dir.path().join("wedged.yaml").to_string_lossy().into_owned();
+
+    assert!(Config::load_or_create(&test_file, "/", None, "invalid: [unclosed").is_err());
+    assert!(!fs::exists(&test_file).unwrap(), "no file should have been written");
+
+    // So a corrected second call still creates the file, rather than re-reading a broken one
+    let config = Config::load_or_create(&test_file, "/", None, "app:\n  port: 8080\n").unwrap();
+    assert_eq!(config.get_int("app/port"), Some(8080));
+}
+
+#[test]
 fn load_or_create_invalid_existing_file_returns_error() {
     let dir = temp_dir();
     let test_file = write_file(&dir, "broken.yaml", "invalid: [unclosed\n");

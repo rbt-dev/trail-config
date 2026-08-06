@@ -97,6 +97,26 @@ fn load_or_create_toml_defaults() {
         Err(ConfigError::TomlError { .. }) => (),
         other => panic!("Expected TomlError, got: {:?}", other),
     }
+    assert!(!fs::exists(&path2).unwrap(), "defaults that fail to parse must not be written");
+}
+
+#[test]
+fn load_or_create_yaml_defaults_for_a_toml_file_writes_nothing() {
+    // The mistake the format-aware defaults parsing exists to catch: YAML-shaped
+    // defaults under a .toml filename. Writing before parsing left this file on disk,
+    // so the create branch never ran again and every later run failed identically.
+    let dir = temp_dir();
+    let path = dir.path().join("cfg.toml").to_string_lossy().into_owned();
+
+    assert!(matches!(
+        Config::load_or_create(&path, "/", None, "app:\n  port: 8080\n"),
+        Err(ConfigError::TomlError { .. })
+    ));
+    assert!(!fs::exists(&path).unwrap(), "no file should have been created");
+
+    // The app can therefore still recover once the defaults are corrected
+    let config = Config::load_or_create(&path, "/", None, "[app]\nport = 8080\n").unwrap();
+    assert_eq!(config.get_int("app/port"), Some(8080));
 }
 
 #[test]

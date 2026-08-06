@@ -5,11 +5,16 @@ use std::fs;
 pub(crate) fn load_file(filename: &str) -> Result<Value, ConfigError> {
     let content = fs::read_to_string(filename)
         .map_err(|e| ConfigError::io_in(filename, e))?;
-    parse_internal(&content, Some(filename))
+    parse_in(&content, filename)
 }
 
 pub(crate) fn parse(json: &str) -> Result<Value, ConfigError> {
     parse_internal(json, None)
+}
+
+/// Parses JSON that belongs to `filename`, naming it in any error.
+pub(crate) fn parse_in(json: &str, filename: &str) -> Result<Value, ConfigError> {
+    parse_internal(json, Some(filename))
 }
 
 fn parse_internal(json: &str, file: Option<&str>) -> Result<Value, ConfigError> {

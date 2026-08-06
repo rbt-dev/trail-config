@@ -61,6 +61,27 @@ fn get_file_without_placeholder_or_environment_is_unchanged() {
 }
 
 #[test]
+fn create_new_file_refuses_to_overwrite() {
+    use std::fs;
+    use crate::config::loader::create_new_file;
+    use crate::test_util::temp_dir;
+
+    let dir = temp_dir();
+    let file = dir.path().join("once.yaml").to_string_lossy().into_owned();
+
+    create_new_file(&file, "app:\n  port: 9090\n").unwrap();
+
+    // The second caller is the process that lost the creation race. `fs::write`
+    // truncates and would have replaced the winner's config with its own defaults;
+    // `create_new` reports AlreadyExists and leaves the file untouched, which is what
+    // lets `load_or_create` fall through to loading it.
+    let err = create_new_file(&file, "app:\n  port: 8080\n").unwrap_err();
+
+    assert_eq!(err.kind(), std::io::ErrorKind::AlreadyExists);
+    assert_eq!(fs::read_to_string(&file).unwrap(), "app:\n  port: 9090\n");
+}
+
+#[test]
 fn to_string_test() {
     let parsed: Value = from_str(YAML).unwrap();
     let value = get_leaf(&parsed, "db/redis/port", "/").unwrap();

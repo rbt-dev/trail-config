@@ -986,6 +986,22 @@ JSON/TOML when the filename has a matching extension and the corresponding featu
 is enabled. The created config records its filename, so `reload()` works after a
 first run.
 
+Defaults that do not parse in that format are rejected **before** anything is written,
+so a failed first run leaves no file behind and the next run retries the creation:
+
+```rust
+// YAML-shaped defaults under a .toml filename
+let result = Config::load_or_create("config.toml", "/", None, "app:\n  port: 8080\n");
+assert!(result.is_err()); // TomlError — and config.toml was not created
+
+// So correcting the defaults is enough; there is no broken file to clean up first
+let config = Config::load_or_create("config.toml", "/", None, "[app]\nport = 8080\n")?;
+```
+
+The file is also created **exclusively**. If a second process wins the race to create it —
+the first-run scenario this method exists for — `load_or_create` loads that file rather
+than overwriting it with its own defaults.
+
 Only the file itself is created — **parent directories are not**. Writing to
 `config/app.yaml` when `config/` does not exist returns an `IoError` rather than
 creating the directory, so a mistyped path cannot leave a junk directory tree behind.

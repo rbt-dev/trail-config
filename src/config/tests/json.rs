@@ -98,6 +98,7 @@ fn load_or_create_json_defaults() {
         Err(ConfigError::JsonError { .. }) => (),
         other => panic!("Expected JsonError, got: {:?}", other),
     }
+    assert!(!fs::exists(&path2).unwrap(), "defaults that fail to parse must not be written");
 }
 
 #[test]

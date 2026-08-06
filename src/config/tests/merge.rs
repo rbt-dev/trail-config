@@ -318,3 +318,76 @@ fn merge_key_order_does_not_depend_on_overlay_order() {
     assert_eq!(key_order(&one), ["a", "b", "c"]);
     assert_eq!(key_order(&one), key_order(&two));
 }
+
+#[test]
+fn merge_records_an_environment_the_base_did_not_carry() {
+    // The natural layered shape: the base file is not environment-specific, the
+    // overlay is. The merge resolved `{env}` and then dropped the environment, so
+    // `environment()` under-reported and `reload_from` — which takes no `env`
+    // argument because it reads the one on the config — could not resolve a template
+    // the merge had resolved a moment earlier.
+    let dir = temp_dir();
+    let base = write_file(&dir, "config.yaml", "app:\n  port: 8080\n  name: base\n");
+    write_file(&dir, "over.prod.yaml", "app:\n  name: prod\n");
+    let template = dir.path().join("over.{env}.yaml").to_string_lossy().into_owned();
+
+    let mut config = Config::load_required(&base, "/", None)
+        .unwrap()
+        .merge_required(&template, Some("prod"))
+        .unwrap();
+
+    assert_eq!(config.str("app/name"), "prod");
+    assert_eq!(config.environment(), Some("prod"), "the merge's environment is recorded");
+
+    // ...and is usable, which is the point of recording it
+    let switch_to = dir.path().join("over.{env}.yaml").to_string_lossy().into_owned();
+    config.reload_from(&switch_to).unwrap();
+    assert_eq!(config.str("app/name"), "prod");
+}
+
+#[test]
+fn merge_optional_also_records_the_environment() {
+    let dir = temp_dir();
+    let base = write_file(&dir, "config.yaml", "app:\n  port: 8080\n");
+    write_file(&dir, "local.dev.yaml", "app:\n  port: 9090\n");
+    let template = dir.path().join("local.{env}.yaml").to_string_lossy().into_owned();
+
+    let config = Config::load_required(&base, "/", None)
+        .unwrap()
+        .merge_optional(&template, Some("dev"))
+        .unwrap();
+
+    assert_eq!(config.get_int("app/port"), Some(9090));
+    assert_eq!(config.environment(), Some("dev"));
+}
+
+#[test]
+fn merge_does_not_overwrite_an_environment_the_config_already_has() {
+    // The config's environment is chosen by its constructor and is part of its
+    // identity. Letting a later overlay reassign it would silently change what a
+    // subsequent `reload_from` resolves, so the merge fills a gap and never replaces.
+    let dir = temp_dir();
+    let base = write_file(&dir, "config.prod.yaml", "app:\n  name: prod\n");
+    let overlay = write_file(&dir, "over.yaml", "app:\n  extra: 1\n");
+
+    let config = Config::load_required(&base, "/", Some("prod"))
+        .unwrap()
+        .merge_required(&overlay, Some("staging"))
+        .unwrap();
+
+    assert_eq!(config.environment(), Some("prod"), "the constructor's environment wins");
+}
+
+#[test]
+fn a_merge_without_an_environment_leaves_the_config_without_one() {
+    let dir = temp_dir();
+    let base = write_file(&dir, "config.yaml", "app:\n  port: 8080\n");
+    let overlay = write_file(&dir, "over.yaml", "app:\n  port: 9090\n");
+
+    let config = Config::load_required(&base, "/", None)
+        .unwrap()
+        .merge_required(&overlay, None)
+        .unwrap();
+
+    assert_eq!(config.environment(), None);
+}

@@ -33,8 +33,11 @@ impl Config {
     ///
     /// # Arguments
     /// * `filename` - Path to the overlay file (can contain `{env}` placeholder)
-    /// * `env` - Optional environment name to substitute in filename. Interpolated into a
-    ///   filesystem path with no validation — do not pass untrusted input
+    /// * `env` - Optional environment name to substitute in filename. Also recorded on the
+    ///   config if it does not already carry one, so [`environment`](Config::environment)
+    ///   and [`reload_from`](Config::reload_from) see it; an environment set by the
+    ///   constructor is never replaced. Interpolated into a filesystem path with no
+    ///   validation — do not pass untrusted input
     ///
     /// # Errors
     /// Returns `ConfigError::IoError` if the filename is empty, or the file is missing or cannot be read
@@ -57,10 +60,11 @@ impl Config {
             return Err(empty_filename_error());
         }
 
-        let (file, _) = get_file(filename, env)?;
+        let (file, resolved_env) = get_file(filename, env)?;
         let overlay = resolve_env_vars(load_auto(&file)?)?;
         self.content = merge_documents(self.content, overlay);
         self.overlays.push(OverlaySource::Required(file));
+        self.adopt_environment(resolved_env);
         Ok(self)
     }
 
@@ -89,8 +93,11 @@ impl Config {
     ///
     /// # Arguments
     /// * `filename` - Path to the overlay file (can contain `{env}` placeholder)
-    /// * `env` - Optional environment name to substitute in filename. Interpolated into a
-    ///   filesystem path with no validation — do not pass untrusted input
+    /// * `env` - Optional environment name to substitute in filename. Also recorded on the
+    ///   config if it does not already carry one, so [`environment`](Config::environment)
+    ///   and [`reload_from`](Config::reload_from) see it; an environment set by the
+    ///   constructor is never replaced. Interpolated into a filesystem path with no
+    ///   validation — do not pass untrusted input
     ///
     /// # Errors
     /// Returns `ConfigError::IoError` if the filename is empty — a caller bug, unlike an
@@ -118,7 +125,7 @@ impl Config {
             return Err(empty_filename_error());
         }
 
-        let (file, _) = get_file(filename, env)?;
+        let (file, resolved_env) = get_file(filename, env)?;
         match load_auto(&file) {
             Ok(yaml) => {
                 let overlay = resolve_env_vars(yaml)?;
@@ -128,7 +135,28 @@ impl Config {
             Err(e) => return Err(e),
         }
         self.overlays.push(OverlaySource::Optional(file));
+        self.adopt_environment(resolved_env);
         Ok(self)
+    }
+
+    /// Records an environment supplied at a merge, if this config has none yet.
+    ///
+    /// The natural shape when the base file is not environment-specific but an overlay
+    /// is: `load_required("config.yaml", "/", None).merge_required("config.{env}.yaml",
+    /// Some("prod"))`. The merge resolved `{env}` correctly and then dropped the
+    /// environment on the floor, so [`environment`](Config::environment) under-reported
+    /// it and [`reload_from`](Config::reload_from) — which takes no `env` argument
+    /// precisely because it reads the one on the config — could not resolve a template
+    /// the merge had resolved a moment earlier.
+    ///
+    /// **Only when absent.** An environment already on the config was chosen by the
+    /// constructor, which is the config's own identity; letting a later overlay
+    /// overwrite it would silently change what a subsequent `reload_from` resolves. So
+    /// this fills a gap and never reassigns.
+    fn adopt_environment(&mut self, resolved: Option<String>) {
+        if self.environment.is_none() {
+            self.environment = resolved;
+        }
     }
 }
 

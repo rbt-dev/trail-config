@@ -103,16 +103,35 @@ fn push_escaped(out: &mut String, key: &str, separator: &str) {
         if let Some(tail) = rest.strip_prefix('\\') {
             out.push_str("\\\\");
             rest = tail;
-        } else if let Some(tail) = rest.strip_prefix(separator) {
+        // The `!separator.is_empty()` guard is the same backstop
+        // [`segments`](super::path::segments) states: an empty separator matches at
+        // every position without advancing, so this arm would loop forever — and
+        // unlike the splitter, grow `out` until it exhausted memory. Unreachable
+        // today, since `check_separator` runs in every constructor and `sources()`
+        // only clones, but two functions with the identical hazard should not
+        // disagree about whether the guard is worth restating locally.
+        } else if !separator.is_empty() && rest.starts_with(separator) {
             out.push('\\');
             out.push_str(separator);
-            rest = tail;
+            rest = &rest[separator.len()..];
         } else {
             let next = rest.chars().next().expect("rest is non-empty");
             out.push(next);
             rest = &rest[next.len_utf8()..];
         }
     }
+}
+
+/// Collects [`push_escaped`] into an owned string.
+///
+/// Only used by tests: `push_escaped` is private to this module and appends into a
+/// caller's buffer, neither of which suits an assertion. Mirrors
+/// [`parse_path`](super::path::parse_path), which exists for the same reason.
+#[cfg(test)]
+pub(super) fn escape_key(key: &str, separator: &str) -> String {
+    let mut out = String::new();
+    push_escaped(&mut out, key, separator);
+    out
 }
 
 /// Names a leaf's type, never its content.

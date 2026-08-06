@@ -118,6 +118,22 @@ the wrong problem.
 `reload_from()` also accepts `{env}`, resolved against the environment the config already 
 carries; it has no `env` argument because it preserves the existing one.
 
+**A merge records the environment it is given, if the config has none yet.** So the common 
+shape — an environment-agnostic base with an environment-specific overlay — leaves the 
+config carrying it, and `reload_from()` can resolve a `{env}` template afterwards:
+
+```rust
+let mut config = Config::load_required("config.yaml", "/", None)?   // no env
+    .merge_required("config.{env}.yaml", Some("prod"))?;            // env supplied here
+
+assert_eq!(config.environment(), Some("prod"));
+config.reload_from("other.{env}.yaml")?;  // resolves against "prod"
+```
+
+An environment already on the config is never replaced by a later merge: it was chosen by 
+the constructor, and letting an overlay reassign it would silently change what a subsequent 
+`reload_from()` resolves. A merge fills the gap, it does not overwrite.
+
 **`env` is substituted into a filesystem path verbatim**, with no validation — an `env` of 
 `../../secrets` builds exactly that path. This is fine for the normal case of a literal or a 
 trusted `APP_ENV`, but do not pass a value that came from an untrusted source such as a request 

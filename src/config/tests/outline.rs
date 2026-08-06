@@ -1,4 +1,5 @@
 use super::Config;
+use crate::config::outline::escape_key;
 
 #[test]
 fn outline_lists_leaf_paths_with_their_types() {
@@ -102,4 +103,26 @@ fn outline_marks_an_empty_mapping_rather_than_skipping_it() {
     let config = Config::load_yaml("a: {}\nb: 1\n", "/").unwrap();
 
     assert_eq!(config.outline(), "a: <empty mapping>\nb: <number>\n");
+}
+
+#[test]
+fn escape_key_empty_separator_terminates() {
+    // The counterpart of `parse_path_empty_separator_terminates` in escape.rs.
+    // Unreachable through the public API — `check_separator` rejects an empty
+    // separator at construction — but the loop must not spin forever, growing the
+    // output until it exhausts memory, if it is ever reached.
+    assert_eq!(escape_key("a/b", ""), "a/b");
+
+    // A backslash is still escaped: only separator matching is skipped, since with
+    // no separator there is nothing for a path to be split on.
+    assert_eq!(escape_key(r"a\b", ""), r"a\\b");
+}
+
+#[test]
+fn escape_key_escapes_separators_and_backslashes() {
+    // The behaviour the guard above must leave untouched
+    assert_eq!(escape_key("a/b", "/"), r"a\/b");
+    assert_eq!(escape_key(r"a\b", "/"), r"a\\b");
+    assert_eq!(escape_key("a::b", "::"), r"a\::b");
+    assert_eq!(escape_key("plain", "/"), "plain");
 }

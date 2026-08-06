@@ -1,3 +1,4 @@
+use std::fmt;
 use std::mem;
 use std::sync::{Arc, RwLock};
 use yaml_serde::Value;
@@ -51,9 +52,26 @@ use crate::{Config, ConfigError};
 /// # Ok(())
 /// # }
 /// ```
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct ConfigHandle {
     inner: Arc<RwLock<Arc<Config>>>,
+}
+
+impl fmt::Debug for ConfigHandle {
+    /// Defers to [`Config`]'s `Debug`, which prints the config's shape and elides the
+    /// document — a derived impl here would print the whole resolved tree, secrets
+    /// included, wrapped in the `RwLock`'s own debug output.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut out = f.debug_struct("ConfigHandle");
+        match self.inner.try_read() {
+            Ok(config) => out.field("config", &**config),
+            // `try_read`, not `read`: formatting a value must never block, let alone
+            // deadlock against a reload. The write lock is held for a pointer swap
+            // and nothing else, so this branch is vanishingly rare.
+            Err(_) => out.field("config", &format_args!("<locked>")),
+        };
+        out.finish()
+    }
 }
 
 impl ConfigHandle {
@@ -444,6 +462,34 @@ features:
 
         for r in readers { r.join().unwrap(); }
         assert_eq!(handle.get_int("app/port"), Some(2000));
+    }
+
+    #[test]
+    fn debug_does_not_print_config_values() {
+        let handle = ConfigHandle::new(
+            Config::load_yaml("db:\n  password: hunter2\n", "/").unwrap()
+        );
+        let printed = format!("{:?}", handle);
+
+        assert!(!printed.contains("hunter2"), "Debug leaked a password: {}", printed);
+        assert!(!printed.contains("password"), "Debug leaked the document: {}", printed);
+        // Flattened onto Config's shape rather than the RwLock's derived output
+        assert!(printed.starts_with("ConfigHandle { config: Config {"), "got: {}", printed);
+    }
+
+    #[test]
+    fn debug_does_not_block_against_a_writer() {
+        use std::thread;
+
+        let handle = ConfigHandle::new(Config::load_yaml(YAML, "/").unwrap());
+        let printed = {
+            // Hold the write lock for the duration of the format
+            let _guard = handle.inner.write().unwrap();
+            let h = handle.clone();
+            thread::spawn(move || format!("{:?}", h)).join().unwrap()
+        };
+
+        assert!(printed.contains("<locked>"), "got: {}", printed);
     }
 
     #[test]

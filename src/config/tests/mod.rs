@@ -1,4 +1,5 @@
 mod accessors;
+mod debug;
 mod env_vars;
 mod escape;
 mod formatting;

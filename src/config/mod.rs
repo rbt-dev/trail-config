@@ -15,13 +15,51 @@ enum OverlaySource {
     Optional(String),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Config {
     content: Value,
     filename: String,
     separator: String,
     environment: Option<String>,
     overlays: Vec<OverlaySource>,
+}
+
+// Note: `std::fmt` is spelled out rather than imported, because this module already
+// has a `fmt` submodule (`Config::fmt`, the string formatter).
+impl std::fmt::Debug for Config {
+    /// Prints the config's *shape*, never its values.
+    ///
+    /// A config crate is precisely where `${DB_PASSWORD}` and `${API_TOKEN}` get
+    /// interpolated, and by the time `Debug` runs the real values have already been
+    /// substituted in. A derived impl put them in cleartext into every `{:?}` — a panic
+    /// message, a `tracing` span, an `anyhow` context chain, or a `#[derive(Debug)]` on
+    /// any struct that happens to hold a `Config`. Nobody debugs by reading a whole
+    /// config tree out of a log line, so nothing of value is lost by eliding it.
+    ///
+    /// Filenames are printed: they are not secrets, and the overlay chain is exactly
+    /// what you want when a [`reload`](Config::reload) does not do what you expected.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let shape = describe(&self.content);
+        f.debug_struct("Config")
+            .field("filename", &self.filename)
+            .field("separator", &self.separator)
+            .field("environment", &self.environment)
+            .field("overlays", &self.overlays)
+            .field("content", &std::format_args!("{shape}"))
+            .finish()
+    }
+}
+
+/// Describes a document's shape for [`Debug`] — its size, never its contents.
+fn describe(content: &Value) -> String {
+    match content {
+        Value::Null => "<empty>".to_string(),
+        Value::Mapping(map) if map.len() == 1 => "<1 key>".to_string(),
+        Value::Mapping(map) => format!("<{} keys>", map.len()),
+        Value::Sequence(seq) if seq.len() == 1 => "<1 item>".to_string(),
+        Value::Sequence(seq) => format!("<{} items>", seq.len()),
+        _ => "<scalar>".to_string(),
+    }
 }
 
 impl Default for Config {

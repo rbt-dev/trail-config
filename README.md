@@ -285,6 +285,23 @@ escape sequence — see [Escape Sequences](#escape-sequences) — not by doublin
 | `reload()` | `Result<(), ConfigError>` | Reload from current file |
 | `reload_from(filename)` | `Result<(), ConfigError>` | Load from a different file |
 
+## Debug Output
+
+`{:?}` on a `Config` or `ConfigHandle` prints the config's **shape**, never its values:
+
+```text
+Config { filename: "config.yaml", separator: "/", environment: Some("prod"),
+         overlays: [Required("config.prod.yaml"), Optional("config.local.yaml")],
+         content: <4 keys> }
+```
+
+Environment variables are already interpolated by the time `Debug` runs, so printing the 
+document would put `${DB_PASSWORD}` and `${API_TOKEN}` in cleartext into any panic message, 
+log line or `anyhow` context chain. Filenames and the overlay chain are printed — they are 
+not secrets, and they are what you need when a `reload()` does not do what you expected.
+
+To inspect actual values, read them explicitly with the accessors.
+
 ## Error Handling
 
 Trail Config uses a custom `ConfigError` enum:

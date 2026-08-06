@@ -67,7 +67,7 @@ fn config_handle_hands_back_the_same_value_type() {
 #[test]
 fn the_yaml_error_behind_a_config_error_is_nameable() {
     match Config::load_yaml("app: [unclosed", "/") {
-        Err(ConfigError::YamlError { file, source }) => {
+        Err(ConfigError::YamlError { file, source, .. }) => {
             // Binding `source` by type is what a caller needs to pass it on, wrap it or
             // inspect it — the public field was previously of an unnameable type.
             let source: YamlError = source;

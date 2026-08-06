@@ -6,10 +6,40 @@ use thiserror::Error;
 /// Load and parse errors record the file they occurred in (`file` is `None`
 /// when the config was parsed from a string) and preserve the underlying
 /// error, available via [`std::error::Error::source`].
+///
+/// # Matching on it
+///
+/// The enum and its struct variants are `#[non_exhaustive]`, so a `match` from
+/// another crate needs a `_ => …` arm, and a struct variant's fields are bound with
+/// a trailing `..`:
+///
+/// ```
+/// # use trail_config::{Config, ConfigError};
+/// match Config::load_required("config.yaml", "/", None) {
+///     Ok(config) => { /* ... */ },
+///     Err(ConfigError::IoError { file, .. }) => {
+///         eprintln!("could not read {}", file.as_deref().unwrap_or("the config"));
+///     },
+///     Err(ConfigError::PathNotFound(path)) => eprintln!("missing: {path}"),
+///     Err(e) => eprintln!("{e}"),
+/// }
+/// ```
+///
+/// This is deliberate: the variant list has grown twice already (`JsonError` /
+/// `TomlError` with their features, then `DeserializeError`), and the `json` and
+/// `toml` features vary which variants exist at all. Without `#[non_exhaustive]`
+/// every such addition silently breaks any consumer that matched exhaustively, which
+/// would force a major version for what is otherwise a purely additive change.
+///
+/// `PathNotFound` and `FormatError` are exempt. They carry one `String` and nothing
+/// could be added to them without replacing them outright, so they stay directly
+/// matchable — `ConfigError::PathNotFound(path)` binds the path as it always has.
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum ConfigError {
     /// File I/O failure (missing file, permission denied, ...).
     #[error("IO error{}: {source}", fmt_file(.file))]
+    #[non_exhaustive]
     IoError {
         /// The file being read or written, if the error relates to one.
         file: Option<String>,
@@ -19,6 +49,7 @@ pub enum ConfigError {
 
     /// YAML parsing or deserialization failure.
     #[error("YAML parse error{}: {source}", fmt_file(.file))]
+    #[non_exhaustive]
     YamlError {
         /// The file being parsed, or `None` for string input or `from_value` failures.
         file: Option<String>,
@@ -29,6 +60,7 @@ pub enum ConfigError {
     /// JSON parsing failure (requires the `json` feature).
     #[cfg(feature = "json")]
     #[error("JSON parse error{}: {source}", fmt_file(.file))]
+    #[non_exhaustive]
     JsonError {
         /// The file being parsed, or `None` for string input.
         file: Option<String>,
@@ -39,6 +71,7 @@ pub enum ConfigError {
     /// TOML parsing failure (requires the `toml` feature).
     #[cfg(feature = "toml")]
     #[error("TOML parse error{}: {source}", fmt_file(.file))]
+    #[non_exhaustive]
     TomlError {
         /// The file being parsed, or `None` for string input.
         file: Option<String>,
@@ -55,6 +88,7 @@ pub enum ConfigError {
     /// for JSON and TOML configs too, which is why the underlying error is a
     /// [`yaml_serde::Error`] regardless of where the document came from.
     #[error("Cannot deserialize {}: {source}", fmt_target(.path, .file))]
+    #[non_exhaustive]
     DeserializeError {
         /// The file the document came from, or `None` for a config parsed from a string.
         file: Option<String>,

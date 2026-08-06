@@ -414,6 +414,28 @@ string) and preserve the original underlying error in `source`, which is also re
 by `std::error::Error::source()` for error-chain reporting. Display messages include
 the filename when known, e.g. `YAML parse error in config.prod.yaml: ...`.
 
+### Matching on `ConfigError`
+
+The enum and its struct variants are `#[non_exhaustive]`, so a `match` needs a `_ => ...`
+arm and a struct variant's fields are bound with a trailing `..`:
+
+```rust
+match result {
+    Err(ConfigError::IoError { file, .. }) => { /* ... */ },
+    Err(ConfigError::PathNotFound(path)) => { /* ... */ },
+    Err(e) => eprintln!("{}", e),
+    Ok(config) => { /* ... */ },
+}
+```
+
+That keeps a new variant — or a new field on an existing one — from being a breaking
+change. The variant list has already grown twice, and the `json` and `toml` features
+change which variants exist at all, so this would otherwise force a major version for a
+purely additive change.
+
+`PathNotFound` and `FormatError` are exempt: they carry a single `String` that nothing
+could be added to, so they stay directly matchable.
+
 ### Handling load errors
 
 ```rust
@@ -424,7 +446,7 @@ match Config::load_required("config.yaml", "/", None) {
         let host = config.str("database/host");
         println!("Connecting to {}", host);
     },
-    Err(ConfigError::IoError { file, source }) => {
+    Err(ConfigError::IoError { file, source, .. }) => {
         eprintln!("Config file error in {}: {}", file.as_deref().unwrap_or("?"), source);
     },
     Err(ConfigError::YamlError { source, .. }) => {

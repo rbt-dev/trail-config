@@ -17,7 +17,9 @@ fn a_missing_required_file_is_an_io_error_naming_the_file() {
     let missing = path_in(&dir, "absent.yaml");
 
     match Config::load_required(&missing, "/", None) {
-        Err(ConfigError::IoError { file, source }) => {
+        // `..` because the variant is `#[non_exhaustive]` — this is what a consumer
+        // has to write, so the tests write it too
+        Err(ConfigError::IoError { file, source, .. }) => {
             assert_eq!(file.as_deref(), Some(missing.as_str()));
             assert_eq!(source.kind(), ErrorKind::NotFound);
         },
@@ -37,7 +39,7 @@ fn an_empty_filename_is_rejected_as_invalid_input_not_as_missing() {
 
     for result in cases {
         match result {
-            Err(ConfigError::IoError { file, source }) => {
+            Err(ConfigError::IoError { file, source, .. }) => {
                 assert_eq!(source.kind(), ErrorKind::InvalidInput);
                 assert_eq!(file, None, "there is no file to name");
             },
@@ -52,7 +54,7 @@ fn a_broken_file_is_a_parse_error_naming_the_file() {
     let file = write_file(&dir, "broken.yaml", "invalid: [unclosed\n");
 
     match Config::load_required(&file, "/", None) {
-        Err(ConfigError::YamlError { file: named, source }) => {
+        Err(ConfigError::YamlError { file: named, source, .. }) => {
             assert_eq!(named.as_deref(), Some(file.as_str()));
             assert!(!source.to_string().is_empty());
         },
@@ -117,7 +119,7 @@ fn a_deserialization_mismatch_is_not_reported_as_a_parse_error() {
     let config = Config::load_required(&file, "/", None).unwrap();
 
     match config.get_as_strict::<Wrong>("app") {
-        Err(ConfigError::DeserializeError { file: named, path, source }) => {
+        Err(ConfigError::DeserializeError { file: named, path, source, .. }) => {
             assert_eq!(named.as_deref(), Some(file.as_str()));
             assert_eq!(path.as_deref(), Some("app"));
             assert!(!source.to_string().is_empty());
@@ -128,6 +130,33 @@ fn a_deserialization_mismatch_is_not_reported_as_a_parse_error() {
     let message = config.deserialize_strict::<Wrong>().unwrap_err().to_string();
     assert!(message.starts_with("Cannot deserialize "), "got {message}");
     assert!(message.contains("config.toml"), "got {message}");
+}
+
+#[test]
+fn the_error_enum_stays_non_exhaustive() {
+    // This has to live in `tests/`: `#[non_exhaustive]` has no effect inside the
+    // defining crate, so a unit test cannot observe it at all.
+    let err = Config::load_required("no_such_file_xyz.yaml", "/", None).unwrap_err();
+
+    // Every variant that exists is listed, and then a wildcard. If the enum ever
+    // lost `#[non_exhaustive]` that wildcard would become unreachable, and
+    // `unreachable_patterns` — a warning clippy is run with `-D warnings` for — would
+    // fail the build. So this arm is the assertion; there is nothing to assert at
+    // runtime, since the attribute is purely a compile-time contract.
+    match err {
+        ConfigError::IoError { .. } => {},
+        ConfigError::YamlError { .. } => {},
+        ConfigError::DeserializeError { .. } => {},
+        ConfigError::PathNotFound(_) => {},
+        ConfigError::FormatError(_) => {},
+        #[cfg(feature = "json")]
+        ConfigError::JsonError { .. } => {},
+        #[cfg(feature = "toml")]
+        ConfigError::TomlError { .. } => {},
+        // The arm a consumer is obliged to write, and the one that keeps a new
+        // variant from being a breaking change.
+        _ => {},
+    }
 }
 
 #[test]

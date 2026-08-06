@@ -40,6 +40,10 @@ impl Config {
     ///
     /// # Returns
     /// Returns a `Vec<String>` with the sequence elements, or empty vec if not found or not a sequence
+    ///
+    /// Elements that are not scalars — a nested mapping or sequence, or a null — render as
+    /// empty strings, in keeping with the rest of the lenient API. Use
+    /// [`list_strict`](Config::list_strict) to have them reported instead.
     pub fn list(&self, path: &str) -> Vec<String> {
         match get_leaf(&self.content, path, &self.separator) {
             Some(Value::Sequence(v)) => v.iter().map(to_string).collect(),
@@ -96,6 +100,18 @@ impl Config {
 
     /// Gets a value as a list of strings at the specified path, returning an error if not found
     ///
+    /// Every element must be a scalar. A mapping, a sequence or a null among them is a
+    /// `FormatError` naming the offending element as `path[index]` — unlike
+    /// [`list`](Config::list), which renders them as empty strings, indistinguishable from
+    /// an element that genuinely is `""`. The index is written in brackets because a
+    /// sequence element is not addressable as a path: `items/0` is a lookup for a key
+    /// named `0`, so rendering one would name something the accessors cannot resolve.
+    ///
+    /// # Errors
+    /// Returns `ConfigError::PathNotFound` if the path does not exist
+    /// Returns `ConfigError::FormatError` if the value is not a sequence, or if any
+    ///     element is not a scalar
+    ///
     /// # Example
     /// ```
     /// # use trail_config::Config;
@@ -108,7 +124,17 @@ impl Config {
         let value = get_leaf(&self.content, path, &self.separator)
             .ok_or_else(|| ConfigError::PathNotFound(path.to_string()))?;
         match value {
-            Value::Sequence(v) => Ok(v.iter().map(to_string).collect()),
+            // The whole point of the strict half is to report rather than paper over, and
+            // checking only the container left every element unchecked. `collect` into a
+            // `Result` stops at the first bad element, so the message names one place to look.
+            Value::Sequence(seq) => seq
+                .iter()
+                .enumerate()
+                .map(|(index, element)| {
+                    scalar_to_string(element)
+                        .ok_or_else(|| not_a_scalar(&format!("{}[{}]", path, index)))
+                })
+                .collect(),
             _ => Err(ConfigError::FormatError(format!("Value at {} is not a sequence", path)))
         }
     }
@@ -300,20 +326,27 @@ impl Config {
     }
 }
 
-pub(super) fn to_string(value: &Value) -> String {
+/// Renders a scalar as a string, or `None` for a mapping, a sequence or a null.
+///
+/// The single definition of what "converts to a string" means, so the lenient and strict
+/// accessors can never disagree about which values do.
+fn scalar_to_string(value: &Value) -> Option<String> {
     match value {
-        Value::String(v) => v.to_string(),
-        Value::Number(v) => v.to_string(),
-        Value::Bool(v) => v.to_string(),
-        _ => String::new()
+        Value::String(v) => Some(v.to_string()),
+        Value::Number(v) => Some(v.to_string()),
+        Value::Bool(v) => Some(v.to_string()),
+        _ => None
     }
 }
 
+fn not_a_scalar(path: &str) -> ConfigError {
+    ConfigError::FormatError(format!("Value at {} is not a scalar", path))
+}
+
+pub(super) fn to_string(value: &Value) -> String {
+    scalar_to_string(value).unwrap_or_default()
+}
+
 pub(super) fn to_string_strict(value: &Value, path: &str) -> Result<String, ConfigError> {
-    match value {
-        Value::String(v) => Ok(v.to_string()),
-        Value::Number(v) => Ok(v.to_string()),
-        Value::Bool(v) => Ok(v.to_string()),
-        _ => Err(ConfigError::FormatError(format!("Value at {} is not a scalar", path)))
-    }
+    scalar_to_string(value).ok_or_else(|| not_a_scalar(path))
 }

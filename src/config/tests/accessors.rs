@@ -244,6 +244,48 @@ fn list_strict_errors_on_non_sequence() {
 }
 
 #[test]
+fn list_strict_errors_on_a_non_scalar_element() {
+    // Previously only the container was type-checked: a nested sequence, a nested
+    // mapping and a null all came back as "", indistinguishable from an element that
+    // genuinely is the empty string.
+    let config = Config::load_yaml(
+        "nested_seq:\n  - [1, 2]\n  - x\nnested_map:\n  - k: v\n  - x\nnulls:\n  - x\n  -\n",
+        "/",
+    ).unwrap();
+
+    for (path, index) in [("nested_seq", 0), ("nested_map", 0), ("nulls", 1)] {
+        match config.list_strict(path) {
+            Err(ConfigError::FormatError(msg)) => {
+                assert!(
+                    msg.contains(&format!("{}[{}]", path, index)),
+                    "message should name the offending element: {}",
+                    msg
+                );
+            },
+            other => panic!("Expected FormatError for {}, got: {:?}", path, other),
+        }
+    }
+}
+
+#[test]
+fn list_strict_accepts_every_scalar_type_and_the_empty_string() {
+    let config = Config::load_yaml("mixed:\n  - text\n  - 42\n  - 3.5\n  - true\n  - \"\"\n", "/").unwrap();
+
+    // An element that genuinely is "" is a scalar and stays one — the value the old
+    // behaviour was indistinguishable from
+    assert_eq!(config.list_strict("mixed").unwrap(), ["text", "42", "3.5", "true", ""]);
+}
+
+#[test]
+fn list_stays_lenient_about_elements() {
+    // The lenient half is unchanged: it flattens rather than reports, like every other
+    // lenient accessor
+    let config = Config::load_yaml("a:\n  - [1, 2]\n  - x\n  -\n", "/").unwrap();
+
+    assert_eq!(config.list("a"), ["", "x", ""]);
+}
+
+#[test]
 fn contains_test() {
     let config = Config::load_yaml(YAML, "/").unwrap();
 

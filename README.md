@@ -262,9 +262,20 @@ with `get_as` / `deserialize`.
 | `get_strict(path)` | `Result<Value, ConfigError>` | Raw value, errors if missing |
 | `str(path)` | `String` | String representation, empty if missing |
 | `str_strict(path)` | `Result<String, ConfigError>` | String, errors if missing |
-| `list(path)` | `Vec<String>` | Sequence as string vector, empty if missing |
-| `list_strict(path)` | `Result<Vec<String>, ConfigError>` | Sequence, errors if missing |
+| `list(path)` | `Vec<String>` | Sequence as string vector, empty if missing; non-scalar elements become `""` |
+| `list_strict(path)` | `Result<Vec<String>, ConfigError>` | Sequence, errors if missing or if any element is not a scalar |
 | `contains(path)` | `bool` | Returns `true` if path exists |
+
+`list_strict` checks the elements as well as the container. A nested mapping, a nested
+sequence or a null among them is a `FormatError` naming the element as `path[index]` —
+brackets rather than a path, because a sequence element is not addressable as one:
+
+```yaml
+sources:
+  - one
+  - [nested, sequence]   # list_strict: FormatError, "Value at sources[1] is not a scalar"
+                         # list:        flattens it to "", like an element that is ""
+```
 
 The raw value type and the errors behind `ConfigError` are re-exported, so nothing the API
 hands back needs a second dependency to name:

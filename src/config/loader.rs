@@ -260,6 +260,8 @@ impl Config {
 
     /// Loads a Config from a TOML file, returning an error if the file is missing or invalid.
     ///
+    /// TOML datetimes are read as strings — see [`load_toml`](Config::load_toml).
+    ///
     /// # Errors
     /// Returns `ConfigError::IoError` if the file is missing or cannot be read
     /// Returns `ConfigError::TomlError` if the TOML cannot be parsed
@@ -280,6 +282,19 @@ impl Config {
 
     /// Parses a TOML string into a Config object.
     ///
+    /// # Datetimes
+    ///
+    /// TOML has a date-time type and the value model this crate reads through does not,
+    /// so a datetime is surfaced as the text the file contained: RFC 3339 for an offset
+    /// date-time, and TOML's own forms for the local date, time and date-time variants.
+    /// It behaves as a scalar like any other — readable with [`str`](Config::str), listed
+    /// by [`outline`](Config::outline), and deserializable into a `String` or into
+    /// `chrono`/`time`/`jiff`'s date types, all of which parse RFC 3339.
+    ///
+    /// It will *not* deserialize into `toml::value::Datetime`, which recognises only the
+    /// private marker its own crate serializes; naming that type means taking a direct
+    /// dependency on `toml`, which the [crate docs](crate#value-model) advise against.
+    ///
     /// # Errors
     /// Returns `ConfigError::TomlError` if the TOML cannot be parsed
     /// Returns `ConfigError::FormatError` if the separator is empty or contains a backslash
@@ -289,6 +304,10 @@ impl Config {
     /// # use trail_config::Config;
     /// let config = Config::load_toml("[app]\nport = 8080", "/").unwrap();
     /// assert_eq!(config.get_int("app/port"), Some(8080));
+    ///
+    /// // A datetime reads back as the text the file held
+    /// let config = Config::load_toml("[window]\nstarts = 2024-01-01T00:00:00Z", "/").unwrap();
+    /// assert_eq!(config.str("window/starts"), "2024-01-01T00:00:00Z");
     /// ```
     #[cfg(feature = "toml")]
     #[cfg_attr(docsrs, doc(cfg(feature = "toml")))]

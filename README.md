@@ -208,6 +208,22 @@ let config = Config::load_required("config.yaml", "/", None)?
     .merge_required("overrides.toml", None)?;
 ```
 
+**Datetimes are read as strings.** TOML has a date-time type and the value model this
+crate reads through does not, so a datetime is surfaced as the text the file contained —
+RFC 3339 for an offset date-time, and TOML's own forms for the local date, time and
+date-time variants. It is a scalar like any other: readable with `str`, listed by
+`outline`, and deserializable into a `String` or into `chrono`/`time`/`jiff`'s date types,
+which all parse RFC 3339.
+
+```rust
+let config = Config::load_toml("[window]\nstarts = 2024-01-01T00:00:00Z", "/")?;
+assert_eq!(config.str("window/starts"), "2024-01-01T00:00:00Z");
+```
+
+The one type it will *not* deserialize into is `toml::value::Datetime`, which recognises
+only the private marker its own crate serializes. Naming that type means adding `toml` as
+a direct dependency, which "Reading values" below advises against for its own reasons.
+
 ### Byte-order marks
 
 A leading UTF-8 BOM is stripped before parsing, for every format and for strings as well 

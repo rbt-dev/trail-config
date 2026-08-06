@@ -161,6 +161,134 @@ fn load_or_create_yaml_defaults_for_a_toml_file_writes_nothing() {
 }
 
 #[test]
+fn toml_datetimes_are_scalar_strings() {
+    // All four of TOML's date-time forms. Each used to arrive as the mapping
+    // `{"$__toml_private_datetime": "..."}` — the `toml_datetime` crate's private serde
+    // workaround, materialized because `yaml_serde` does not know the protocol.
+    let toml_str = "\
+[s]
+offset = 2024-01-01T00:00:00Z
+local_dt = 1979-05-27T07:32:00
+local_date = 1979-05-27
+local_time = 07:32:00
+";
+    let config = Config::load_toml(toml_str, "/").unwrap();
+
+    assert_eq!(config.str("s/offset"), "2024-01-01T00:00:00Z");
+    assert_eq!(config.str("s/local_dt"), "1979-05-27T07:32:00");
+    assert_eq!(config.str("s/local_date"), "1979-05-27");
+    assert_eq!(config.str("s/local_time"), "07:32:00");
+
+    // The strict half agrees — it used to report "not a scalar"
+    assert_eq!(config.str_strict("s/offset").unwrap(), "2024-01-01T00:00:00Z");
+
+    // And the marker is gone entirely, not merely bypassed
+    assert!(!config.contains("s/offset/$__toml_private_datetime"));
+    assert!(!config.outline().contains("toml_private"));
+}
+
+#[test]
+fn toml_datetime_deserializes_into_a_string_field() {
+    use serde::Deserialize;
+
+    #[derive(Deserialize, PartialEq, Debug)]
+    struct Window {
+        starts: String,
+        label: String,
+    }
+
+    // Previously "invalid type: map, expected a string" — the failure that made the
+    // `toml` feature unusable for any config carrying a timestamp.
+    let config = Config::load_toml("[window]\nstarts = 2024-01-01T00:00:00Z\nlabel = \"nightly\"", "/").unwrap();
+    let window: Window = config.get_as_strict("window").unwrap();
+
+    assert_eq!(window, Window {
+        starts: "2024-01-01T00:00:00Z".to_string(),
+        label: "nightly".to_string(),
+    });
+}
+
+#[test]
+fn toml_datetime_outlines_as_a_resolvable_path() {
+    // `outline` promised every line could be pasted straight into an accessor; the
+    // datetime line named a path built from a dependency's internal field name.
+    let config = Config::load_toml("[s]\nstarted = 2024-01-01T00:00:00Z\n", "/").unwrap();
+
+    assert_eq!(config.outline(), "s/started: <string>\n");
+    assert!(config.contains("s/started"));
+}
+
+#[test]
+fn toml_datetimes_survive_a_list_a_merge_and_a_reload() {
+    let dir = temp_dir();
+    let base = write_file(&dir, "base.toml", "[s]\nstarted = 2024-01-01T00:00:00Z\nkept = 1\n");
+    let overlay = write_file(&dir, "over.toml", "[s]\nstarted = 2025-06-15T12:00:00Z\n");
+
+    // A sequence of them reads like any other list of scalars
+    let dates = Config::load_toml("d = [1979-05-27, 1980-01-01]", "/").unwrap();
+    assert_eq!(dates.list("d"), vec!["1979-05-27", "1980-01-01"]);
+    assert_eq!(dates.list_strict("d").unwrap(), vec!["1979-05-27", "1980-01-01"]);
+
+    // An overlay overrides one leaf without disturbing its sibling — a datetime is now
+    // an ordinary scalar to the merge, where it used to be a mapping merged key by key
+    let mut config = Config::load_required(&base, "/", None).unwrap()
+        .merge_required(&overlay, None).unwrap();
+    assert_eq!(config.str("s/started"), "2025-06-15T12:00:00Z");
+    assert_eq!(config.get_int("s/kept"), Some(1));
+
+    fs::write(&base, "[s]\nstarted = 2030-12-25T00:00:00Z\nkept = 2\n").unwrap();
+    config.reload().unwrap();
+    assert_eq!(config.str("s/started"), "2025-06-15T12:00:00Z", "the overlay still wins");
+    assert_eq!(config.get_int("s/kept"), Some(2));
+}
+
+#[test]
+fn toml_scalars_convert_faithfully() {
+    // The hand-written conversion replaced a serde round-trip, so every variant of
+    // `toml::Value` is worth an assertion rather than the datetime alone.
+    let toml_str = "\
+text = \"hello\"
+int = 42
+neg = -9223372036854775808
+float = 3.5
+neg_float = -0.5
+yes = true
+no = false
+list = [1, 2, 3]
+mixed = [\"a\", 1, true]
+
+[table]
+nested = \"deep\"
+
+[[items]]
+name = \"first\"
+
+[[items]]
+name = \"second\"
+";
+    let config = Config::load_toml(toml_str, "/").unwrap();
+
+    assert_eq!(config.str("text"), "hello");
+    assert_eq!(config.get_int("int"), Some(42));
+    assert_eq!(config.get_int("neg"), Some(i64::MIN));
+    assert_eq!(config.get_float("float"), Some(3.5));
+    assert_eq!(config.get_float("neg_float"), Some(-0.5));
+    assert_eq!(config.get_bool("yes"), Some(true));
+    assert_eq!(config.get_bool("no"), Some(false));
+    assert_eq!(config.list("list"), vec!["1", "2", "3"]);
+    assert_eq!(config.list("mixed"), vec!["a", "1", "true"]);
+    assert_eq!(config.str("table/nested"), "deep");
+    // An array of tables stays a sequence of mappings, addressable by deserializing
+    assert_eq!(config.get_as::<Vec<std::collections::BTreeMap<String, String>>>("items").unwrap().len(), 2);
+
+    // TOML's special floats round-trip through the number model too
+    let floats = Config::load_toml("nan = nan\npos = inf\nneg = -inf\n", "/").unwrap();
+    assert!(floats.get_float("nan").unwrap().is_nan());
+    assert_eq!(floats.get_float("pos"), Some(f64::INFINITY));
+    assert_eq!(floats.get_float("neg"), Some(f64::NEG_INFINITY));
+}
+
+#[test]
 fn merge_toml_overlay() {
     let dir = temp_dir();
     let base = write_file(&dir, "base.yaml", "app:\n  port: 8080\n  name: myapp\n");

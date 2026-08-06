@@ -104,7 +104,8 @@
 //!
 //! `json` and `toml` add the corresponding parsers. Format is chosen by file extension,
 //! case-insensitively, so a YAML base can take a JSON or TOML overlay once the feature
-//! is enabled.
+//! is enabled. TOML's date-time type has no counterpart in the value model above, so a
+//! datetime is read as the text the file contained — see [`load_toml`](Config::load_toml).
 //!
 //! See the [README](https://github.com/rbt-dev/trail-config) for the full guide.
 

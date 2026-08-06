@@ -46,7 +46,7 @@ fn load_json_file_explicit() {
     let dir = temp_dir();
     let path = write_file(&dir, "config.json", r#"{"app": {"name": "myapp"}}"#);
 
-    let config = Config::load_json_file(&path, "/").unwrap();
+    let config = Config::load_json_file(&path, "/", None).unwrap();
     assert_eq!(config.str("app/name"), "myapp");
 }
 

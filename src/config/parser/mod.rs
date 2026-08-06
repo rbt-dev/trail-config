@@ -34,8 +34,15 @@ fn strip_bom(content: &str) -> &str {
     content.strip_prefix('\u{feff}').unwrap_or(content)
 }
 
-/// The parser a filename selects.
-enum Format {
+/// Which parser reads a file.
+///
+/// Normally derived from the filename by [`format_of`], but [`Config`](crate::Config) can
+/// carry one chosen explicitly — see `Config::format` — so that a file loaded by
+/// [`load_json_file`](crate::Config::load_json_file) or
+/// [`load_toml_file`](crate::Config::load_toml_file) is re-read by the same parser on a
+/// [`reload`](crate::Config::reload).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::config) enum Format {
     Yaml,
     #[cfg(feature = "json")]
     Json,
@@ -89,7 +96,17 @@ fn format_of(filename: &str) -> Format {
 
 /// Loads a config file, choosing the parser by file extension.
 pub(super) fn load_auto(filename: &str) -> Result<Value, ConfigError> {
-    match format_of(filename) {
+    load_in(None, filename)
+}
+
+/// Loads a config file with `format`, falling back to the extension when it is `None`.
+///
+/// The single entry point for reading a file, so that a config which pinned its format at
+/// construction is re-read the same way. Without it, `load_json_file("settings.conf")`
+/// parsed as JSON and the `reload()` that followed parsed the same bytes as YAML —
+/// silently, since YAML is a superset of JSON, until a document exercised a difference.
+pub(super) fn load_in(format: Option<Format>, filename: &str) -> Result<Value, ConfigError> {
+    match format.unwrap_or_else(|| format_of(filename)) {
         Format::Yaml => yaml::load_file(filename),
         #[cfg(feature = "json")]
         Format::Json => json::load_file(filename),

@@ -42,6 +42,18 @@ pub struct Config {
     separator: String,
     environment: Option<String>,
     overlays: Vec<OverlaySource>,
+    /// The parser to re-read [`filename`](Self::filename) with, when it was chosen
+    /// explicitly rather than derived from the extension.
+    ///
+    /// `None` — the usual case — means "decide from the extension, every time". `Some` is
+    /// set only by [`load_json_file`](Config::load_json_file) and
+    /// [`load_toml_file`](Config::load_toml_file), whose whole reason to exist is a file
+    /// whose extension does not name its format. Without recording it, those two parsed
+    /// the file one way and every later `reload` parsed it another.
+    ///
+    /// Applies to the base file only. Each overlay decides for itself by its own
+    /// extension, which is what lets a JSON base take a YAML overlay.
+    format: Option<parser::Format>,
 }
 
 // Note: `std::fmt` is spelled out rather than imported, because this module already
@@ -60,13 +72,19 @@ impl std::fmt::Debug for Config {
     /// what you want when a [`reload`](Config::reload) does not do what you expected.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let shape = describe(&self.content);
-        f.debug_struct("Config")
-            .field("filename", &self.filename)
+        let mut out = f.debug_struct("Config");
+        out.field("filename", &self.filename)
             .field("separator", &self.separator)
             .field("environment", &self.environment)
-            .field("overlays", &self.overlays)
-            .field("content", &std::format_args!("{shape}"))
-            .finish()
+            .field("overlays", &self.overlays);
+        // Only when the format was pinned, which is rare. It belongs here for the same
+        // reason the overlay chain does — it is one of the things that decides what a
+        // `reload` reads — but printing `format: None` on every other config would be
+        // noise standing for "nothing unusual".
+        if let Some(format) = self.format {
+            out.field("format", &format);
+        }
+        out.field("content", &std::format_args!("{shape}")).finish()
     }
 }
 

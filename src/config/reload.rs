@@ -7,7 +7,7 @@ use super::{Config, OverlaySource};
 use super::env::resolve_env_vars;
 use super::loader::{empty_filename_error, get_file};
 use super::merge::merge_documents;
-use super::parser::load_auto;
+use super::parser::{load_auto, load_in};
 
 impl Config {
     /// Reloads the configuration from disk, re-applying all overlays in order.
@@ -49,7 +49,12 @@ impl Config {
             return Err(ConfigError::FormatError("Cannot reload: no file path associated with this config".to_string()));
         }
 
-        let mut content = resolve_env_vars(load_auto(&self.filename)?)?;
+        // The base file is read with this config's pinned format when it has one, so a
+        // file loaded by `load_json_file` under a `.conf` extension is re-read as JSON
+        // rather than silently falling back to YAML. Overlays below stay on `load_auto`:
+        // each one names its own format by its own extension, which is what lets a JSON
+        // base take a YAML overlay.
+        let mut content = resolve_env_vars(load_in(self.format, &self.filename)?)?;
 
         for overlay in &self.overlays {
             match overlay {
@@ -91,13 +96,18 @@ impl Config {
             separator: self.separator.clone(),
             environment: self.environment.clone(),
             overlays: self.overlays.clone(),
+            format: self.format,
         }
     }
 
     /// Reloads the configuration from a different file
     ///
     /// Changes the config's filename and reloads from the new file.
-    /// The separator and environment settings remain the same.
+    /// The separator and environment settings remain the same, and so does an explicitly
+    /// chosen format: a config built by [`load_json_file`](Config::load_json_file) or
+    /// [`load_toml_file`](Config::load_toml_file) reads the new file with that same
+    /// parser. Construct a new `Config` to change format. Configs loaded any other way
+    /// have no pinned format and pick the parser from the new file's extension, as always.
     ///
     /// The filename may contain an `{env}` placeholder, which is resolved against the
     /// environment this config already carries — there is no `env` argument because
@@ -142,7 +152,15 @@ impl Config {
         // path returns here, leaving the filename, content and overlay chain as they
         // were — a partial switch would point `reload()` at the new file while the
         // old overlays were still registered.
-        let content = resolve_env_vars(load_auto(&file)?)?;
+        //
+        // A pinned format is preserved, like the separator and the environment: it was an
+        // explicit choice by whoever built the config, and the alternative is worse in the
+        // specific way this crate cares about. Dropping it would send a JSON-pinned config
+        // reading a new extensionless file as YAML — which usually *succeeds*, since YAML
+        // is a superset of JSON, and quietly applies the wrong rules. Keeping it means a
+        // genuine format switch fails with a parse error naming the format, which is
+        // visible. Build a new `Config` to change format.
+        let content = resolve_env_vars(load_in(self.format, &file)?)?;
 
         self.content = content;
         self.filename = file;

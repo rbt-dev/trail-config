@@ -3,6 +3,7 @@ mod bom;
 mod debug;
 mod env_vars;
 mod escape;
+mod explicit_format;
 mod formatting;
 mod internals;
 #[cfg(feature = "json")]

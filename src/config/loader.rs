@@ -5,7 +5,7 @@ use yaml_serde::Value;
 use crate::error::ConfigError;
 use super::Config;
 use super::env::resolve_env_vars;
-use super::parser::{self, load_auto};
+use super::parser;
 
 impl Config {
     /// Loads a Config from a file, returning an error if the file is missing or invalid.
@@ -87,7 +87,7 @@ impl Config {
                 // picked up. `load_internal` resolved both `sep` and the filename
                 // template before failing, so neither can fail here.
                 let (file, env) = get_file(filename, env)?;
-                Self::from_parsed(Value::Null, &file, sep, env)
+                Self::from_parsed(Value::Null, &file, sep, env, None)
             },
             Err(e) => Err(e),
         }
@@ -180,15 +180,31 @@ impl Config {
     }
 
     fn load_internal(filename: &str, sep: &str, env: Option<&str>) -> Result<Config, ConfigError> {
+        Self::load_internal_as(filename, sep, env, None)
+    }
+
+    /// Loads a file with an explicitly chosen parser, or by extension when `format` is
+    /// `None`.
+    ///
+    /// The one path every file constructor takes, so the filename check, the separator
+    /// check and `{env}` resolution cannot differ between them. `load_json_file` and
+    /// `load_toml_file` used to bypass all three, and skipping the last meant they alone
+    /// could not take a `config.{env}.json` template.
+    fn load_internal_as(
+        filename: &str,
+        sep: &str,
+        env: Option<&str>,
+        format: Option<parser::Format>,
+    ) -> Result<Config, ConfigError> {
         if filename.is_empty() {
             return Err(empty_filename_error());
         }
         check_separator(sep)?;
 
         let (file, env) = get_file(filename, env)?;
-        let parsed = load_auto(&file)?;
+        let parsed = parser::load_in(format, &file)?;
 
-        Self::from_parsed(parsed, &file, sep, env)
+        Self::from_parsed(parsed, &file, sep, env, format)
     }
 
     /// Builds a `Config` from an already-parsed document, resolving `${VAR}`
@@ -199,13 +215,20 @@ impl Config {
     ///
     /// Callers validate `sep` with `check_separator` *before* parsing, so that an empty
     /// separator is reported ahead of any parse error.
-    fn from_parsed(content: Value, filename: &str, sep: &str, env: Option<String>) -> Result<Config, ConfigError> {
+    fn from_parsed(
+        content: Value,
+        filename: &str,
+        sep: &str,
+        env: Option<String>,
+        format: Option<parser::Format>,
+    ) -> Result<Config, ConfigError> {
         Ok(Config {
             content: resolve_env_vars(content)?,
             filename: filename.to_string(),
             separator: sep.to_string(),
             environment: env,
             overlays: Vec::new(),
+            format,
         })
     }
 
@@ -216,27 +239,46 @@ impl Config {
     /// Returns `ConfigError::YamlError` if YAML parsing fails
     pub fn load_yaml(yaml: &str, sep: &str) -> Result<Config, ConfigError> {
         check_separator(sep)?;
-        Self::from_parsed(parser::yaml::parse(yaml)?, "", sep, None)
+        Self::from_parsed(parser::yaml::parse(yaml)?, "", sep, None, None)
     }
 
-    /// Loads a Config from a JSON file, returning an error if the file is missing or invalid.
+    /// Loads a Config from a JSON file, whatever its extension.
+    ///
+    /// [`load_required`](Config::load_required) already routes a `.json` file to the JSON
+    /// parser, so the reason to reach for this is a file whose *extension does not name
+    /// its format* — `settings.conf`, `app.cfg`, a file with no extension at all.
+    ///
+    /// The choice is recorded on the config, so [`reload`](Config::reload) and
+    /// [`reload_from`](Config::reload_from) read it as JSON too. Without that the file was
+    /// parsed as JSON once and as YAML ever after, which failed silently rather than
+    /// loudly: YAML is a superset of JSON, so the reload usually *worked*, applying YAML's
+    /// rules to a document that had been read under `serde_json`'s.
+    ///
+    /// Overlays are unaffected and still choose their own parser by their own extension,
+    /// which is what lets a JSON base take a YAML overlay.
+    ///
+    /// # Arguments
+    /// * `filename` - Path to the config file (can contain `{env}` placeholder)
+    /// * `sep` - Path separator for accessing nested values
+    /// * `env` - Optional environment name to substitute in filename. Interpolated into a
+    ///   filesystem path with no validation — do not pass untrusted input
     ///
     /// # Errors
-    /// Returns `ConfigError::IoError` if the file is missing or cannot be read
-    /// Returns `ConfigError::FormatError` if the separator is empty or contains a backslash
+    /// Returns `ConfigError::IoError` if the filename is empty, or the file is missing or cannot be read
+    /// Returns `ConfigError::FormatError` if the separator is empty or contains a backslash, or the filename template is invalid
     /// Returns `ConfigError::JsonError` if JSON cannot be parsed
     ///
     /// # Example
     /// ```no_run
     /// # use trail_config::Config;
-    /// let config = Config::load_json_file("config.json", "/")
-    ///     .expect("Failed to load config.json");
+    /// // A JSON document under an extension that does not say so
+    /// let config = Config::load_json_file("settings.conf", "/", None)
+    ///     .expect("Failed to load settings.conf");
     /// ```
     #[cfg(feature = "json")]
     #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
-    pub fn load_json_file(filename: &str, sep: &str) -> Result<Config, ConfigError> {
-        check_separator(sep)?;
-        Self::from_parsed(parser::json::load_file(filename)?, filename, sep, None)
+    pub fn load_json_file(filename: &str, sep: &str, env: Option<&str>) -> Result<Config, ConfigError> {
+        Self::load_internal_as(filename, sep, env, Some(parser::Format::Json))
     }
 
     /// Parses a JSON string into a Config object.
@@ -255,29 +297,39 @@ impl Config {
     #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
     pub fn load_json(json_str: &str, sep: &str) -> Result<Config, ConfigError> {
         check_separator(sep)?;
-        Self::from_parsed(parser::json::parse(json_str)?, "", sep, None)
+        Self::from_parsed(parser::json::parse(json_str)?, "", sep, None, None)
     }
 
-    /// Loads a Config from a TOML file, returning an error if the file is missing or invalid.
+    /// Loads a Config from a TOML file, whatever its extension.
+    ///
+    /// The TOML counterpart to [`load_json_file`](Config::load_json_file), with the same
+    /// reason to exist and the same recorded-format behaviour: reach for it when the
+    /// extension does not name the format, and [`reload`](Config::reload) will read the
+    /// file as TOML rather than falling back to YAML.
     ///
     /// TOML datetimes are read as strings — see [`load_toml`](Config::load_toml).
     ///
+    /// # Arguments
+    /// * `filename` - Path to the config file (can contain `{env}` placeholder)
+    /// * `sep` - Path separator for accessing nested values
+    /// * `env` - Optional environment name to substitute in filename. Interpolated into a
+    ///   filesystem path with no validation — do not pass untrusted input
+    ///
     /// # Errors
-    /// Returns `ConfigError::IoError` if the file is missing or cannot be read
+    /// Returns `ConfigError::IoError` if the filename is empty, or the file is missing or cannot be read
     /// Returns `ConfigError::TomlError` if the TOML cannot be parsed
-    /// Returns `ConfigError::FormatError` if the separator is empty or contains a backslash
+    /// Returns `ConfigError::FormatError` if the separator is empty or contains a backslash, or the filename template is invalid
     ///
     /// # Example
     /// ```no_run
     /// # use trail_config::Config;
-    /// let config = Config::load_toml_file("config.toml", "/")
-    ///     .expect("Failed to load config.toml");
+    /// let config = Config::load_toml_file("settings.conf", "/", None)
+    ///     .expect("Failed to load settings.conf");
     /// ```
     #[cfg(feature = "toml")]
     #[cfg_attr(docsrs, doc(cfg(feature = "toml")))]
-    pub fn load_toml_file(filename: &str, sep: &str) -> Result<Config, ConfigError> {
-        check_separator(sep)?;
-        Self::from_parsed(parser::toml::load_file(filename)?, filename, sep, None)
+    pub fn load_toml_file(filename: &str, sep: &str, env: Option<&str>) -> Result<Config, ConfigError> {
+        Self::load_internal_as(filename, sep, env, Some(parser::Format::Toml))
     }
 
     /// Parses a TOML string into a Config object.
@@ -313,7 +365,7 @@ impl Config {
     #[cfg_attr(docsrs, doc(cfg(feature = "toml")))]
     pub fn load_toml(toml_str: &str, sep: &str) -> Result<Config, ConfigError> {
         check_separator(sep)?;
-        Self::from_parsed(parser::toml::parse(toml_str)?, "", sep, None)
+        Self::from_parsed(parser::toml::parse(toml_str)?, "", sep, None, None)
     }
 }
 

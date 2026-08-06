@@ -182,6 +182,29 @@ let config = Config::load_required("config.yaml", "/", None)?
     .merge_required("overrides.json", None)?;
 ```
 
+### Files whose extension does not name their format
+
+`load_required` picks the parser from the extension, which covers `.json` and `.toml`
+already. `load_json_file` / `load_toml_file` are for the other case — a JSON document in
+`settings.conf`, or a file with no extension at all:
+
+```rust
+// Read as JSON regardless of what the file is called
+let mut config = Config::load_json_file("settings.conf", "/", None)?;
+
+// ...and the choice sticks: this re-reads it as JSON, not YAML
+config.reload()?;
+```
+
+The format is recorded on the config, so `reload` and `reload_from` use the same parser.
+Overlays are unaffected and still pick their own parser by their own extension, so a JSON
+base can still take a YAML overlay.
+
+Because the choice is preserved, `reload_from` onto a file of a *different* format fails
+with a parse error rather than switching — construct a new `Config` to change format. That
+is deliberate: YAML is a superset of JSON, so a pin that silently lapsed would usually
+*succeed* while applying the wrong rules.
+
 ### From a TOML file or string (requires `toml` feature)
 
 Enable the `toml` feature in your `Cargo.toml`:

@@ -43,7 +43,7 @@ fn load_toml_file_explicit() {
     let dir = temp_dir();
     let path = write_file(&dir, "config.toml", "[app]\nname = \"myapp\"");
 
-    let config = Config::load_toml_file(&path, "/").unwrap();
+    let config = Config::load_toml_file(&path, "/", None).unwrap();
     assert_eq!(config.str("app/name"), "myapp");
 }
 

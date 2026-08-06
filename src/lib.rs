@@ -86,7 +86,8 @@
 //! # Feature flags
 //!
 //! `json` and `toml` add the corresponding parsers. Format is chosen by file extension,
-//! so a YAML base can take a JSON or TOML overlay once the feature is enabled.
+//! case-insensitively, so a YAML base can take a JSON or TOML overlay once the feature
+//! is enabled.
 //!
 //! See the [README](https://github.com/rbt-dev/trail-config) for the full guide.
 

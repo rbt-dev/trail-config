@@ -82,6 +82,40 @@ fn load_json_empty_separator_errors() {
 }
 
 #[test]
+fn uppercase_json_extension_reaches_the_json_parser() {
+    let dir = temp_dir();
+
+    // `{a: 1}` is valid YAML (a flow mapping with an unquoted key) and invalid JSON, so
+    // the error variant is what proves which parser ran. Under the old byte-exact
+    // `ends_with(".json")` this loaded *successfully* as YAML — the worse half of the
+    // bug, since JSON is a subset of YAML and the divergence only shows up later, in
+    // duplicate-key and number handling.
+    for name in ["c.JSON", "c.Json"] {
+        let path = write_file(&dir, name, "{a: 1}");
+        match Config::load_required(&path, "/", None) {
+            Err(ConfigError::JsonError { .. }) => (),
+            other => panic!("{name} should reach the JSON parser, got: {:?}", other.err()),
+        }
+    }
+
+    // Valid JSON under an uppercase extension loads, as it always did
+    let path = write_file(&dir, "ok.JSON", r#"{"app": {"port": 8080}}"#);
+    let config = Config::load_required(&path, "/", None).unwrap();
+    assert_eq!(config.get_int("app/port"), Some(8080));
+}
+
+#[test]
+fn a_file_named_dot_json_is_a_dotfile_not_an_extension() {
+    // `.json` is all name and no extension, like `.gitignore`, so it parses as YAML.
+    // `ends_with(".json")` could not tell the two apart.
+    let dir = temp_dir();
+    let path = write_file(&dir, ".json", "app:\n  port: 8080\n");
+
+    let config = Config::load_required(&path, "/", None).unwrap();
+    assert_eq!(config.get_int("app/port"), Some(8080));
+}
+
+#[test]
 fn load_or_create_json_defaults() {
     let dir = temp_dir();
     let path = dir.path().join("new.json").to_string_lossy().into_owned();

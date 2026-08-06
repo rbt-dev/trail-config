@@ -81,6 +81,47 @@ fn load_toml_empty_separator_errors() {
 }
 
 #[test]
+fn uppercase_toml_extension_reaches_the_toml_parser() {
+    let dir = temp_dir();
+
+    // Under the old byte-exact `ends_with(".toml")` this went to the YAML parser and
+    // failed with "deserializing from YAML containing more than one document is not
+    // supported" — `[table]` headers read as document separators, an error pointing at
+    // the wrong problem entirely. On Windows and macOS this file *is* `c.toml`.
+    for name in ["c.TOML", "c.ToMl"] {
+        let path = write_file(&dir, name, "[app]\nport = 8080\n");
+        let config = Config::load_required(&path, "/", None).unwrap();
+        assert_eq!(config.get_int("app/port"), Some(8080), "{name}");
+    }
+
+    // And a genuine TOML error still surfaces as TomlError, not YamlError
+    let path = write_file(&dir, "bad.TOML", "invalid = [unclosed");
+    match Config::load_required(&path, "/", None) {
+        Err(ConfigError::TomlError { .. }) => (),
+        other => panic!("Expected TomlError, got: {:?}", other.err()),
+    }
+}
+
+#[test]
+fn uppercase_extension_selects_the_format_for_created_defaults() {
+    // `load_or_create` validates its defaults through the same dispatch, so the
+    // extension rule cannot drift between reading a file and parsing a string for it.
+    let dir = temp_dir();
+    let path = dir.path().join("new.TOML").to_string_lossy().into_owned();
+
+    let config = Config::load_or_create(&path, "/", None, "[app]\nport = 8080\n").unwrap();
+    assert_eq!(config.get_int("app/port"), Some(8080));
+
+    // YAML-shaped defaults are rejected under an uppercase .TOML too, and write nothing
+    let path2 = dir.path().join("bad.TOML").to_string_lossy().into_owned();
+    assert!(matches!(
+        Config::load_or_create(&path2, "/", None, "app:\n  port: 8080\n"),
+        Err(ConfigError::TomlError { .. })
+    ));
+    assert!(!fs::exists(&path2).unwrap());
+}
+
+#[test]
 fn load_or_create_toml_defaults() {
     let dir = temp_dir();
     let path = dir.path().join("new.toml").to_string_lossy().into_owned();

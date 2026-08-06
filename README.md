@@ -148,7 +148,8 @@ Enable the `json` feature in your `Cargo.toml`:
 trail-config = { version = "0.5", features = ["json"] }
 ```
 
-JSON files are auto-detected by extension:
+JSON files are auto-detected by extension (case-insensitively — `.json`, `.JSON` and
+`.Json` all reach the JSON parser):
 
 ```rust
 use trail_config::Config;
@@ -173,7 +174,8 @@ Enable the `toml` feature in your `Cargo.toml`:
 trail-config = { version = "0.5", features = ["toml"] }
 ```
 
-TOML files are auto-detected by extension:
+TOML files are auto-detected by extension (case-insensitively — `.toml`, `.TOML` and
+`.Toml` all reach the TOML parser):
 
 ```rust
 use trail_config::Config;

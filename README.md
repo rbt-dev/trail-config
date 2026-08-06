@@ -994,6 +994,28 @@ The overlay filenames are recorded so that `reload()` can re-read and re-apply t
 order — required overlays that are missing on reload return an error, optional overlays that 
 are missing are silently skipped.
 
+### Tagged values
+
+A YAML `!Tag` — how serde spells an enum variant — is part of a value's *shape*, not a
+value inside it. Two nodes under the same tag merge like the mappings they usually are:
+
+```yaml
+# base.yaml            # overlay.yaml         # result
+db: !Postgres          db: !Postgres          db: !Postgres
+  host: keep-me          port: 6543             host: keep-me
+  port: 5432                                    port: 6543
+```
+
+A **differing** tag replaces instead, as does an untagged overlay onto a tagged base.
+Changing or dropping the tag changes which variant the document describes, so merging the
+two sets of fields would produce a document belonging to neither — and an overlay that
+quietly dropped the tag would leave a document that no longer deserializes into the enum
+the base named.
+
+Everywhere else a tag is transparent: `db/host` resolves whether or not `db` is tagged,
+`str` on a tagged scalar returns the scalar, and `outline` lists a tagged mapping's keys.
+Only `get` and `get_as` still see the tag, because selecting the variant is what it is for.
+
 ### Clearing a value with null
 
 An overlay value takes precedence whatever it is, including null — so setting a key to null 
@@ -1162,6 +1184,15 @@ host: ${DB_HOST}       # interpolated
 This is deliberate. Interpolating keys would make the set of valid config *paths* depend 
 on the environment, so a path that resolves on one machine would silently miss on another, 
 and an unset variable would become a missing key rather than an error.
+
+A YAML tag is exempt for the same reason — it selects a variant, so interpolating it would 
+make the document's shape depend on the environment. Values *underneath* a tag are 
+interpolated normally, including the unset-variable error:
+
+```yaml
+db: !Postgres
+  password: ${DB_PASSWORD}   # interpolated; still an error if DB_PASSWORD is unset
+```
 
 ### Error handling
 

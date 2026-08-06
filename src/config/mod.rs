@@ -71,8 +71,11 @@ impl std::fmt::Debug for Config {
 }
 
 /// Describes a document's shape for [`Debug`] — its size, never its contents.
+///
+/// A `!Tag` is looked through, as everywhere else that reads rather than deserializes:
+/// a tagged mapping is described by its key count, not as a scalar.
 fn describe(content: &Value) -> String {
-    match content {
+    match accessor::untagged(content) {
         Value::Null => "<empty>".to_string(),
         Value::Mapping(map) if map.len() == 1 => "<1 key>".to_string(),
         Value::Mapping(map) => format!("<{} keys>", map.len()),

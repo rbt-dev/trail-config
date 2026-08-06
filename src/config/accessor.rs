@@ -4,6 +4,12 @@
 //! is not a path into the first element, just a lookup for a key named `0`, and it fails
 //! like any other missing key. Read a sequence whole with [`Config::list`], or into a
 //! typed field with [`Config::get_as`] / [`Config::deserialize`].
+//!
+//! A YAML `!Tag` is **transparent to reading and addressing, and preserved for
+//! deserializing**. `db/host` resolves whether or not `db` is tagged, and `str` on a
+//! tagged scalar returns the scalar — the tag names a serde enum variant, which says
+//! nothing about how the value is read. [`Config::get`] and [`Config::get_as`] are the
+//! exception and still see the tag, because selecting that variant is what it is for.
 
 use yaml_serde::Value;
 use crate::error::ConfigError;
@@ -45,7 +51,7 @@ impl Config {
     /// empty strings, in keeping with the rest of the lenient API. Use
     /// [`list_strict`](Config::list_strict) to have them reported instead.
     pub fn list(&self, path: &str) -> Vec<String> {
-        match get_leaf(&self.content, path, &self.separator) {
+        match get_leaf(&self.content, path, &self.separator).map(untagged) {
             Some(Value::Sequence(v)) => v.iter().map(to_string).collect(),
             _ => vec![]
         }
@@ -123,7 +129,7 @@ impl Config {
     pub fn list_strict(&self, path: &str) -> Result<Vec<String>, ConfigError> {
         let value = get_leaf(&self.content, path, &self.separator)
             .ok_or_else(|| ConfigError::PathNotFound(path.to_string()))?;
-        match value {
+        match untagged(value) {
             // The whole point of the strict half is to report rather than paper over, and
             // checking only the container left every element unchecked. `collect` into a
             // `Result` stops at the first bad element, so the message names one place to look.
@@ -158,7 +164,7 @@ impl Config {
         let value = get_leaf(&self.content, path, &self.separator)
             .ok_or_else(|| ConfigError::PathNotFound(path.to_string()))?;
 
-        match value {
+        match untagged(value) {
             Value::Number(num) => {
                 num.as_i64()
                     .ok_or_else(|| ConfigError::FormatError(format!("Cannot convert {} to i64", num)))
@@ -186,7 +192,7 @@ impl Config {
         let value = get_leaf(&self.content, path, &self.separator)
             .ok_or_else(|| ConfigError::PathNotFound(path.to_string()))?;
 
-        match value {
+        match untagged(value) {
             Value::Number(num) => {
                 num.as_f64()
                     .ok_or_else(|| ConfigError::FormatError(format!("Cannot convert {} to f64", num)))
@@ -214,7 +220,7 @@ impl Config {
         let value = get_leaf(&self.content, path, &self.separator)
             .ok_or_else(|| ConfigError::PathNotFound(path.to_string()))?;
 
-        match value {
+        match untagged(value) {
             Value::Bool(b) => Ok(*b),
             _ => Err(ConfigError::FormatError(format!("Value at {} is not a boolean", path)))
         }
@@ -344,12 +350,33 @@ impl Config {
     }
 }
 
+/// Looks through any `!Tag` wrapping a value.
+///
+/// A tag names a serde enum variant; it says nothing about how the value is *read*. The
+/// value model already takes this view when indexing — `Value::get("key")` untags before
+/// looking the key up — so `db/host` resolves whether or not `db` is tagged. The readers
+/// below have to agree, or a tagged scalar would resolve as a path and then read back as
+/// `""` from `str` and `None` from every typed accessor.
+///
+/// Looping rather than unwrapping once mirrors the value model, which allows a tag to
+/// wrap a tag.
+///
+/// The tag is only skipped for *reading*. [`Config::get`] and
+/// [`get_as`](Config::get_as) still see the tagged value, because deserializing an enum
+/// is exactly what the tag is for.
+pub(super) fn untagged(mut value: &Value) -> &Value {
+    while let Value::Tagged(tagged) = value {
+        value = &tagged.value;
+    }
+    value
+}
+
 /// Renders a scalar as a string, or `None` for a mapping, a sequence or a null.
 ///
 /// The single definition of what "converts to a string" means, so the lenient and strict
 /// accessors can never disagree about which values do.
 pub(super) fn scalar_to_string(value: &Value) -> Option<String> {
-    match value {
+    match untagged(value) {
         Value::String(v) => Some(v.to_string()),
         Value::Number(v) => Some(v.to_string()),
         Value::Bool(v) => Some(v.to_string()),

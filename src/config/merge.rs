@@ -1,7 +1,7 @@
 //! Layering overlay files on top of a base config via deep merge.
 
 use std::{io, mem};
-use yaml_serde::Value;
+use yaml_serde::{Value, value::TaggedValue};
 use crate::error::ConfigError;
 use super::{Config, OverlaySource};
 use super::env::resolve_env_vars;
@@ -15,6 +15,12 @@ impl Config {
     /// nested mappings are merged recursively so individual leaf values can be overridden
     /// without clobbering sibling keys. Sequences are replaced wholesale rather than
     /// merged element-by-element.
+    ///
+    /// A `!Tag` is part of a value's shape, not a value inside it: two nodes under the
+    /// *same* tag merge like the mappings they usually are, while a differing tag — or an
+    /// untagged overlay onto a tagged base — replaces. The tag names a serde enum variant,
+    /// so changing it changes which variant the document describes, and merging the fields
+    /// of two variants would produce one belonging to neither.
     ///
     /// A null in the overlay is a value like any other and takes precedence, so a key set
     /// to null — including through YAML's bare `key:` form — clears the base value, and a
@@ -74,6 +80,12 @@ impl Config {
     /// nested mappings are merged recursively so individual leaf values can be overridden
     /// without clobbering sibling keys. Sequences are replaced wholesale rather than
     /// merged element-by-element.
+    ///
+    /// A `!Tag` is part of a value's shape, not a value inside it: two nodes under the
+    /// *same* tag merge like the mappings they usually are, while a differing tag — or an
+    /// untagged overlay onto a tagged base — replaces. The tag names a serde enum variant,
+    /// so changing it changes which variant the document describes, and merging the fields
+    /// of two variants would produce one belonging to neither.
     ///
     /// A null in the overlay is a value like any other and takes precedence, so a key set
     /// to null — including through YAML's bare `key:` form — clears the base value, and a
@@ -204,6 +216,25 @@ fn merge_values(base: Value, overlay: Value) -> Value {
                 }
             }
             Value::Mapping(base_map)
+        },
+        // Two values under the *same* tag are the same enum variant, so they merge like
+        // the mappings they usually are. Without this arm a tagged subtree took the
+        // catch-all below and the overlay replaced it whole, silently dropping every
+        // sibling key the overlay did not restate — the one place the deep merge this
+        // crate promises quietly stopped being deep.
+        //
+        // Differing tags are left to the catch-all deliberately, as is a tagged base under
+        // an untagged overlay. The tag names the variant, so `!Postgres` overlaid by
+        // `!Sqlite` is a change of shape rather than a patch to the existing one, and
+        // merging their fields would produce a document belonging to neither. An overlay
+        // that drops the tag while keeping the fields is the same case: the merged result
+        // would no longer deserialize into the enum the base named, and replacing makes
+        // that visible immediately instead of at the next `get_as`.
+        (Value::Tagged(base), Value::Tagged(overlay)) if base.tag == overlay.tag => {
+            Value::Tagged(Box::new(TaggedValue {
+                tag: overlay.tag,
+                value: merge_values(base.value, overlay.value),
+            }))
         },
         // Sequences are replaced wholesale; all other types are overridden by the
         // overlay — including an explicit null, which is how a key is cleared. The

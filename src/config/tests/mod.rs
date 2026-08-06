@@ -13,6 +13,7 @@ mod merge;
 mod outline;
 mod reload;
 mod structs;
+mod tagged;
 #[cfg(feature = "toml")]
 mod toml;
 

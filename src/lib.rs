@@ -52,6 +52,11 @@
 //! and `db/host/` all fail rather than being quietly accepted. A key that genuinely
 //! contains the separator is escaped with a backslash: `db/host\/port`.
 //!
+//! A YAML `!Tag` — how serde spells an enum variant — is transparent to reading and
+//! addressing, and preserved for deserializing: `db/host` resolves whether or not `db`
+//! is tagged, while [`get`](Config::get) and [`get_as`](Config::get_as) still see the
+//! tag so the variant can be selected.
+//!
 //! Whole subtrees deserialize into your own types with [`get_as`](Config::get_as) /
 //! [`deserialize`](Config::deserialize), and sibling values format into a string with
 //! [`fmt`](Config::fmt).

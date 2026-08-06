@@ -2,6 +2,7 @@
 
 use yaml_serde::Value;
 use super::Config;
+use super::accessor::untagged;
 
 impl Config {
     /// Lists every path in the document, one per line, with values replaced by their type.
@@ -31,6 +32,10 @@ impl Config {
     /// an explicit act at the call site, rather than something this crate does on the
     /// way to a log line.
     ///
+    /// A `!Tag` is looked through, exactly as the accessors look through it, so a tagged
+    /// mapping's keys are listed rather than the tag being printed as a leaf. The tag is
+    /// not shown: it is not part of any path, and every line here is a path.
+    ///
     /// Sequences are leaves: their elements have no addressable path (`items/0` is a
     /// lookup for a key named `0`), so a sequence prints as its length. An empty mapping
     /// likewise prints as itself, since it contains no path to list. A document that is
@@ -58,7 +63,11 @@ impl Config {
 /// `prefix` is the path built so far; it is extended and truncated in place rather than
 /// re-joined at every level.
 fn write_outline(value: &Value, prefix: &mut String, separator: &str, out: &mut String) {
-    match value {
+    // A `!Tag` is transparent to addressing — `Value::get` untags before looking a key
+    // up, so `db/host` resolves whether or not `db` is tagged. Listing had to agree: a
+    // tagged mapping was treated as a leaf, so its keys were addressable but never
+    // printed, and the outline's whole job is to show which paths exist.
+    match untagged(value) {
         Value::Mapping(map) if !map.is_empty() => {
             let base = prefix.len();
             for (key, child) in map {
@@ -135,8 +144,12 @@ pub(super) fn escape_key(key: &str, separator: &str) -> String {
 }
 
 /// Names a leaf's type, never its content.
+///
+/// Exhaustive on purpose — `yaml_serde::Value` is not `#[non_exhaustive]`, and the
+/// catch-all this replaces is where `Value::Tagged` used to land, printing `<value>` for
+/// a subtree whose keys were perfectly addressable.
 fn describe_leaf(value: &Value) -> String {
-    match value {
+    match untagged(value) {
         Value::Null => "<null>".to_string(),
         Value::Bool(_) => "<bool>".to_string(),
         Value::Number(_) => "<number>".to_string(),
@@ -145,6 +158,7 @@ fn describe_leaf(value: &Value) -> String {
         Value::Sequence(seq) => format!("<{} items>", seq.len()),
         // Only reachable for an empty mapping; a populated one recurses instead
         Value::Mapping(_) => "<empty mapping>".to_string(),
-        _ => "<value>".to_string(),
+        // `untagged` loops until the value is not tagged, so this cannot be reached
+        Value::Tagged(_) => unreachable!("untagged() never returns a tagged value"),
     }
 }

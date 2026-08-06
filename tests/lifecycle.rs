@@ -129,9 +129,44 @@ fn assert_send_sync<T: Send + Sync>() {}
 
 #[test]
 fn the_handle_is_send_and_sync() {
-    // The reason ConfigHandle exists — a property no unit test can state any better,
-    // but one that a downstream `Arc<ConfigHandle>` in a web server depends on
+    // What a downstream `Arc<ConfigHandle>` in a web server depends on. Note this
+    // holds *because* `Config` is `Send + Sync` — an `Arc<RwLock<Arc<Config>>>` is
+    // `Sync` only if what it guards is.
     assert_send_sync::<ConfigHandle>();
+}
+
+#[test]
+fn a_bare_config_is_send_and_sync() {
+    // Not a redundant restatement of the above: the docs tell callers who never
+    // reload to share an `Arc<Config>` instead of reaching for a handle, and this is
+    // the claim that has to hold for that advice to be true.
+    assert_send_sync::<Config>();
+}
+
+#[test]
+fn a_config_is_shareable_across_threads_without_a_handle() {
+    let dir = temp_dir();
+    let file = write_file(&dir, "config.yaml", "app:\n  port: 8080\n  name: myapp\n");
+
+    // The share-but-never-reload case: no lock, no interior mutability, no handle.
+    let config = Arc::new(Config::load_required(&file, "/", None).unwrap());
+
+    let readers: Vec<_> = (0..8)
+        .map(|_| {
+            let config = Arc::clone(&config);
+            thread::spawn(move || {
+                assert_eq!(config.get_int("app/port"), Some(8080));
+                assert_eq!(config.str_strict("app/name").unwrap(), "myapp");
+            })
+        })
+        .collect();
+
+    for reader in readers {
+        reader.join().unwrap();
+    }
+
+    // Still usable on the spawning thread afterwards
+    assert_eq!(config.get_int("app/port"), Some(8080));
 }
 
 #[test]

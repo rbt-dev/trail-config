@@ -16,7 +16,8 @@ A Rust library for reading config files with path-based access, typed deserializ
 - 🔄 Hot reload support for detecting configuration changes at runtime
 - 🔀 Deep merge support for layering environment-specific config overlays
 - 🆕 Auto-create config files from in-code defaults on first run
-- 🧵 Thread-safe `ConfigHandle` for sharing config across threads
+- 🧵 `ConfigHandle` for swapping the config at runtime behind shared references (a plain
+  `Config` is already `Send + Sync`)
 - ⚡ `config!` macro for concise loading and merging
 - 📂 JSON and TOML support via optional feature flags
 
@@ -741,9 +742,29 @@ let value = config.str("a::b\\::c::d");
 
 ## Thread-Safe Shared Config
 
-`Config` is not `Send + Sync` on its own. Use `ConfigHandle` to share a `Config` across threads 
-and reload it at runtime without restarting. It wraps `Config` in an `Arc<RwLock<Arc<Config>>>` — cloning 
-the handle is cheap, and all clones refer to the same underlying config.
+`Config` is `Send + Sync`, so sharing one across threads needs nothing from this crate:
+
+```rust
+use trail_config::Config;
+use std::{sync::Arc, thread};
+
+let config = Arc::new(Config::load_required("config.yaml", "/", None)?);
+
+for _ in 0..8 {
+    let config = Arc::clone(&config);
+    thread::spawn(move || println!("{}", config.str("app/name")));
+}
+```
+
+What an `Arc<Config>` cannot do is **replace** the document behind those shared references — 
+`reload()` takes `&mut self`, and an `Arc` hands out `&`. That is what `ConfigHandle` adds: 
+interior mutability, so every holder sees the new document after a reload. It wraps `Config` in 
+an `Arc<RwLock<Arc<Config>>>` — cloning the handle is cheap, and all clones refer to the same 
+underlying config.
+
+So the choice is about *reloading*, not about thread-safety: use an `Arc<Config>` when the 
+config is read-only for the life of the process, and a `ConfigHandle` when it changes at 
+runtime.
 
 ```rust
 use trail_config::{Config, ConfigHandle};

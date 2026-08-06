@@ -29,8 +29,12 @@ enum OverlaySource {
 /// files with [`merge_required`](Config::merge_required) /
 /// [`merge_optional`](Config::merge_optional).
 ///
-/// `Config` is not `Send + Sync`; use [`ConfigHandle`](crate::ConfigHandle) to share one
-/// across threads.
+/// `Config` is `Send + Sync`, so sharing one across threads needs nothing more than an
+/// `Arc<Config>` — no lock and no second indirection. What that cannot do is *replace*
+/// the document behind those shared references, since `reload` takes `&mut self`. That
+/// is what [`ConfigHandle`](crate::ConfigHandle) adds: interior mutability, so every
+/// holder sees a new document after a reload. Reach for it when the config changes at
+/// runtime, and for an `Arc<Config>` when it does not.
 #[derive(Clone)]
 pub struct Config {
     content: Value,

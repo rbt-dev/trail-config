@@ -74,8 +74,10 @@
 //! # Ok::<(), ConfigError>(())
 //! ```
 //!
-//! [`ConfigHandle`] wraps a `Config` for sharing across threads, handing out immutable
-//! snapshots and reloading without blocking readers on disk I/O.
+//! `Config` is `Send + Sync`, so a config that never changes is shared across threads as
+//! an `Arc<Config>`. [`ConfigHandle`] is for the case that does change: it swaps the
+//! document behind shared references, handing out immutable snapshots and reloading
+//! without blocking readers on disk I/O.
 //!
 //! # Value model
 //!

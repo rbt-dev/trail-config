@@ -4,12 +4,17 @@ use std::sync::{Arc, Mutex, RwLock};
 use yaml_serde::Value;
 use crate::{Config, ConfigError};
 
-/// A thread-safe, cloneable handle to a [`Config`].
+/// A cloneable handle to a [`Config`] that can be **replaced** at runtime.
 ///
-/// `ConfigHandle` wraps a `Config` in an `Arc<RwLock<Arc<Config>>>` so it can be
-/// shared across threads and reloaded at runtime without restarting.
-/// Cloning a `ConfigHandle` is cheap — all clones refer to the same
-/// underlying config.
+/// `ConfigHandle` wraps a `Config` in an `Arc<RwLock<Arc<Config>>>`. Cloning one is
+/// cheap and all clones refer to the same underlying config, so a
+/// [`reload`](ConfigHandle::reload) through any of them is visible through all of them.
+///
+/// Note what this is *not* for. [`Config`] is already `Send + Sync`, so a config that
+/// never changes is shared perfectly well as an `Arc<Config>` — no lock, no second
+/// indirection. What an `Arc<Config>` cannot do is swap the document behind the
+/// references it has handed out, because [`Config::reload`] takes `&mut self`. The
+/// handle exists for that: interior mutability, not thread-safety.
 ///
 /// The config is stored behind an inner `Arc` so that neither side holds a lock for
 /// long: [`read`](ConfigHandle::read) locks only long enough to clone that `Arc` and
@@ -258,6 +263,11 @@ impl From<Config> for ConfigHandle {
 const _: () = {
     fn _assert_send_sync<T: Send + Sync>() {}
     fn _check() {
+        // `Config` first: it is documented as shareable as a bare `Arc<Config>`, and
+        // `ConfigHandle`'s `Arc<RwLock<Arc<Config>>>` is `Sync` only because of it.
+        // A field that is not `Send + Sync` would break both claims at once, so this
+        // line fails before the one below and names the actual cause.
+        _assert_send_sync::<Config>();
         _assert_send_sync::<ConfigHandle>();
     }
 };

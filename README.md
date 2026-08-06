@@ -369,7 +369,7 @@ Trail Config validates inputs automatically and returns `FormatError` for invali
 
 | Input | Constraint | Error |
 | ----- | ---------- | ----- |
-| Path separator | Cannot be empty | Returns `FormatError` |
+| Path separator | Cannot be empty, and cannot contain `\` (the escape character) | Returns `FormatError` |
 | File paths | Empty filename rejected upfront by every loader (`load_required`, `load_optional`, `load_or_create`), both merges (`merge_required`, `merge_optional`) and `reload_from` | Returns `IoError` (`InvalidInput`) |
 | Paths | Empty paths rejected | Returns `None` or empty / `PathNotFound` |
 | Path segments | Must be non-empty — leading, trailing and doubled separators are rejected | Returns `None` or empty / `PathNotFound` |
@@ -378,6 +378,10 @@ Trail Config validates inputs automatically and returns `FormatError` for invali
 ```rust
 // Empty separator - error
 let result = Config::load_optional("config.yaml", "", None);
+assert!(result.is_err()); // FormatError
+
+// Separator containing the escape character - error
+let result = Config::load_optional("config.yaml", "\\", None);
 assert!(result.is_err()); // FormatError
 
 // Empty filename - rejected upfront by all loaders with IoError (InvalidInput)
@@ -588,6 +592,10 @@ Keys containing the path separator can be accessed using escape sequences.
 - `\<sep>` — include a literal separator in the key (e.g. `\/` for `/`, `\::` for `::`)
 - `\\` — include a literal backslash in the key
 - Works with any separator: `/`, `::`, `->`, etc.
+
+Because `\` is the escape character, a separator may not contain one — the splitter would 
+read it as the start of an escape sequence and never match it as a separator. Constructing 
+a config with such a separator is a `FormatError`.
 
 ```yaml
 database:

@@ -24,7 +24,7 @@ impl Config {
     /// # Errors
     /// Returns `ConfigError::IoError` if the file is missing, empty filename, or cannot be read
     /// Returns `ConfigError::YamlError`, `ConfigError::JsonError` or `ConfigError::TomlError` if the file cannot be parsed
-    /// Returns `ConfigError::FormatError` if the separator is empty or filename template is invalid
+    /// Returns `ConfigError::FormatError` if the separator is empty or contains a backslash, or the filename template is invalid
     ///
     /// # Example
     /// ```no_run
@@ -61,7 +61,7 @@ impl Config {
     /// # Errors
     /// Returns `ConfigError::IoError` if the filename is empty, or the file exists but cannot be read (e.g. permission denied)
     /// Returns `ConfigError::YamlError`, `ConfigError::JsonError` or `ConfigError::TomlError` if the file cannot be parsed
-    /// Returns `ConfigError::FormatError` if the separator is empty or filename template is invalid
+    /// Returns `ConfigError::FormatError` if the separator is empty or contains a backslash, or the filename template is invalid
     ///
     /// # Example
     /// ```no_run
@@ -115,7 +115,7 @@ impl Config {
     /// Returns `ConfigError::IoError` if the filename is empty, the file exists but cannot be read, or if writing fails
     /// Returns `ConfigError::YamlError`, `ConfigError::JsonError` or `ConfigError::TomlError` if the file
     ///     or the defaults string cannot be parsed in the format matching the file extension
-    /// Returns `ConfigError::FormatError` if the separator is empty or filename template is invalid
+    /// Returns `ConfigError::FormatError` if the separator is empty or contains a backslash, or the filename template is invalid
     ///
     /// # Example
     /// ```no_run
@@ -182,7 +182,7 @@ impl Config {
     /// Parses a YAML string into a Config object
     ///
     /// # Errors
-    /// Returns `ConfigError::FormatError` if separator is empty
+    /// Returns `ConfigError::FormatError` if the separator is empty or contains a backslash
     /// Returns `ConfigError::YamlError` if YAML parsing fails
     pub fn load_yaml(yaml: &str, sep: &str) -> Result<Config, ConfigError> {
         check_separator(sep)?;
@@ -193,7 +193,7 @@ impl Config {
     ///
     /// # Errors
     /// Returns `ConfigError::IoError` if the file is missing or cannot be read
-    /// Returns `ConfigError::FormatError` if the separator is empty
+    /// Returns `ConfigError::FormatError` if the separator is empty or contains a backslash
     /// Returns `ConfigError::JsonError` if JSON cannot be parsed
     ///
     /// # Example
@@ -211,7 +211,7 @@ impl Config {
     /// Parses a JSON string into a Config object.
     ///
     /// # Errors
-    /// Returns `ConfigError::FormatError` if separator is empty
+    /// Returns `ConfigError::FormatError` if the separator is empty or contains a backslash
     /// Returns `ConfigError::JsonError` if JSON parsing fails
     ///
     /// # Example
@@ -231,7 +231,7 @@ impl Config {
     /// # Errors
     /// Returns `ConfigError::IoError` if the file is missing or cannot be read
     /// Returns `ConfigError::TomlError` if the TOML cannot be parsed
-    /// Returns `ConfigError::FormatError` if the separator is empty
+    /// Returns `ConfigError::FormatError` if the separator is empty or contains a backslash
     ///
     /// # Example
     /// ```no_run
@@ -249,7 +249,7 @@ impl Config {
     ///
     /// # Errors
     /// Returns `ConfigError::TomlError` if the TOML cannot be parsed
-    /// Returns `ConfigError::FormatError` if the separator is empty
+    /// Returns `ConfigError::FormatError` if the separator is empty or contains a backslash
     ///
     /// # Example
     /// ```
@@ -264,13 +264,30 @@ impl Config {
     }
 }
 
-/// Rejects an empty path separator, which would make every config path unparseable.
+/// Rejects a path separator that cannot work: empty, or containing a backslash.
 ///
-/// Called at the top of each constructor, before parsing, so that an empty separator
-/// is reported ahead of any parse error in the document.
+/// An empty separator would make every config path unparseable. A backslash collides
+/// with its own role as the escape character in path syntax (`src/config/path.rs`) —
+/// the splitter tests for an escape sequence before it tests for the separator, so a
+/// separator starting with `\` is consumed as an escape and never matches. The path
+/// then collapses to a single segment and *every* lookup returns `None` / `""` / `[]`
+/// with no error raised anywhere, which is the worst failure shape a config library
+/// has. Any backslash is rejected, not just a leading one: a separator with one buried
+/// in the middle happens to split correctly today, but the rule "the separator may not
+/// contain the escape character" is the one worth being able to state.
+///
+/// Called at the top of each constructor, before parsing, so that a bad separator is
+/// reported ahead of any parse error in the document.
 fn check_separator(sep: &str) -> Result<(), ConfigError> {
     if sep.is_empty() {
         return Err(ConfigError::FormatError("Separator cannot be empty".to_string()));
+    }
+    if sep.contains('\\') {
+        return Err(ConfigError::FormatError(format!(
+            "Separator {:?} cannot contain a backslash: '\\' is the escape character \
+             used to put a literal separator in a key",
+            sep
+        )));
     }
     Ok(())
 }

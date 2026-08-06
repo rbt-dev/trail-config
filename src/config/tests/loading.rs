@@ -64,6 +64,52 @@ fn empty_separator_in_load_yaml() {
 }
 
 #[test]
+fn backslash_separator_is_rejected() {
+    // `\` is the escape character in path syntax, so the splitter consumes it before
+    // it can match as a separator: every path collapsed to one segment and every
+    // lookup silently returned None, with no error raised anywhere
+    let result = Config::load_yaml("a:\n  b: 42", "\\");
+
+    assert!(result.is_err());
+    match result {
+        Err(ConfigError::FormatError(msg)) => assert!(msg.contains("backslash"), "got: {}", msg),
+        _ => panic!("Expected FormatError for backslash separator"),
+    }
+}
+
+#[test]
+fn separator_containing_a_backslash_is_rejected() {
+    // Rejected wherever the backslash sits, not just in leading position
+    for sep in ["\\", "\\::", "a\\b", "->\\"] {
+        let result = Config::load_yaml("a:\n  b: 42", sep);
+        match result {
+            Err(ConfigError::FormatError(msg)) => assert!(msg.contains("backslash"), "got: {}", msg),
+            _ => panic!("Expected FormatError for separator {:?}", sep),
+        }
+    }
+}
+
+#[test]
+fn backslash_separator_is_rejected_by_every_constructor() {
+    let dir = temp_dir();
+    let file = write_file(&dir, "config.yaml", "a:\n  b: 42\n");
+
+    assert!(Config::load_required(&file, "\\", None).is_err());
+    assert!(Config::load_optional(&file, "\\", None).is_err());
+    assert!(Config::load_or_create(&file, "\\", None, "a:\n  b: 1\n").is_err());
+}
+
+#[test]
+fn unusual_separators_still_work() {
+    // Only the escape character collides — multi-character and brace-bearing
+    // separators are unaffected
+    for (sep, path) in [("::", "a::b"), ("->", "a->b"), ("{env}", "a{env}b")] {
+        let config = Config::load_yaml("a:\n  b: 42", sep).unwrap();
+        assert_eq!(config.get_int(path), Some(42), "separator {:?}", sep);
+    }
+}
+
+#[test]
 fn load_optional_missing_file_returns_empty_config() {
     let result = Config::load_optional("nonexistent_file_12345.yaml", "/", None);
 

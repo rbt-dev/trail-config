@@ -92,7 +92,7 @@ impl Config {
             .map(|key| {
                 content.get(*key)
                     .map(to_string)
-                    .ok_or_else(|| ConfigError::PathNotFound(format!("{}/{}", base, key)))
+                    .ok_or_else(|| ConfigError::PathNotFound(key_path(base, key, &self.separator)))
             })
             .collect::<Result<Vec<_>, _>>()?;
 
@@ -105,6 +105,20 @@ impl Config {
         }
 
         Ok(result)
+    }
+}
+
+/// Renders the full path of `key` under `base` for an error message.
+///
+/// Uses the config's own separator: hardcoding `/` here named a path that did not exist
+/// in the caller's addressing scheme — a config using `::` reported `db::redis/port`.
+/// An empty `base` means the keys are at the top level, so the key stands alone rather
+/// than picking up a leading separator.
+fn key_path(base: &str, key: &str, separator: &str) -> String {
+    if base.is_empty() {
+        key.to_string()
+    } else {
+        format!("{}{}{}", base, separator, key)
     }
 }
 

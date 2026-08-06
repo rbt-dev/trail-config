@@ -49,8 +49,32 @@ fn fmt_strict_missing_attribute() {
 
     assert!(result.is_err());
     match result {
-        Err(ConfigError::PathNotFound(_)) => (),
+        Err(ConfigError::PathNotFound(path)) => assert_eq!(path, "db/redis/nonexistent"),
         _ => panic!("Expected PathNotFound error"),
+    }
+}
+
+#[test]
+fn fmt_strict_missing_key_is_named_with_the_config_separator() {
+    // The message must name a path that exists in the caller's addressing scheme —
+    // this used to hardcode `/` and report `db::redis/nonexistent`
+    let config = Config::load_yaml(YAML, "::").unwrap();
+    let result = config.fmt_strict("{}:{}", "db::redis", &["server", "nonexistent"]);
+
+    match result {
+        Err(ConfigError::PathNotFound(path)) => assert_eq!(path, "db::redis::nonexistent"),
+        other => panic!("Expected PathNotFound, got {:?}", other),
+    }
+}
+
+#[test]
+fn fmt_strict_missing_key_at_top_level_has_no_leading_separator() {
+    // An empty base means "the keys are at the top level", so the key stands alone
+    let config = Config::load_yaml("app: 1", "/").unwrap();
+
+    match config.fmt_strict("{}", "", &["nonexistent"]) {
+        Err(ConfigError::PathNotFound(path)) => assert_eq!(path, "nonexistent"),
+        other => panic!("Expected PathNotFound, got {:?}", other),
     }
 }
 

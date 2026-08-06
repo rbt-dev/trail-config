@@ -31,6 +31,59 @@ sections:
 }
 
 #[test]
+fn fmt_strict_keys_use_the_same_escape_syntax_as_paths() {
+    let yaml = r#"
+db:
+  "a/b": 1
+  host: h
+"#;
+    let config = Config::load_yaml(yaml, "/").unwrap();
+
+    // A key containing the separator is escaped, exactly as it is in `base` and in
+    // every other accessor. It used to work *unescaped* here and only here — `fmt` had
+    // its own key namespace, so the same key needed two different spellings depending
+    // on which method you reached for.
+    assert_eq!(config.fmt_strict("{}", "db", &[r"a\/b"]).unwrap(), "1");
+    assert_eq!(config.str_strict(r"db/a\/b").unwrap(), "1");
+
+    // And the unescaped spelling now fails, naming a path the accessors agree about
+    match config.fmt_strict("{}", "db", &["a/b"]) {
+        Err(ConfigError::PathNotFound(path)) => {
+            assert_eq!(path, "db/a/b");
+            assert!(!config.contains(&path), "the reported path must be one the accessors resolve the same way");
+        },
+        other => panic!("Expected PathNotFound, got {:?}", other),
+    }
+}
+
+#[test]
+fn fmt_strict_keys_may_reach_deeper_than_one_level() {
+    // Keys are paths relative to `base`, so composing them with the rest of the path
+    // syntax works rather than being a separate, flatter namespace
+    let config = Config::load_yaml(YAML, "/").unwrap();
+
+    let result = config.fmt_strict("{}:{}", "db", &["redis/server", "redis/port"]).unwrap();
+    assert_eq!(result, config.fmt_strict("{}:{}", "db/redis", &["server", "port"]).unwrap());
+}
+
+#[test]
+fn fmt_strict_errors_on_a_non_scalar_key() {
+    // Same shape as list_strict's elements: the strict half must report rather than
+    // format a mapping in as an empty string
+    let config = Config::load_yaml(YAML, "/").unwrap();
+
+    match config.fmt_strict("{}", "db", &["redis"]) {
+        Err(ConfigError::FormatError(msg)) => {
+            assert!(msg.contains("db/redis"), "message should name the key path: {}", msg);
+        },
+        other => panic!("Expected FormatError for a mapping-valued key, got {:?}", other),
+    }
+
+    // The lenient half still yields an empty string
+    assert_eq!(config.fmt("{}", "db", &["redis"]), "");
+}
+
+#[test]
 fn fmt_strict_missing_path() {
     let config = Config::load_yaml(YAML, "/").unwrap();
     let result = config.fmt_strict("{}:{}", "db/nonexistent", &["server", "port"]);

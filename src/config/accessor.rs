@@ -330,7 +330,7 @@ impl Config {
 ///
 /// The single definition of what "converts to a string" means, so the lenient and strict
 /// accessors can never disagree about which values do.
-fn scalar_to_string(value: &Value) -> Option<String> {
+pub(super) fn scalar_to_string(value: &Value) -> Option<String> {
     match value {
         Value::String(v) => Some(v.to_string()),
         Value::Number(v) => Some(v.to_string()),
@@ -339,7 +339,7 @@ fn scalar_to_string(value: &Value) -> Option<String> {
     }
 }
 
-fn not_a_scalar(path: &str) -> ConfigError {
+pub(super) fn not_a_scalar(path: &str) -> ConfigError {
     ConfigError::FormatError(format!("Value at {} is not a scalar", path))
 }
 

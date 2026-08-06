@@ -2,7 +2,7 @@
 
 use crate::error::ConfigError;
 use super::Config;
-use super::accessor::to_string;
+use super::accessor::{not_a_scalar, scalar_to_string};
 use super::path::get_leaf;
 
 /// One resolved piece of a format string.
@@ -47,6 +47,19 @@ impl Config {
     /// Auto-numbered and indexed placeholders can be mixed; `{}` counts only its own
     /// occurrences, exactly as [`std::format!`] does.
     ///
+    /// # Keys
+    ///
+    /// `base` and each key are resolved with the same path syntax as every other
+    /// accessor: the separator splits them, `\` escapes a literal separator, and empty
+    /// segments are rejected. Keys are therefore paths *relative to* `base` — usually a
+    /// single key naming a sibling value, but `fmt("{}", "db", &["redis/port"])` reaches
+    /// deeper, and a key that genuinely contains the separator is escaped as
+    /// `r"a\/b"`, exactly as it would be anywhere else. An empty `base` means the keys
+    /// are at the top level.
+    ///
+    /// Each key must resolve to a scalar. One naming a mapping or a sequence is an error
+    /// rather than an empty string in the output.
+    ///
     /// Every placeholder must have a corresponding key and every key must be used at
     /// least once — a mismatch in either direction is an error rather than a silently
     /// half-formatted string.
@@ -56,8 +69,8 @@ impl Config {
     ///
     /// # Errors
     /// Returns `ConfigError::FormatError` if the template has an unclosed `{`, an
-    /// unmatched `}`, a named placeholder, an index with no matching key, or if the
-    /// placeholder and key counts disagree
+    /// unmatched `}`, a named placeholder, an index with no matching key, if the
+    /// placeholder and key counts disagree, or if a key resolves to a non-scalar value
     /// Returns `ConfigError::PathNotFound` if `base` or any key does not exist
     ///
     /// # Example
@@ -88,11 +101,21 @@ impl Config {
 
         // Resolve every key up front so a value containing `{}` can never be
         // rescanned as a placeholder for a later key.
+        //
+        // Keys navigate by the same rules as `base` and every other accessor. A raw
+        // `Value::get` here gave `fmt` a second key namespace: a key containing the
+        // separator worked verbatim, while the same key needed a backslash escape
+        // everywhere else — and `key_path` then rendered an error naming a path that the
+        // crate's own accessors could not resolve.
         let values = keys.iter()
             .map(|key| {
-                content.get(*key)
-                    .map(to_string)
-                    .ok_or_else(|| ConfigError::PathNotFound(key_path(base, key, &self.separator)))
+                let value = get_leaf(content, key, &self.separator)
+                    .ok_or_else(|| ConfigError::PathNotFound(key_path(base, key, &self.separator)))?;
+                // Strict about the value, like every other `*_strict` accessor: a key
+                // naming a mapping or a sequence is reported rather than formatted in
+                // as an empty string.
+                scalar_to_string(value)
+                    .ok_or_else(|| not_a_scalar(&key_path(base, key, &self.separator)))
             })
             .collect::<Result<Vec<_>, _>>()?;
 
@@ -114,6 +137,11 @@ impl Config {
 /// in the caller's addressing scheme — a config using `::` reported `db::redis/port`.
 /// An empty `base` means the keys are at the top level, so the key stands alone rather
 /// than picking up a leading separator.
+///
+/// Joining the two is only meaningful because `key` is itself path syntax, resolved by
+/// the same `get_leaf` as `base`. While keys were looked up raw, this rendered a path
+/// for anything containing a separator that the crate's own accessors could not resolve —
+/// an error message naming a location that does not exist.
 fn key_path(base: &str, key: &str, separator: &str) -> String {
     if base.is_empty() {
         key.to_string()

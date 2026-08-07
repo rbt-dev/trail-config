@@ -379,6 +379,104 @@ fn merge_does_not_overwrite_an_environment_the_config_already_has() {
 }
 
 #[test]
+fn a_merge_resolves_env_against_the_environment_the_config_carries() {
+    // The commoner half of the layered shape, and the one that used to fail: the base
+    // file is environment-specific, so the config knows its environment, and the overlay
+    // template can simply use it. Passing `None` was a hard `FormatError` naming a value
+    // the config was holding at the time.
+    let dir = temp_dir();
+    let base = write_file(&dir, "config.prod.yaml", "app:\n  port: 8080\n  name: base\n");
+    write_file(&dir, "over.prod.yaml", "app:\n  name: prod\n");
+    let template = dir.path().join("over.{env}.yaml").to_string_lossy().into_owned();
+
+    let config = Config::load_required(&base, "/", Some("prod"))
+        .unwrap()
+        .merge_required(&template, None)
+        .unwrap();
+
+    assert_eq!(config.str("app/name"), "prod");
+    assert_eq!(config.get_int("app/port"), Some(8080), "sibling from the base survives");
+    assert_eq!(config.environment(), Some("prod"));
+}
+
+#[test]
+fn merge_optional_also_resolves_env_against_the_config() {
+    let dir = temp_dir();
+    let base = write_file(&dir, "config.dev.yaml", "app:\n  port: 8080\n");
+    write_file(&dir, "local.dev.yaml", "app:\n  port: 9090\n");
+    let template = dir.path().join("local.{env}.yaml").to_string_lossy().into_owned();
+
+    let config = Config::load_required(&base, "/", Some("dev"))
+        .unwrap()
+        .merge_optional(&template, None)
+        .unwrap();
+
+    assert_eq!(config.get_int("app/port"), Some(9090));
+}
+
+#[test]
+fn an_explicit_environment_at_a_merge_overrides_the_config() {
+    // `None` means "the one this config already has", not "ignore mine" — so an overlay
+    // for a *different* environment than the base is still expressible, and saying so
+    // explicitly is how you say it. The config's own environment is unchanged, since
+    // `adopt_environment` fills a gap and never reassigns.
+    let dir = temp_dir();
+    let base = write_file(&dir, "config.prod.yaml", "app:\n  name: base\n");
+    write_file(&dir, "over.staging.yaml", "app:\n  name: staging\n");
+    let template = dir.path().join("over.{env}.yaml").to_string_lossy().into_owned();
+
+    let config = Config::load_required(&base, "/", Some("prod"))
+        .unwrap()
+        .merge_required(&template, Some("staging"))
+        .unwrap();
+
+    assert_eq!(config.str("app/name"), "staging", "the argument wins over the carried env");
+    assert_eq!(config.environment(), Some("prod"), "which the config does not adopt");
+}
+
+#[test]
+fn a_merge_template_with_no_environment_anywhere_still_errors() {
+    // The fallback fills a gap; it does not invent one. With neither the argument nor the
+    // config supplying an environment, `{env}` still has nothing to substitute, and
+    // reporting that beats handing the literal braces to the OS as a missing file.
+    let dir = temp_dir();
+    let base = write_file(&dir, "config.yaml", "app:\n  port: 8080\n");
+    let template = dir.path().join("over.{env}.yaml").to_string_lossy().into_owned();
+
+    let err = Config::load_required(&base, "/", None)
+        .unwrap()
+        .merge_required(&template, None)
+        .unwrap_err();
+
+    assert!(matches!(err, ConfigError::FormatError(_)), "got {err:?}");
+    assert!(err.to_string().contains("{env}"), "got {err}");
+}
+
+#[test]
+fn an_env_adopted_from_one_merge_resolves_the_next() {
+    // The two halves composing: the first merge supplies an environment the base did not
+    // have, `adopt_environment` records it, and `environment_for` hands it to the second
+    // merge. Neither rule is much use without the other.
+    let dir = temp_dir();
+    let base = write_file(&dir, "config.yaml", "app:\n  name: base\n  extra: 0\n");
+    write_file(&dir, "one.prod.yaml", "app:\n  name: one\n");
+    write_file(&dir, "two.prod.yaml", "app:\n  extra: 2\n");
+    let first = dir.path().join("one.{env}.yaml").to_string_lossy().into_owned();
+    let second = dir.path().join("two.{env}.yaml").to_string_lossy().into_owned();
+
+    let config = Config::load_required(&base, "/", None)
+        .unwrap()
+        .merge_required(&first, Some("prod"))
+        .unwrap()
+        .merge_required(&second, None)
+        .unwrap();
+
+    assert_eq!(config.str("app/name"), "one");
+    assert_eq!(config.get_int("app/extra"), Some(2));
+    assert_eq!(config.environment(), Some("prod"));
+}
+
+#[test]
 fn a_merge_without_an_environment_leaves_the_config_without_one() {
     let dir = temp_dir();
     let base = write_file(&dir, "config.yaml", "app:\n  port: 8080\n");

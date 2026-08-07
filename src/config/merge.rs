@@ -39,16 +39,19 @@ impl Config {
     ///
     /// # Arguments
     /// * `filename` - Path to the overlay file (can contain `{env}` placeholder)
-    /// * `env` - Optional environment name to substitute in filename. Also recorded on the
-    ///   config if it does not already carry one, so [`environment`](Config::environment)
-    ///   and [`reload_from`](Config::reload_from) see it; an environment set by the
-    ///   constructor is never replaced. Interpolated into a filesystem path with no
-    ///   validation — do not pass untrusted input
+    /// * `env` - Optional environment name to substitute in filename. `None` falls back to
+    ///   the environment this config already carries, so a base loaded for `prod` takes a
+    ///   `config.{env}.yaml` overlay without repeating it; pass `Some` only to override
+    ///   that. Also recorded on the config if it does not already carry one, so
+    ///   [`environment`](Config::environment) and [`reload_from`](Config::reload_from) see
+    ///   it; an environment set by the constructor is never replaced. Interpolated into a
+    ///   filesystem path with no validation — do not pass untrusted input
     ///
     /// # Errors
     /// Returns `ConfigError::IoError` if the filename is empty, or the file is missing or cannot be read
     /// Returns `ConfigError::YamlError`, `ConfigError::JsonError` or `ConfigError::TomlError` if the file cannot be parsed
-    /// Returns `ConfigError::FormatError` if the filename template is invalid
+    /// Returns `ConfigError::FormatError` if the filename contains `{env}` and neither `env`
+    ///     nor this config supplies one
     ///
     /// # Example
     /// ```no_run
@@ -66,7 +69,7 @@ impl Config {
             return Err(empty_filename_error());
         }
 
-        let (file, resolved_env) = get_file(filename, env)?;
+        let (file, resolved_env) = get_file(filename, self.environment_for(env))?;
         let overlay = resolve_env_vars(load_auto(&file)?)?;
         self.content = merge_documents(self.content, overlay);
         self.overlays.push(OverlaySource::Required(file));
@@ -105,17 +108,20 @@ impl Config {
     ///
     /// # Arguments
     /// * `filename` - Path to the overlay file (can contain `{env}` placeholder)
-    /// * `env` - Optional environment name to substitute in filename. Also recorded on the
-    ///   config if it does not already carry one, so [`environment`](Config::environment)
-    ///   and [`reload_from`](Config::reload_from) see it; an environment set by the
-    ///   constructor is never replaced. Interpolated into a filesystem path with no
-    ///   validation — do not pass untrusted input
+    /// * `env` - Optional environment name to substitute in filename. `None` falls back to
+    ///   the environment this config already carries, so a base loaded for `prod` takes a
+    ///   `config.{env}.yaml` overlay without repeating it; pass `Some` only to override
+    ///   that. Also recorded on the config if it does not already carry one, so
+    ///   [`environment`](Config::environment) and [`reload_from`](Config::reload_from) see
+    ///   it; an environment set by the constructor is never replaced. Interpolated into a
+    ///   filesystem path with no validation — do not pass untrusted input
     ///
     /// # Errors
     /// Returns `ConfigError::IoError` if the filename is empty — a caller bug, unlike an
     ///     absent file, which is the case this method exists to tolerate
     /// Returns `ConfigError::YamlError`, `ConfigError::JsonError` or `ConfigError::TomlError` if the file cannot be parsed
-    /// Returns `ConfigError::FormatError` if the filename template is invalid
+    /// Returns `ConfigError::FormatError` if the filename contains `{env}` and neither `env`
+    ///     nor this config supplies one
     ///
     /// # Example
     /// ```no_run
@@ -137,7 +143,7 @@ impl Config {
             return Err(empty_filename_error());
         }
 
-        let (file, resolved_env) = get_file(filename, env)?;
+        let (file, resolved_env) = get_file(filename, self.environment_for(env))?;
         match load_auto(&file) {
             Ok(yaml) => {
                 let overlay = resolve_env_vars(yaml)?;
@@ -149,6 +155,35 @@ impl Config {
         self.overlays.push(OverlaySource::Optional(file));
         self.adopt_environment(resolved_env);
         Ok(self)
+    }
+
+    /// Chooses the environment a merge resolves `{env}` with: the caller's, or failing
+    /// that the one this config already carries.
+    ///
+    /// The counterpart to [`adopt_environment`](Config::adopt_environment) below, and
+    /// added because only that direction was wired. A merge would resolve a template
+    /// against an environment the caller repeated and record it on a config that had
+    /// none, but a config that *already knew* its environment could not use it — so
+    ///
+    /// ```text
+    /// Config::load_required("config.yaml", "/", Some("prod"))?
+    ///     .merge_required("config.{env}.yaml", None)?
+    /// ```
+    ///
+    /// failed with "contains '{env}' but no environment was supplied", naming a value the
+    /// config was holding at the time. That is the exact inverse of the rule
+    /// [`reload_from`](Config::reload_from) settles for the same placeholder, whose
+    /// rustdoc explains it takes no `env` argument precisely *because* it reads the one on
+    /// the config. Two methods resolving one placeholder against one field, and only one
+    /// of them looked.
+    ///
+    /// The caller's argument still wins when given. An overlay for a different environment
+    /// than the base is a legitimate thing to want, and passing it explicitly is how you
+    /// say so; `None` now means "the one this config already has" rather than "none at
+    /// all". Purely additive — every call that passes `Some(..)` behaves as it did, and a
+    /// filename without a placeholder never consulted this either way.
+    fn environment_for<'a>(&'a self, env: Option<&'a str>) -> Option<&'a str> {
+        env.or(self.environment.as_deref())
     }
 
     /// Records an environment supplied at a merge, if this config has none yet.
@@ -165,6 +200,12 @@ impl Config {
     /// constructor, which is the config's own identity; letting a later overlay
     /// overwrite it would silently change what a subsequent `reload_from` resolves. So
     /// this fills a gap and never reassigns.
+    ///
+    /// Symmetric with [`environment_for`](Config::environment_for) above, which is the
+    /// same rule pointing the other way: the config's environment is what a merge resolves
+    /// `{env}` with unless the caller names one, and a merge's environment is what the
+    /// config records unless it already has one. Whichever end supplies it, there is
+    /// exactly one environment afterwards and it is the more specific of the two.
     fn adopt_environment(&mut self, resolved: Option<String>) {
         if self.environment.is_none() {
             self.environment = resolved;

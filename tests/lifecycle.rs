@@ -86,6 +86,38 @@ fn overlays_merge_deeply_and_are_reapplied_on_reload() {
 }
 
 #[test]
+fn the_environment_is_named_once_for_a_whole_layered_stack() {
+    // The shape the crate docs advertise, written the way a consumer would reach for it:
+    // the environment appears in one place and every `{env}` template downstream of it
+    // resolves. Before the merges consulted the config's own environment, each of these
+    // lines had to repeat `Some("prod")` and passing `None` was a hard error.
+    let dir = temp_dir();
+    write_file(&dir, "config.prod.yaml", "app:\n  tier: production\n  debug: false\n  name: myapp\n");
+    write_file(&dir, "over.prod.yaml", "app:\n  debug: true\n");
+    let local = path_in(&dir, "local.prod.yaml");
+    let base_template = path_in(&dir, "config.{env}.yaml");
+    let over_template = path_in(&dir, "over.{env}.yaml");
+    let local_template = path_in(&dir, "local.{env}.yaml");
+
+    let mut config = Config::load_required(&base_template, "/", Some("prod")).unwrap()
+        .merge_required(&over_template, None).unwrap()
+        .merge_optional(&local_template, None).unwrap();   // absent — silently skipped
+
+    assert_eq!(config.str("app/tier"), "production");
+    assert_eq!(config.get_bool("app/debug"), Some(true), "the overlay resolved and applied");
+    assert_eq!(config.environment(), Some("prod"));
+    assert!(config.filename().ends_with("config.prod.yaml"), "got {}", config.filename());
+
+    // The overlay chain records *resolved* names, so a reload re-reads the same files and
+    // picks up the optional one once it appears — the environment is not re-derived.
+    fs::write(&local, "app:\n  name: local\n").unwrap();
+    config.reload().unwrap();
+    assert_eq!(config.str("app/name"), "local");
+    assert_eq!(config.get_bool("app/debug"), Some(true), "required overlay still applied");
+    assert_eq!(config.str("app/tier"), "production", "base still applied");
+}
+
+#[test]
 fn an_overlay_clears_a_value_with_null() {
     let dir = temp_dir();
     let base = write_file(&dir, "config.yaml", "db:\n  password: from-base\n  host: localhost\n");

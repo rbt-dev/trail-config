@@ -77,12 +77,16 @@
 //! ```no_run
 //! # use trail_config::{Config, ConfigError};
 //! let mut config = Config::load_required("config.yaml", "/", Some("prod"))?
-//!     .merge_required("config.{env}.yaml", Some("prod"))?
-//!     .merge_optional("config.local.yaml", Some("prod"))?;
+//!     .merge_required("config.{env}.yaml", None)?  // `None` reuses the config's "prod"
+//!     .merge_optional("config.local.yaml", None)?;
 //!
 //! config.reload()?; // re-reads the base and every overlay
 //! # Ok::<(), ConfigError>(())
 //! ```
+//!
+//! A merge resolves `{env}` against the environment the config already carries, so the
+//! environment is named once. Pass `Some` to a merge only to give one overlay a
+//! *different* environment than the base, or when the base has none of its own.
 //!
 //! `Config` is `Send + Sync`, so a config that never changes is shared across threads as
 //! an `Arc<Config>`. [`ConfigHandle`] is for the case that does change: it swaps the

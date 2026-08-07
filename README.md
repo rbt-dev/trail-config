@@ -101,7 +101,7 @@ Every method that takes a filename also takes an optional environment name. The 
 | `config.yaml` | `None` | Loads `config.yaml` |
 
 A filename without the placeholder is deliberately **not** an error. In a layered setup only 
-some files are environment-specific, and the same `env` is applied to all of them:
+some files are environment-specific, and the same `env` applies to all of them:
 
 ```rust
 let config = Config::load_required("config.yaml", "/", Some("prod"))?  // no placeholder
@@ -114,6 +114,22 @@ assert_eq!(config.environment(), Some("prod"));
 The reverse is an error, because a `{env}` with nothing to fill it would otherwise be passed to 
 the OS verbatim and fail as a missing file called `config.{env}.yaml` — an error that points at 
 the wrong problem.
+
+**A merge with `env: None` reuses the environment the config already carries**, so it only 
+has to be named once. The table above describes the *constructors*, which have no config to 
+fall back to; for `merge_required` and `merge_optional`, `None` means "the one this config 
+already has" rather than "none at all":
+
+```rust
+let config = Config::load_required("config.{env}.yaml", "/", Some("prod"))?
+    .merge_required("overrides.{env}.yaml", None)?   // resolves to overrides.prod.yaml
+    .merge_optional("config.local.yaml", None)?;
+```
+
+Pass `Some` to a merge only to give one overlay a *different* environment than the base, or 
+when the base carries none of its own. An explicit argument always wins, and the config's own 
+environment is not changed by it. Where neither the argument nor the config supplies one, a 
+`{env}` template is still a `FormatError` — the fallback fills a gap, it does not invent one.
 
 `reload_from()` also accepts `{env}`, resolved against the environment the config already 
 carries; it has no `env` argument because it preserves the existing one.
@@ -1117,8 +1133,9 @@ use trail_config::Config;
 
 let env = std::env::var("APP_ENV").unwrap_or_else(|_| "development".to_string());
 
-let mut config = Config::load_required("config.yaml", "/", None)?
-    .merge_required("config.{env}.yaml", Some(&env))?
+// Named once at the base; the overlay's {env} resolves against it
+let mut config = Config::load_required("config.yaml", "/", Some(&env))?
+    .merge_required("config.{env}.yaml", None)?
     .merge_optional("config.local.yaml", None)?;
 ```
 

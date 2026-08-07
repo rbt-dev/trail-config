@@ -1353,6 +1353,24 @@ The file is also created **exclusively**. If a second process wins the race to c
 the first-run scenario this method exists for — `load_or_create` loads that file rather
 than overwriting it with its own defaults.
 
+Creating the file and filling it are two separate syscalls, so the winner leaves a
+zero-length file visible for a moment, and a loser arriving in that gap would read nothing
+and return an **empty** config — no error, defaults discarded, every accessor answering
+`""` / `None` / `[]`. To close that, a config that reads as empty *from a zero-length file*
+is re-read for up to 200 ms before being accepted:
+
+| File on disk | `load_or_create` |
+| ------------ | ---------------- |
+| Has content | Loaded at once — the wait never applies |
+| Zero-length, filled within 200 ms | Loads what the winner wrote |
+| Zero-length for the whole 200 ms | Returned as an empty config; the file is not overwritten |
+| Only comments (not zero-length) | Loaded at once as an empty document |
+| `defaults` is `""` | Loaded at once — there is nothing better to wait for |
+
+A deliberately empty config file is therefore still honoured, at the cost of that one wait
+at startup. A file still unparseable after 200 ms is returned as a parse error: by then it
+is broken rather than half-written.
+
 Only the file itself is created — **parent directories are not**. Writing to
 `config/app.yaml` when `config/` does not exist returns an `IoError` rather than
 creating the directory, so a mistyped path cannot leave a junk directory tree behind.

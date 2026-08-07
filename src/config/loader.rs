@@ -1,11 +1,27 @@
 //! Constructors: loading a `Config` from files or strings.
 
-use std::{fs, io, io::Write};
+use std::{fs, io, io::Write, thread, time::Duration};
 use yaml_serde::Value;
 use crate::error::ConfigError;
 use super::Config;
 use super::env::resolve_env_vars;
 use super::parser;
+
+/// How many times [`Config::load_or_create`] re-reads a zero-length config file before
+/// accepting it as genuinely empty, and how long it waits between attempts.
+///
+/// Together these bound the wait at 200 ms. The window exists because `create_new` makes
+/// *creating* the file atomic but not *filling* it — see [`create_new_file`] — so the
+/// loser of a first-run race can read the winner's file between the two syscalls and get
+/// nothing. Waiting turns that from a silently empty config into a brief pause.
+///
+/// Only a **zero-length** file waits, and only when `defaults` is not itself empty, so
+/// nothing on the ordinary paths pays for this: a file with content settles on the first
+/// read, and a file holding only comments is not zero-length and is accepted immediately.
+/// The one case that pays the full 200 ms is a deliberately empty file loaded with
+/// non-empty defaults, which is a contradiction in the call itself.
+const EMPTY_FILE_RETRIES: usize = 10;
+const EMPTY_FILE_BACKOFF: Duration = Duration::from_millis(20);
 
 impl Config {
     /// Loads a Config from a file, returning an error if the file is missing or invalid.
@@ -109,6 +125,21 @@ impl Config {
     /// file is created exclusively: if a second process wins the race to create it, this
     /// call loads that file rather than overwriting it.
     ///
+    /// # First-run races
+    ///
+    /// Creating the file and filling it are two syscalls, so the winner of that race leaves
+    /// a zero-length file visible for a moment. A loser arriving in that gap would read
+    /// nothing and return an **empty** config — no error, defaults discarded, every accessor
+    /// answering `""` / `None` / `[]`. To close it, a config that reads as empty *from a
+    /// zero-length file* is re-read for up to 200 ms before being accepted, which is far
+    /// longer than the gap and is only ever waited out when the file really is empty.
+    ///
+    /// What remains: a file still zero-length after that wait is returned as an empty
+    /// config, and one still unparseable is returned as the parse error. Both are the right
+    /// answer by then — 200 ms is not a partial write. A deliberately empty file is
+    /// therefore honoured, at the cost of that wait; pass empty `defaults` and it is
+    /// returned immediately instead.
+    ///
     /// Only the file is created — **parent directories are not**. A missing parent returns
     /// `IoError` rather than being created, so a mistyped path cannot leave a junk directory
     /// tree behind; call [`std::fs::create_dir_all`] first if the directory may not exist.
@@ -149,7 +180,11 @@ impl Config {
     /// ```
     pub fn load_or_create(filename: &str, sep: &str, env: Option<&str>, defaults: &str) -> Result<Config, ConfigError> {
         match Self::load_internal(filename, sep, env) {
-            Ok(config) => Ok(config),
+            // The file was already there. It may still be the *winner's* file caught
+            // between its creation and its contents, which reads as an empty config —
+            // this is the likelier half of the race, since a process arriving a moment
+            // late never reaches the create path below at all.
+            Ok(config) => Self::settle_empty(config, filename, sep, env, defaults),
             Err(ConfigError::IoError { ref source, .. }) if source.kind() == io::ErrorKind::NotFound => {
                 let (file, _) = get_file(filename, env)?;
 
@@ -165,18 +200,71 @@ impl Config {
                 // one — filename recorded, `reload()` working, no second code path to
                 // keep in step.
                 match create_new_file(&file, defaults) {
-                    Ok(()) => {},
+                    // We created *and* filled it, so there is nothing to wait for.
+                    Ok(()) => return Self::load_internal(filename, sep, env),
                     // Another process created the file between the not-found check and
                     // here — the first-run race this method exists for. `create_new`
-                    // means we did not clobber it; fall through and load what they wrote.
+                    // means we did not clobber it; fall through and load what they wrote,
+                    // once they have written it.
                     Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {},
                     Err(e) => return Err(ConfigError::io_in(&file, e)),
                 }
 
-                Self::load_internal(filename, sep, env)
+                let config = Self::load_internal(filename, sep, env)?;
+                Self::settle_empty(config, filename, sep, env, defaults)
             },
             Err(e) => Err(e),
         }
+    }
+
+    /// Waits out a config that read as empty from a zero-length file, in case the file is
+    /// mid-creation by another process.
+    ///
+    /// `create_new` makes creating the file atomic but not filling it, so between those two
+    /// syscalls the file exists and is empty. Every format parses nothing to `Value::Null`,
+    /// so a reader in that gap gets a `Config` that is indistinguishable from a legitimately
+    /// empty one and reports no error at all — the silent-wrong-answer shape this crate
+    /// rejects elsewhere (an empty path segment resolving, a `${VAR}` served as literal
+    /// text). Re-reading for a bounded spell tells the two apart, because only one of them
+    /// changes.
+    ///
+    /// Three guards keep this off every ordinary path, in increasing order of cost:
+    /// a document that is not null has nothing to settle; empty `defaults` mean an empty
+    /// file is the correct answer and there is nothing better to wait for; and a file that
+    /// is not zero-length is empty for its own reasons — a comment-only document — rather
+    /// than because a write is in flight.
+    ///
+    /// A parse failure during the wait is treated as "not settled yet" for the same reason:
+    /// a partly-written document is not valid in any of the three formats. If it is still
+    /// failing when the attempts run out, that error is returned — by then the file is
+    /// broken rather than incomplete, which is what the caller needs to hear.
+    fn settle_empty(
+        config: Config,
+        filename: &str,
+        sep: &str,
+        env: Option<&str>,
+        defaults: &str,
+    ) -> Result<Config, ConfigError> {
+        if !matches!(config.content, Value::Null)
+            || defaults.is_empty()
+            || !is_zero_length(&config.filename)
+        {
+            return Ok(config);
+        }
+
+        // Holds whatever the most recent attempt saw, so the wait ending in a parse error
+        // reports that rather than the empty config it started from.
+        let mut latest = Ok(config);
+
+        for _ in 0..EMPTY_FILE_RETRIES {
+            thread::sleep(EMPTY_FILE_BACKOFF);
+            match Self::load_internal(filename, sep, env) {
+                Ok(config) if !matches!(config.content, Value::Null) => return Ok(config),
+                outcome => latest = outcome,
+            }
+        }
+
+        latest
     }
 
     fn load_internal(filename: &str, sep: &str, env: Option<&str>) -> Result<Config, ConfigError> {
@@ -378,14 +466,27 @@ impl Config {
 /// the winner's file.
 ///
 /// The file is created empty and filled a moment later, so a racing reader can still
-/// observe it part-written. Closing that would need a write-to-temp-and-rename dance, and
-/// rename replaces the destination — reintroducing the clobbering this call prevents.
+/// observe it part-written. Closing that here would need a write-to-temp-and-rename dance,
+/// and rename replaces the destination — reintroducing the clobbering this call prevents.
+/// It is closed on the *reading* side instead, by `Config::settle_empty`, which waits a
+/// zero-length file out rather than accepting it as an empty config.
 pub(super) fn create_new_file(file: &str, contents: &str) -> io::Result<()> {
     fs::OpenOptions::new()
         .write(true)
         .create_new(true)
         .open(file)?
         .write_all(contents.as_bytes())
+}
+
+/// Reports whether `file` exists and holds no bytes at all.
+///
+/// The precise shape a lost `create_new` race leaves behind, and narrower than "parses to
+/// nothing": a document of only comments also parses to `Value::Null` but is not
+/// zero-length, so it is accepted at once rather than waited on. An unreadable file
+/// answers `false` — whatever is wrong with it, a wait will not fix it, and the caller
+/// already has the parse or I/O error that says so.
+fn is_zero_length(file: &str) -> bool {
+    fs::metadata(file).map(|meta| meta.len() == 0).unwrap_or(false)
 }
 
 /// Rejects a path separator that cannot work: empty, or containing a backslash.

@@ -162,6 +162,102 @@ fn load_or_create_loads_existing_file() {
 }
 
 #[test]
+fn load_or_create_waits_out_a_file_that_is_still_being_written() {
+    use std::{fs, thread, time::Duration};
+
+    // The first-run race, staged deterministically. A zero-length file is exactly what
+    // the winner of `create_new` leaves behind between creating it and filling it, and a
+    // loser arriving in that gap used to read nothing and return an empty config —
+    // silently, with the defaults discarded because the file "existed".
+    let dir = temp_dir();
+    let path = dir.path().join("config.yaml");
+    fs::write(&path, "").unwrap();
+    let file = path.to_string_lossy().into_owned();
+
+    // Stands in for the winner completing its write, inside the settle window.
+    let writer = {
+        let path = path.clone();
+        thread::spawn(move || {
+            thread::sleep(Duration::from_millis(25));
+            fs::write(&path, "app:\n  port: 9090\n").unwrap();
+        })
+    };
+
+    let config = Config::load_or_create(&file, "/", None, "app:\n  port: 8080\n").unwrap();
+    writer.join().unwrap();
+
+    // The winner's document, not the defaults and not an empty config
+    assert_eq!(config.get_int("app/port"), Some(9090));
+}
+
+#[test]
+fn load_or_create_accepts_a_file_that_stays_empty() {
+    use std::{fs, time::Instant};
+
+    // The other side of the wait: nothing arrives, so the empty file is honoured rather
+    // than overwritten with the defaults. `load_or_create` loads a file that exists.
+    let dir = temp_dir();
+    let path = dir.path().join("config.yaml");
+    fs::write(&path, "").unwrap();
+    let file = path.to_string_lossy().into_owned();
+
+    let started = Instant::now();
+    let config = Config::load_or_create(&file, "/", None, "app:\n  port: 8080\n").unwrap();
+
+    assert_eq!(config.get_int("app/port"), None, "the empty file wins, not the defaults");
+    assert_eq!(fs::read_to_string(&path).unwrap(), "", "and is left as it was");
+    assert!(started.elapsed().as_millis() >= 100, "it was waited on, not accepted at once");
+}
+
+#[test]
+fn load_or_create_does_not_wait_on_a_comment_only_file() {
+    use std::time::Instant;
+
+    // A comment-only document also parses to nothing, but it is not zero-length, so it is
+    // not what a half-written file looks like and must not pay the wait.
+    let dir = temp_dir();
+    let file = write_file(&dir, "config.yaml", "# nothing here yet\n");
+
+    let started = Instant::now();
+    let config = Config::load_or_create(&file, "/", None, "app:\n  port: 8080\n").unwrap();
+
+    assert_eq!(config.get_int("app/port"), None);
+    assert!(started.elapsed().as_millis() < 100, "took {:?}", started.elapsed());
+}
+
+#[test]
+fn load_or_create_does_not_wait_when_the_defaults_are_empty() {
+    use std::{fs, time::Instant};
+
+    // With nothing better to substitute, an empty file is already the right answer.
+    let dir = temp_dir();
+    let path = dir.path().join("config.yaml");
+    fs::write(&path, "").unwrap();
+    let file = path.to_string_lossy().into_owned();
+
+    let started = Instant::now();
+    let config = Config::load_or_create(&file, "/", None, "").unwrap();
+
+    assert_eq!(config.get_int("app/port"), None);
+    assert!(started.elapsed().as_millis() < 100, "took {:?}", started.elapsed());
+}
+
+#[test]
+fn load_or_create_does_not_wait_on_a_file_with_content() {
+    use std::time::Instant;
+
+    // The ordinary path, pinned so the settle can never creep onto it.
+    let dir = temp_dir();
+    let file = write_file(&dir, "config.yaml", "app:\n  port: 9090\n");
+
+    let started = Instant::now();
+    let config = Config::load_or_create(&file, "/", None, "app:\n  port: 8080\n").unwrap();
+
+    assert_eq!(config.get_int("app/port"), Some(9090));
+    assert!(started.elapsed().as_millis() < 100, "took {:?}", started.elapsed());
+}
+
+#[test]
 fn load_or_create_supports_reload() {
     use std::fs;
 

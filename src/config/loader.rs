@@ -50,7 +50,51 @@ impl Config {
     ///     .expect("Failed to load required config.yaml");
     /// ```
     pub fn load_required(filename: &str, sep: &str, env: Option<&str>) -> Result<Config, ConfigError> {
-        Self::load_internal(filename, sep, env)
+        Self::load_internal_as(filename, sep, env, None)
+    }
+
+    /// Loads a Config from a file read as `format`, whatever its extension.
+    ///
+    /// [`load_required`](Config::load_required) already routes a `.json` or `.toml` file to
+    /// the matching parser, so the reason to reach for this is a file whose *extension does
+    /// not name its format* — `settings.conf`, `app.cfg`, a file with no extension at all.
+    ///
+    /// The choice is recorded on the config, so [`reload`](Config::reload) and
+    /// [`reload_from`](Config::reload_from) read it the same way. Without that the file was
+    /// parsed one way once and another way ever after, which failed silently rather than
+    /// loudly: YAML is a superset of JSON, so a reload usually *worked*, applying YAML's
+    /// rules to a document that had been read under `serde_json`'s.
+    ///
+    /// Overlays are unaffected and still choose their own parser by their own extension,
+    /// which is what lets a JSON base take a YAML overlay.
+    ///
+    /// # Arguments
+    /// * `filename` - Path to the config file (can contain `{env}` placeholder)
+    /// * `sep` - Path separator for accessing nested values
+    /// * `env` - Optional environment name to substitute in filename. Interpolated into a
+    ///   filesystem path with no validation — do not pass untrusted input
+    /// * `format` - The parser to read the file with, now and on every reload
+    ///
+    /// # Errors
+    /// The same as [`load_required`](Config::load_required), except that the parse error is
+    /// whichever `format` names rather than whichever the extension does
+    ///
+    /// # Example
+    /// ```no_run
+    /// # use trail_config::{Config, Format};
+    /// // A YAML document in a file named as though it were something else. Reading a
+    /// // JSON or TOML one is the same call with `Format::Json` / `Format::Toml`, which
+    /// // exist once their features are enabled.
+    /// let config = Config::load_required_as("settings.json", "/", None, Format::Yaml)
+    ///     .expect("Failed to load settings.json");
+    /// ```
+    pub fn load_required_as(
+        filename: &str,
+        sep: &str,
+        env: Option<&str>,
+        format: parser::Format,
+    ) -> Result<Config, ConfigError> {
+        Self::load_internal_as(filename, sep, env, Some(format))
     }
 
     /// Loads a Config from a file, treating a missing file as an empty config.
@@ -94,16 +138,72 @@ impl Config {
     /// # }
     /// ```
     pub fn load_optional(filename: &str, sep: &str, env: Option<&str>) -> Result<Config, ConfigError> {
-        match Self::load_internal(filename, sep, env) {
+        Self::load_optional_internal(filename, sep, env, None)
+    }
+
+    /// Loads a Config from a file read as `format`, treating a missing file as an empty
+    /// config.
+    ///
+    /// [`load_optional`](Config::load_optional) with the format pinned, for the same reason
+    /// [`load_required_as`](Config::load_required_as) exists: an extension that does not
+    /// name the format. An optional `app.cfg` holding JSON is exactly as likely as a
+    /// required one, and without this the choice was rename the file, hand-roll the
+    /// exists-check (losing the recorded filename a later [`reload`](Config::reload) needs),
+    /// or let YAML's rules be applied to a JSON document — which usually succeeds, quietly.
+    ///
+    /// The format is recorded even when the file is absent, alongside the filename, so it
+    /// still governs the reload that picks the file up once it appears.
+    ///
+    /// # Arguments
+    /// * `filename` - Path to the config file (can contain `{env}` placeholder)
+    /// * `sep` - Path separator for accessing nested values
+    /// * `env` - Optional environment name to substitute in filename. Interpolated into a
+    ///   filesystem path with no validation — do not pass untrusted input
+    /// * `format` - The parser to read the file with, now and on every reload
+    ///
+    /// # Errors
+    /// The same as [`load_optional`](Config::load_optional), except that the parse error is
+    /// whichever `format` names rather than whichever the extension does
+    ///
+    /// # Example
+    /// ```no_run
+    /// # use trail_config::{Config, ConfigError, Format};
+    /// # fn main() -> Result<(), ConfigError> {
+    /// // Optional, and YAML despite the extension. `Format::Json` reads the same file as
+    /// // JSON instead, once the `json` feature is enabled.
+    /// let config = Config::load_optional_as("overrides.json", "/", None, Format::Yaml)?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn load_optional_as(
+        filename: &str,
+        sep: &str,
+        env: Option<&str>,
+        format: parser::Format,
+    ) -> Result<Config, ConfigError> {
+        Self::load_optional_internal(filename, sep, env, Some(format))
+    }
+
+    fn load_optional_internal(
+        filename: &str,
+        sep: &str,
+        env: Option<&str>,
+        format: Option<parser::Format>,
+    ) -> Result<Config, ConfigError> {
+        match Self::load_internal_as(filename, sep, env, format) {
             Ok(config) => Ok(config),
             Err(ConfigError::IoError { ref source, .. }) if source.kind() == io::ErrorKind::NotFound => {
                 // Record the file this config *would* have come from. Discarding it
                 // would leave the config with no source at all, and `reload()` refuses
                 // to run without one — so a file that appears later could never be
-                // picked up. `load_internal` resolved both `sep` and the filename
+                // picked up. `load_internal_as` resolved both `sep` and the filename
                 // template before failing, so neither can fail here.
+                //
+                // The format is recorded too, for the same reason: it is the other half of
+                // "how this config is re-read", and dropping it would send the reload that
+                // finally finds the file to the parser its extension names.
                 let (file, env) = get_file(filename, env)?;
-                Self::from_parsed(Value::Null, &file, sep, env, None)
+                Self::from_parsed(Value::Null, &file, sep, env, format)
             },
             Err(e) => Err(e),
         }
@@ -179,12 +279,76 @@ impl Config {
     /// # }
     /// ```
     pub fn load_or_create(filename: &str, sep: &str, env: Option<&str>, defaults: &str) -> Result<Config, ConfigError> {
-        match Self::load_internal(filename, sep, env) {
+        Self::load_or_create_internal(filename, sep, env, None, defaults)
+    }
+
+    /// Loads a Config from a file read as `format`, creating it from `defaults` if it does
+    /// not exist.
+    ///
+    /// [`load_or_create`](Config::load_or_create) with the format pinned, completing the
+    /// set alongside [`load_required_as`](Config::load_required_as) and
+    /// [`load_optional_as`](Config::load_optional_as). A first-run file whose extension does
+    /// not name its format is as ordinary as any other; without this there was no way to
+    /// create one.
+    ///
+    /// `defaults` must be in `format` — and, unlike everything else here, that is not merely
+    /// a matter of re-deriving the same answer twice. The defaults are validated before
+    /// being written, and validating them against the *extension* while the reader parses
+    /// the *format* is the one combination that gives an outright wrong answer: JSON
+    /// defaults under a `.conf` name would be checked as YAML, pass because YAML is a
+    /// superset of JSON, and be written to a file this constructor then reads as JSON.
+    /// `format` governs both halves.
+    ///
+    /// # Arguments
+    /// * `filename` - Path to the config file (can contain `{env}` placeholder)
+    /// * `sep` - Path separator for accessing nested values
+    /// * `env` - Optional environment name to substitute in filename. Interpolated into a
+    ///   filesystem path with no validation — do not pass untrusted input
+    /// * `format` - The parser to read the file and validate `defaults` with, now and on
+    ///   every reload
+    /// * `defaults` - Config string to write and use if the file does not exist, in `format`
+    ///
+    /// # Errors
+    /// The same as [`load_or_create`](Config::load_or_create), with `format` deciding which
+    /// parse error the file and the defaults can produce
+    ///
+    /// # Example
+    /// ```no_run
+    /// # use trail_config::{Config, ConfigError, Format};
+    /// # fn main() -> Result<(), ConfigError> {
+    /// // `defaults` is in `format`, not in whatever the extension suggests
+    /// const DEFAULTS: &str = r#"
+    /// app:
+    ///   port: 8080
+    /// "#;
+    ///
+    /// let config = Config::load_or_create_as("settings.json", "/", None, Format::Yaml, DEFAULTS)?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn load_or_create_as(
+        filename: &str,
+        sep: &str,
+        env: Option<&str>,
+        format: parser::Format,
+        defaults: &str,
+    ) -> Result<Config, ConfigError> {
+        Self::load_or_create_internal(filename, sep, env, Some(format), defaults)
+    }
+
+    fn load_or_create_internal(
+        filename: &str,
+        sep: &str,
+        env: Option<&str>,
+        format: Option<parser::Format>,
+        defaults: &str,
+    ) -> Result<Config, ConfigError> {
+        match Self::load_internal_as(filename, sep, env, format) {
             // The file was already there. It may still be the *winner's* file caught
             // between its creation and its contents, which reads as an empty config —
             // this is the likelier half of the race, since a process arriving a moment
             // late never reaches the create path below at all.
-            Ok(config) => Self::settle_empty(config, filename, sep, env, defaults),
+            Ok(config) => Self::settle_empty(config, filename, sep, env, format, defaults),
             Err(ConfigError::IoError { ref source, .. }) if source.kind() == io::ErrorKind::NotFound => {
                 let (file, _) = get_file(filename, env)?;
 
@@ -193,7 +357,11 @@ impl Config {
                 // file's format — and because the file then existed, this branch never ran
                 // again: every subsequent run read the same broken file and failed
                 // identically, turning a first-run error into a permanent one.
-                parser::parse_auto(defaults, &file)?;
+                //
+                // In `format` when one was pinned, so this checks the defaults against the
+                // parser that will actually read them back rather than against the one the
+                // extension names.
+                parser::parse_in(format, defaults, &file)?;
 
                 // The parsed value is deliberately discarded and the file re-read below,
                 // so the created config is built by exactly the same path as an existing
@@ -201,7 +369,7 @@ impl Config {
                 // keep in step.
                 match create_new_file(&file, defaults) {
                     // We created *and* filled it, so there is nothing to wait for.
-                    Ok(()) => return Self::load_internal(filename, sep, env),
+                    Ok(()) => return Self::load_internal_as(filename, sep, env, format),
                     // Another process created the file between the not-found check and
                     // here — the first-run race this method exists for. `create_new`
                     // means we did not clobber it; fall through and load what they wrote,
@@ -210,8 +378,8 @@ impl Config {
                     Err(e) => return Err(ConfigError::io_in(&file, e)),
                 }
 
-                let config = Self::load_internal(filename, sep, env)?;
-                Self::settle_empty(config, filename, sep, env, defaults)
+                let config = Self::load_internal_as(filename, sep, env, format)?;
+                Self::settle_empty(config, filename, sep, env, format, defaults)
             },
             Err(e) => Err(e),
         }
@@ -243,6 +411,7 @@ impl Config {
         filename: &str,
         sep: &str,
         env: Option<&str>,
+        format: Option<parser::Format>,
         defaults: &str,
     ) -> Result<Config, ConfigError> {
         if !matches!(config.content, Value::Null)
@@ -258,7 +427,7 @@ impl Config {
 
         for _ in 0..EMPTY_FILE_RETRIES {
             thread::sleep(EMPTY_FILE_BACKOFF);
-            match Self::load_internal(filename, sep, env) {
+            match Self::load_internal_as(filename, sep, env, format) {
                 Ok(config) if !matches!(config.content, Value::Null) => return Ok(config),
                 outcome => latest = outcome,
             }
@@ -267,17 +436,15 @@ impl Config {
         latest
     }
 
-    fn load_internal(filename: &str, sep: &str, env: Option<&str>) -> Result<Config, ConfigError> {
-        Self::load_internal_as(filename, sep, env, None)
-    }
-
     /// Loads a file with an explicitly chosen parser, or by extension when `format` is
     /// `None`.
     ///
     /// The one path every file constructor takes, so the filename check, the separator
-    /// check and `{env}` resolution cannot differ between them. `load_json_file` and
-    /// `load_toml_file` used to bypass all three, and skipping the last meant they alone
-    /// could not take a `config.{env}.json` template.
+    /// check and `{env}` resolution cannot differ between them — which is what makes the
+    /// format a *parameter* of the three constructors rather than an axis of new ones.
+    /// `load_json_file` and `load_toml_file`, which this replaces, each bypassed all three
+    /// checks, and skipping the last meant they alone could not take a `config.{env}.json`
+    /// template.
     fn load_internal_as(
         filename: &str,
         sep: &str,
@@ -330,45 +497,6 @@ impl Config {
         Self::from_parsed(parser::yaml::parse(yaml)?, "", sep, None, None)
     }
 
-    /// Loads a Config from a JSON file, whatever its extension.
-    ///
-    /// [`load_required`](Config::load_required) already routes a `.json` file to the JSON
-    /// parser, so the reason to reach for this is a file whose *extension does not name
-    /// its format* — `settings.conf`, `app.cfg`, a file with no extension at all.
-    ///
-    /// The choice is recorded on the config, so [`reload`](Config::reload) and
-    /// [`reload_from`](Config::reload_from) read it as JSON too. Without that the file was
-    /// parsed as JSON once and as YAML ever after, which failed silently rather than
-    /// loudly: YAML is a superset of JSON, so the reload usually *worked*, applying YAML's
-    /// rules to a document that had been read under `serde_json`'s.
-    ///
-    /// Overlays are unaffected and still choose their own parser by their own extension,
-    /// which is what lets a JSON base take a YAML overlay.
-    ///
-    /// # Arguments
-    /// * `filename` - Path to the config file (can contain `{env}` placeholder)
-    /// * `sep` - Path separator for accessing nested values
-    /// * `env` - Optional environment name to substitute in filename. Interpolated into a
-    ///   filesystem path with no validation — do not pass untrusted input
-    ///
-    /// # Errors
-    /// Returns `ConfigError::IoError` if the filename is empty, or the file is missing or cannot be read
-    /// Returns `ConfigError::FormatError` if the separator is empty or contains a backslash, or the filename template is invalid
-    /// Returns `ConfigError::JsonError` if JSON cannot be parsed
-    ///
-    /// # Example
-    /// ```no_run
-    /// # use trail_config::Config;
-    /// // A JSON document under an extension that does not say so
-    /// let config = Config::load_json_file("settings.conf", "/", None)
-    ///     .expect("Failed to load settings.conf");
-    /// ```
-    #[cfg(feature = "json")]
-    #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
-    pub fn load_json_file(filename: &str, sep: &str, env: Option<&str>) -> Result<Config, ConfigError> {
-        Self::load_internal_as(filename, sep, env, Some(parser::Format::Json))
-    }
-
     /// Parses a JSON string into a Config object.
     ///
     /// # Errors
@@ -386,38 +514,6 @@ impl Config {
     pub fn load_json(json_str: &str, sep: &str) -> Result<Config, ConfigError> {
         check_separator(sep)?;
         Self::from_parsed(parser::json::parse(json_str)?, "", sep, None, None)
-    }
-
-    /// Loads a Config from a TOML file, whatever its extension.
-    ///
-    /// The TOML counterpart to [`load_json_file`](Config::load_json_file), with the same
-    /// reason to exist and the same recorded-format behaviour: reach for it when the
-    /// extension does not name the format, and [`reload`](Config::reload) will read the
-    /// file as TOML rather than falling back to YAML.
-    ///
-    /// TOML datetimes are read as strings — see [`load_toml`](Config::load_toml).
-    ///
-    /// # Arguments
-    /// * `filename` - Path to the config file (can contain `{env}` placeholder)
-    /// * `sep` - Path separator for accessing nested values
-    /// * `env` - Optional environment name to substitute in filename. Interpolated into a
-    ///   filesystem path with no validation — do not pass untrusted input
-    ///
-    /// # Errors
-    /// Returns `ConfigError::IoError` if the filename is empty, or the file is missing or cannot be read
-    /// Returns `ConfigError::TomlError` if the TOML cannot be parsed
-    /// Returns `ConfigError::FormatError` if the separator is empty or contains a backslash, or the filename template is invalid
-    ///
-    /// # Example
-    /// ```no_run
-    /// # use trail_config::Config;
-    /// let config = Config::load_toml_file("settings.conf", "/", None)
-    ///     .expect("Failed to load settings.conf");
-    /// ```
-    #[cfg(feature = "toml")]
-    #[cfg_attr(docsrs, doc(cfg(feature = "toml")))]
-    pub fn load_toml_file(filename: &str, sep: &str, env: Option<&str>) -> Result<Config, ConfigError> {
-        Self::load_internal_as(filename, sep, env, Some(parser::Format::Toml))
     }
 
     /// Parses a TOML string into a Config object.

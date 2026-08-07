@@ -49,10 +49,13 @@ use crate::{Config, ConfigError};
 ///   mirrored here as [`reload`](ConfigHandle::reload) and
 ///   [`reload_from`](ConfigHandle::reload_from). They are the whole point of the type.
 /// - [`Config::merge_required`] and [`Config::merge_optional`] consume `self` and
-///   return a new `Config`. They belong to *building* a config, which happens before
-///   it goes into a handle; layer the files first, then wrap the result. A handle's
-///   overlay chain is otherwise fixed — `reload` re-applies it, `reload_from` clears
-///   it.
+///   return a new `Config`; their `_in_place` counterparts take `&mut self`, which a
+///   snapshot cannot give either. None of the four are mirrored, and that is a choice
+///   about *layering* rather than about signatures: the overlay chain describes where a
+///   config came from, and a handle exists to re-read those sources, not to acquire new
+///   ones behind the holders of existing snapshots. Layer the files first, then wrap the
+///   result. A handle's chain is therefore fixed — `reload` re-applies it, `reload_from`
+///   clears it.
 ///
 /// # Example
 /// ```no_run

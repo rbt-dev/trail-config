@@ -85,6 +85,81 @@ fn env_with_merges_matches_the_readme_example() {
 }
 
 #[test]
+fn positional_options_compose() {
+    // None of these compiled while each option had an arm of its own. The block form
+    // could express them, but only by writing `file:` — which the README's list of
+    // positional examples gives no reason to expect.
+    let dir = temp_dir();
+    write_file(&dir, "config.prod.yaml", "app:\n  port: 8080\n  name: base\n");
+    write_file(&dir, "over.prod.yaml", "app:\n  name: over\n");
+    let base = dir.path().join("config.{env}.yaml").to_string_lossy().into_owned();
+    let over = dir.path().join("over.{env}.yaml").to_string_lossy().into_owned();
+
+    // sep + env
+    let config = config!(&base, sep: "::", env: "prod").unwrap();
+    assert_eq!(config.str("app::port"), "8080");
+    assert_eq!(config.separator(), "::");
+    assert_eq!(config.environment(), Some("prod"));
+
+    // sep + env + merge
+    let config = config!(&base, sep: "::", env: "prod", merge: [&over]).unwrap();
+    assert_eq!(config.str("app::name"), "over");
+    assert_eq!(config.str("app::port"), "8080", "sibling survives the deep merge");
+}
+
+#[test]
+fn positional_env_with_merge_and_merge_optional() {
+    let dir = temp_dir();
+    let base = write_file(&dir, "config.yaml", "app:\n  port: 8080\n  name: base\n");
+    write_file(&dir, "over.dev.yaml", "app:\n  name: over\n");
+    let over = dir.path().join("over.{env}.yaml").to_string_lossy().into_owned();
+
+    // The positional form reaches `merge_optional`, which it previously had no arm for
+    // at all — the block form was the only way to write one.
+    let config = config!(
+        &base,
+        env: "dev",
+        merge: [&over],
+        merge_optional: ["nonexistent.yaml"],
+    ).unwrap();
+
+    assert_eq!(config.str("app/name"), "over");
+    assert_eq!(config.get_int("app/port"), Some(8080));
+    assert_eq!(config.environment(), Some("dev"));
+}
+
+#[test]
+fn the_positional_and_block_forms_agree() {
+    // The positional arm expands into the block one, so the two cannot drift. Asserted
+    // rather than assumed, because that delegation is the whole reason there is now one
+    // positional arm instead of four.
+    let dir = temp_dir();
+    let base = write_file(&dir, "config.yaml", "app:\n  port: 8080\n  name: base\n");
+    let over = write_file(&dir, "over.yaml", "app:\n  name: over\n");
+
+    let positional = config!(&base, sep: "/", env: "prod", merge: [&over]).unwrap();
+    let block = config! {
+        file: &base,
+        sep: "/",
+        env: "prod",
+        merge: [&over],
+    }.unwrap();
+
+    // `Debug` covers filename, separator, environment and the overlay chain at once
+    assert_eq!(format!("{positional:?}"), format!("{block:?}"));
+    assert_eq!(positional.str("app/name"), block.str("app/name"));
+}
+
+#[test]
+fn a_trailing_comma_is_accepted_positionally() {
+    let dir = temp_dir();
+    let base = write_file(&dir, "config.yaml", "app:\n  port: 8080\n");
+
+    let config = config!(&base, sep: "/",).unwrap();
+    assert_eq!(config.get_int("app/port"), Some(8080));
+}
+
+#[test]
 fn missing_file_errors() {
     let result = config!("nonexistent_macro_test.yaml");
     assert!(result.is_err());

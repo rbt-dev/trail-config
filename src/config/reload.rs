@@ -50,7 +50,7 @@ impl Config {
         }
 
         // The base file is read with this config's pinned format when it has one, so a
-        // file loaded by `load_json_file` under a `.conf` extension is re-read as JSON
+        // file loaded as `Format::Json` under a `.conf` extension is re-read as JSON
         // rather than silently falling back to YAML. Overlays below stay on `load_auto`:
         // each one names its own format by its own extension, which is what lets a JSON
         // base take a YAML overlay.
@@ -104,8 +104,10 @@ impl Config {
     ///
     /// Changes the config's filename and reloads from the new file.
     /// The separator and environment settings remain the same, and so does an explicitly
-    /// chosen format: a config built by [`load_json_file`](Config::load_json_file) or
-    /// [`load_toml_file`](Config::load_toml_file) reads the new file with that same
+    /// chosen format: a config built by one of the `_as` constructors —
+    /// [`load_required_as`](Config::load_required_as),
+    /// [`load_optional_as`](Config::load_optional_as),
+    /// [`load_or_create_as`](Config::load_or_create_as) — reads the new file with that same
     /// parser. Construct a new `Config` to change format. Configs loaded any other way
     /// have no pinned format and pick the parser from the new file's extension, as always.
     ///

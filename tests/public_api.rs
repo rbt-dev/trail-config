@@ -113,3 +113,42 @@ fn the_toml_error_behind_a_config_error_is_nameable() {
         other => panic!("expected TomlError, got {:?}", other.err()),
     }
 }
+
+#[test]
+#[cfg(feature = "json")]
+fn format_is_nameable_and_reaches_every_as_constructor() {
+    use std::fs;
+    use trail_config::Format;
+
+    // `Format` lives in a private module, so this pins that the re-export at the crate
+    // root is what makes the `_as` constructors callable at all — a consumer cannot spell
+    // their fourth argument otherwise.
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("settings.conf");
+    let file = path.to_string_lossy().into_owned();
+
+    // load_or_create_as writes the defaults it validated...
+    let config =
+        Config::load_or_create_as(&file, "/", None, Format::Json, r#"{"app": {"port": 8080}}"#)
+            .unwrap();
+    assert_eq!(config.get_int("app/port"), Some(8080));
+
+    // ...load_required_as reads the same file back under the same parser...
+    let config = Config::load_required_as(&file, "/", None, Format::Json).unwrap();
+    assert_eq!(config.get_int("app/port"), Some(8080));
+
+    // ...and load_optional_as tolerates one that is not there.
+    let absent = dir.path().join("nope.cfg").to_string_lossy().into_owned();
+    let config = Config::load_optional_as(&absent, "/", None, Format::Json).unwrap();
+    assert_eq!(config.filename(), absent);
+
+    // `#[non_exhaustive]`, so a consumer's match needs a wildcard arm
+    let described = match Format::Json {
+        Format::Yaml => "yaml",
+        Format::Json => "json",
+        _ => "other",
+    };
+    assert_eq!(described, "json");
+
+    fs::remove_file(&path).ok();
+}

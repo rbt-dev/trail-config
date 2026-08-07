@@ -65,16 +65,65 @@ impl Config {
     /// ```
     #[must_use = "merge returns a new Config; the original is consumed"]
     pub fn merge_required(mut self, filename: &str, env: Option<&str>) -> Result<Config, ConfigError> {
+        self.merge_required_in_place(filename, env)?;
+        Ok(self)
+    }
+
+    /// Merges a required overlay file into this config, in place.
+    ///
+    /// Identical to [`merge_required`](Config::merge_required) in every respect but the
+    /// signature — same overlay rules, same recording of the filename and the environment,
+    /// same errors. What it adds is a config that is still there afterwards if the merge
+    /// fails.
+    ///
+    /// The chaining form consumes `self` and returns it inside the `Ok`, which is right for
+    /// a builder and wrong for a caller who wants to carry on. `config.merge_required(f)?`
+    /// moves the config into the call, so an error path has nothing left to fall back to.
+    /// This form leaves the receiver untouched on failure — filename, document and overlay
+    /// chain all as they were — which is the same guarantee [`reload`](Config::reload) and
+    /// [`reload_from`](Config::reload_from) already make, and which the merges could not
+    /// make while they consumed what they were preserving.
+    ///
+    /// That guarantee is not defensive bookkeeping: the file is read, parsed and
+    /// interpolated into a local before anything on `self` is touched, so every failure
+    /// returns before the first mutation.
+    ///
+    /// Prefer the chaining form when building a config from a known set of files, and this
+    /// one when a merge might fail and the base is worth keeping — which is most of the
+    /// time for [`merge_optional_in_place`](Config::merge_optional_in_place).
+    ///
+    /// # Errors
+    /// The same as [`merge_required`](Config::merge_required).
+    ///
+    /// # Example
+    /// ```no_run
+    /// # use trail_config::{Config, ConfigError};
+    /// # fn main() -> Result<(), ConfigError> {
+    /// let mut config = Config::load_required("config.yaml", "/", None)?;
+    ///
+    /// // The config survives a failed merge, so this can be reported and shrugged off
+    /// if let Err(e) = config.merge_required_in_place("config.prod.yaml", None) {
+    ///     eprintln!("ignoring unusable overlay: {e}");
+    /// }
+    ///
+    /// let port = config.get_int("app/port"); // still the base's value
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn merge_required_in_place(&mut self, filename: &str, env: Option<&str>) -> Result<(), ConfigError> {
         if filename.is_empty() {
             return Err(empty_filename_error());
         }
 
         let (file, resolved_env) = get_file(filename, self.environment_for(env))?;
         let overlay = resolve_env_vars(load_auto(&file)?)?;
-        self.content = merge_documents(self.content, overlay);
+
+        // Past the last fallible step, so from here nothing can leave `self` half-merged.
+        let base = mem::replace(&mut self.content, Value::Null);
+        self.content = merge_documents(base, overlay);
         self.overlays.push(OverlaySource::Required(file));
         self.adopt_environment(resolved_env);
-        Ok(self)
+        Ok(())
     }
 
     /// Merges an optional overlay file into this config, returning a new `Config`.
@@ -135,6 +184,44 @@ impl Config {
     /// ```
     #[must_use = "merge returns a new Config; the original is consumed"]
     pub fn merge_optional(mut self, filename: &str, env: Option<&str>) -> Result<Config, ConfigError> {
+        self.merge_optional_in_place(filename, env)?;
+        Ok(self)
+    }
+
+    /// Merges an optional overlay file into this config, in place.
+    ///
+    /// The `&mut self` counterpart to [`merge_optional`](Config::merge_optional), and the
+    /// one of the pair that most wants it. That method exists to make an overlay's
+    /// *absence* survivable — a missing file is skipped and the config carries on — but the
+    /// other way an optional overlay can be unusable, a parse error, was not merely
+    /// propagated: it was propagated after the base config had been moved into the call and
+    /// could no longer be recovered. "Use `config.local.yaml` if it is present *and
+    /// readable*, otherwise carry on" could not be written, because writing the fallback
+    /// needed a config the signature had already taken away.
+    ///
+    /// The receiver is untouched on failure — see
+    /// [`merge_required_in_place`](Config::merge_required_in_place), which explains why
+    /// that holds mechanically rather than by care.
+    ///
+    /// # Errors
+    /// The same as [`merge_optional`](Config::merge_optional). Note that an absent file is
+    /// not one of them: it is skipped, and the overlay is still recorded so a later
+    /// [`reload`](Config::reload) picks the file up once it appears.
+    ///
+    /// # Example
+    /// ```no_run
+    /// # use trail_config::{Config, ConfigError};
+    /// # fn main() -> Result<(), ConfigError> {
+    /// let mut config = Config::load_required("config.yaml", "/", None)?;
+    ///
+    /// // Absent is fine and silent; unreadable is reported and the base survives it
+    /// if let Err(e) = config.merge_optional_in_place("config.local.yaml", None) {
+    ///     eprintln!("config.local.yaml is unusable, continuing without it: {e}");
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn merge_optional_in_place(&mut self, filename: &str, env: Option<&str>) -> Result<(), ConfigError> {
         // Checked even though this method tolerates a missing file: reading an empty
         // path yields `NotFound`, which is exactly the case it is designed to ignore,
         // so without this an empty filename would silently no-op and then push a dead
@@ -146,15 +233,18 @@ impl Config {
         let (file, resolved_env) = get_file(filename, self.environment_for(env))?;
         match load_auto(&file) {
             Ok(yaml) => {
+                // Resolved before the base is touched, so an unset `${VAR}` in the overlay
+                // returns with `self` still holding the document it had.
                 let overlay = resolve_env_vars(yaml)?;
-                self.content = merge_documents(self.content, overlay);
+                let base = mem::replace(&mut self.content, Value::Null);
+                self.content = merge_documents(base, overlay);
             },
             Err(ConfigError::IoError { ref source, .. }) if source.kind() == io::ErrorKind::NotFound => {},
             Err(e) => return Err(e),
         }
         self.overlays.push(OverlaySource::Optional(file));
         self.adopt_environment(resolved_env);
-        Ok(self)
+        Ok(())
     }
 
     /// Chooses the environment a merge resolves `{env}` with: the caller's, or failing

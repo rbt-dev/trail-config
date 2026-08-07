@@ -1,6 +1,7 @@
 #![cfg(feature = "toml")]
 
 use super::{Config, ConfigError};
+use crate::config::Format;
 use crate::test_util::{env_lock, temp_dir, write_file};
 use std::fs;
 
@@ -39,11 +40,11 @@ fn load_toml_file_auto_detect() {
 }
 
 #[test]
-fn load_toml_file_explicit() {
+fn load_required_as_toml_explicit() {
     let dir = temp_dir();
     let path = write_file(&dir, "config.toml", "[app]\nname = \"myapp\"");
 
-    let config = Config::load_toml_file(&path, "/", None).unwrap();
+    let config = Config::load_required_as(&path, "/", None, Format::Toml).unwrap();
     assert_eq!(config.str("app/name"), "myapp");
 }
 

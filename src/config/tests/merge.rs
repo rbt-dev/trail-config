@@ -477,6 +477,82 @@ fn an_env_adopted_from_one_merge_resolves_the_next() {
 }
 
 #[test]
+fn merge_optional_in_place_keeps_the_config_when_the_overlay_is_broken() {
+    // The case `merge_optional` exists for and could not express. It tolerates an *absent*
+    // overlay, but a broken one used to take the base config down with it — `self` was
+    // moved into the call, so the error path had nothing to fall back to.
+    let dir = temp_dir();
+    let base = write_file(&dir, "config.yaml", "app:\n  port: 8080\n  name: base\n");
+    let broken = write_file(&dir, "broken.yaml", "a: [unclosed\n");
+
+    let mut config = Config::load_required(&base, "/", None).unwrap();
+    let err = config.merge_optional_in_place(&broken, None).unwrap_err();
+
+    assert!(matches!(err, ConfigError::YamlError { .. }), "got {err:?}");
+    assert_eq!(config.get_int("app/port"), Some(8080), "the base is still readable");
+    assert_eq!(config.str("app/name"), "base");
+    assert_eq!(config.filename(), base);
+}
+
+#[test]
+fn a_failed_in_place_merge_does_not_record_the_overlay() {
+    // Not just the document: a config left holding a dead overlay would re-walk it on
+    // every later reload, and the failure would come back each time.
+    let dir = temp_dir();
+    let base = write_file(&dir, "config.yaml", "app:\n  port: 8080\n");
+    let broken = write_file(&dir, "broken.yaml", "a: [unclosed\n");
+
+    let mut config = Config::load_required(&base, "/", None).unwrap();
+    assert!(config.merge_required_in_place(&broken, None).is_err());
+
+    // A reload re-reads the base and nothing else, so it succeeds
+    config.reload().unwrap();
+    assert_eq!(config.get_int("app/port"), Some(8080));
+    assert!(!format!("{config:?}").contains("broken.yaml"), "got {config:?}");
+}
+
+#[test]
+fn in_place_merges_agree_with_the_chaining_ones() {
+    // The chaining forms are defined in terms of these, so the two must not be able to
+    // drift — same document, same overlay chain, same environment.
+    let dir = temp_dir();
+    let base = write_file(&dir, "config.yaml", "app:\n  port: 8080\n  name: base\n");
+    let required = write_file(&dir, "over.yaml", "app:\n  name: over\n");
+    let optional = write_file(&dir, "local.yaml", "app:\n  port: 9090\n");
+
+    let chained = Config::load_required(&base, "/", Some("prod"))
+        .unwrap()
+        .merge_required(&required, None)
+        .unwrap()
+        .merge_optional(&optional, None)
+        .unwrap();
+
+    let mut in_place = Config::load_required(&base, "/", Some("prod")).unwrap();
+    in_place.merge_required_in_place(&required, None).unwrap();
+    in_place.merge_optional_in_place(&optional, None).unwrap();
+
+    assert_eq!(in_place.str("app/name"), chained.str("app/name"));
+    assert_eq!(in_place.get_int("app/port"), chained.get_int("app/port"));
+    assert_eq!(in_place.environment(), chained.environment());
+    // `Debug` prints the overlay chain, which is the part with no accessor of its own
+    assert_eq!(format!("{in_place:?}"), format!("{chained:?}"));
+}
+
+#[test]
+fn merge_optional_in_place_still_tolerates_an_absent_file() {
+    let dir = temp_dir();
+    let base = write_file(&dir, "config.yaml", "app:\n  port: 8080\n");
+    let missing = dir.path().join("nope.yaml").to_string_lossy().into_owned();
+
+    let mut config = Config::load_required(&base, "/", None).unwrap();
+    config.merge_optional_in_place(&missing, None).unwrap();
+
+    assert_eq!(config.get_int("app/port"), Some(8080));
+    // Recorded even though absent, so a later reload picks it up once it appears
+    assert!(format!("{config:?}").contains("nope.yaml"), "got {config:?}");
+}
+
+#[test]
 fn a_merge_without_an_environment_leaves_the_config_without_one() {
     let dir = temp_dir();
     let base = write_file(&dir, "config.yaml", "app:\n  port: 8080\n");

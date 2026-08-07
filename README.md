@@ -201,16 +201,34 @@ let config = Config::load_required("config.yaml", "/", None)?
 ### Files whose extension does not name their format
 
 `load_required` picks the parser from the extension, which covers `.json` and `.toml`
-already. `load_json_file` / `load_toml_file` are for the other case — a JSON document in
-`settings.conf`, or a file with no extension at all:
+already. For the other case — a JSON document in `settings.conf`, or a file with no
+extension at all — the format is a parameter rather than a different constructor. Each of
+the three file constructors has an `_as` twin that takes a `Format`:
+
+| Constructor | `_as` twin |
+| ----------- | ---------- |
+| `load_required(file, sep, env)` | `load_required_as(file, sep, env, format)` |
+| `load_optional(file, sep, env)` | `load_optional_as(file, sep, env, format)` |
+| `load_or_create(file, sep, env, defaults)` | `load_or_create_as(file, sep, env, format, defaults)` |
 
 ```rust
+use trail_config::{Config, Format};
+
 // Read as JSON regardless of what the file is called
-let mut config = Config::load_json_file("settings.conf", "/", None)?;
+let mut config = Config::load_required_as("settings.conf", "/", None, Format::Json)?;
 
 // ...and the choice sticks: this re-reads it as JSON, not YAML
 config.reload()?;
 ```
+
+`Format` is `#[non_exhaustive]`, so matching on one needs a `_ => ...` arm; `Format::Json`
+and `Format::Toml` exist only with their features enabled.
+
+`load_or_create_as` uses the format for both halves of its job — the defaults are validated
+against the same parser that will read them back. That is the one place deriving the format
+from the extension would be outright wrong rather than merely redundant: YAML-shaped
+defaults under a `.conf` name pinned to JSON would pass a YAML check (YAML is a superset of
+JSON) and then be written to a file the very next read parses as JSON.
 
 The format is recorded on the config, so `reload` and `reload_from` use the same parser.
 Overlays are unaffected and still pick their own parser by their own extension, so a JSON
@@ -277,7 +295,16 @@ and is left in the document.
 
 ### Using the `config!` macro
 
-The `config!` macro provides a concise syntax for loading and merging configs:
+The `config!` macro provides a concise syntax for loading and merging configs. There are two 
+spellings — positional, and a block that labels the filename — and both take the same four 
+optional settings:
+
+| Option | Meaning | Default |
+| ------ | ------- | ------- |
+| `sep:` | Path separator | `"/"` |
+| `env:` | Environment name, for `{env}` in any filename | `None` |
+| `merge:` | Required overlays, applied in order | none |
+| `merge_optional:` | Optional overlays, applied after the required ones | none |
 
 ```rust
 use trail_config::config;
@@ -285,16 +312,15 @@ use trail_config::config;
 // Minimal
 let config = config!("config.yaml")?;
 
-// With custom separator
+// Any subset of the options
 let config = config!("config.yaml", sep: "::")?;
-
-// With environment
 let config = config!("config.{env}.yaml", env: "prod")?;
-
-// With merges
 let config = config!("config.yaml", merge: ["config.prod.yaml"])?;
 
-// Full syntax
+// Combined
+let config = config!("config.{env}.yaml", sep: "::", env: "prod", merge: ["over.{env}.yaml"])?;
+
+// The same options under the block spelling
 let config = config! {
     file: "config.yaml",
     sep: "/",
@@ -303,6 +329,11 @@ let config = config! {
     merge_optional: ["config.local.yaml"],
 }?;
 ```
+
+**Options must appear in the order given in the table.** `config!("f.yaml", env: "prod", 
+sep: "::")` does not compile — it is a "no rules expected this token" error pointing at 
+`sep`. Everything else composes: any subset, in that order, in either spelling, with or 
+without a trailing comma.
 
 ## API Overview
 

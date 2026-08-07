@@ -10,6 +10,11 @@ mod parser;
 mod path;
 mod reload;
 
+// `Format` is part of the public API — the `_as` constructors take one — even though the
+// module holding it is private. Re-exported here and again from the crate root, so the
+// parser modules stay an implementation detail while the type callers must name does not.
+pub use parser::Format;
+
 #[derive(Debug, Clone)]
 enum OverlaySource {
     Required(String),
@@ -46,10 +51,11 @@ pub struct Config {
     /// explicitly rather than derived from the extension.
     ///
     /// `None` — the usual case — means "decide from the extension, every time". `Some` is
-    /// set only by [`load_json_file`](Config::load_json_file) and
-    /// [`load_toml_file`](Config::load_toml_file), whose whole reason to exist is a file
-    /// whose extension does not name its format. Without recording it, those two parsed
-    /// the file one way and every later `reload` parsed it another.
+    /// set only by the `_as` constructors — [`load_required_as`](Config::load_required_as),
+    /// [`load_optional_as`](Config::load_optional_as) and
+    /// [`load_or_create_as`](Config::load_or_create_as) — whose whole reason to exist is a
+    /// file whose extension does not name its format. Without recording it, those parsed the
+    /// file one way and every later `reload` parsed it another.
     ///
     /// Applies to the base file only. Each overlay decides for itself by its own
     /// extension, which is what lets a JSON base take a YAML overlay.

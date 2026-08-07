@@ -118,8 +118,14 @@
 //!
 //! `json` and `toml` add the corresponding parsers. Format is chosen by file extension,
 //! case-insensitively, so a YAML base can take a JSON or TOML overlay once the feature
-//! is enabled. TOML's date-time type has no counterpart in the value model above, so a
-//! datetime is read as the text the file contained — see [`load_toml`](Config::load_toml).
+//! is enabled. When the extension does not name the format — `settings.conf`, a file with
+//! no extension — name it with [`Format`] instead: each file constructor has an `_as` twin
+//! ([`load_required_as`](Config::load_required_as),
+//! [`load_optional_as`](Config::load_optional_as),
+//! [`load_or_create_as`](Config::load_or_create_as)) that takes one and records it, so
+//! every later [`reload`](Config::reload) reads the file the same way. TOML's date-time
+//! type has no counterpart in the value model above, so a datetime is read as the text the
+//! file contained — see [`load_toml`](Config::load_toml).
 //!
 //! See the [README](https://github.com/rbt-dev/trail-config) for the full guide.
 
@@ -138,7 +144,7 @@ mod handle;
 mod test_util;
 
 pub use error::ConfigError;
-pub use config::Config;
+pub use config::{Config, Format};
 pub use handle::ConfigHandle;
 
 // The value model and the underlying error types appear in this crate's public API —
@@ -185,6 +191,25 @@ pub use toml::de::Error as TomlError;
 /// Loads a config file, optionally sets a separator and environment,
 /// and applies required and optional overlays in order.
 ///
+/// # Syntax
+///
+/// Two spellings, differing only in whether the filename is labelled. Both take the same
+/// options, and all of them are optional:
+///
+/// | Option | Meaning | Default |
+/// | ------ | ------- | ------- |
+/// | `sep:` | Path separator | `"/"` |
+/// | `env:` | Environment name, for `{env}` in any filename | `None` |
+/// | `merge:` | Required overlays, applied in order | none |
+/// | `merge_optional:` | Optional overlays, applied after the required ones | none |
+///
+/// **Options must appear in that order.** Writing them in any other — `sep:` after `env:`,
+/// `merge:` before either — is a "no rules expected this token" error pointing at the
+/// second one. Lifting that would take an accumulator arm consuming the options in any
+/// order, roughly tripling the macro for a fixed list of four; the constraint is cheaper to
+/// remember than to remove. Everything else composes freely: any subset, in that order,
+/// with or without a trailing comma.
+///
 /// # Examples
 ///
 /// ```no_run
@@ -192,7 +217,12 @@ pub use toml::de::Error as TomlError;
 /// // Minimal
 /// let cfg = config!("config.yaml");
 ///
-/// // With all options
+/// // Any subset of the options, positionally
+/// let cfg = config!("config.yaml", sep: "::");
+/// let cfg = config!("config.{env}.yaml", sep: "::", env: "prod");
+/// let cfg = config!("config.yaml", env: "prod", merge: ["config.{env}.yaml"]);
+///
+/// // The same options under the block spelling
 /// let cfg = config! {
 ///     file: "config.yaml",
 ///     sep: "::",
@@ -213,29 +243,31 @@ pub use toml::de::Error as TomlError;
 /// ```
 #[macro_export]
 macro_rules! config {
-    // Minimal: config!("file.yaml")
-    ($file:expr) => {
-        $crate::Config::load_required($file, "/", None)
+    // Positional: the filename, then any of the options the block form takes, in the
+    // same order. One arm rather than one per option — there used to be four, each
+    // matching the file plus exactly one option, so `config!("f.yaml", sep: "::",
+    // env: "prod")` was a "no rules expected this token" error pointing at `env`. The
+    // README presents the options as a menu, which is how option lists read, and three
+    // of the combinations it implied did not exist.
+    //
+    // Delegates to the block arm below rather than repeating its body, so the two
+    // spellings cannot drift.
+    (
+        $file:expr
+        $(, sep: $sep:expr)?
+        $(, env: $env:expr)?
+        $(, merge: [$($req:expr),* $(,)?])?
+        $(, merge_optional: [$($opt:expr),* $(,)?])?
+        $(,)?
+    ) => {
+        $crate::config! {
+            file: $file
+            $(, sep: $sep)?
+            $(, env: $env)?
+            $(, merge: [$($req),*])?
+            $(, merge_optional: [$($opt),*])?
+        }
     };
-
-    // Positional with sep: config!("file.yaml", sep: "::")
-    ($file:expr, sep: $sep:expr) => {
-        $crate::Config::load_required($file, $sep, None)
-    };
-
-    // Positional with env: config!("file.yaml", env: "prod")
-    ($file:expr, env: $env:expr) => {
-        $crate::Config::load_required($file, "/", Some($env))
-    };
-
-    // Positional with merge: config!("file.yaml", merge: ["overlay.yaml"])
-    ($file:expr, merge: [$($req:expr),* $(,)?]) => {{
-        let _cfg = $crate::Config::load_required($file, "/", None);
-        $(
-            let _cfg = _cfg.and_then(|c| c.merge_required($req, None));
-        )*
-        _cfg
-    }};
 
     // Block syntax: config! { file: "...", ... }
     ( file: $file:expr $(, sep: $sep:expr)? $(, env: $env:expr)? $(, merge: [$($req:expr),* $(,)?])? $(, merge_optional: [$($opt:expr),* $(,)?])? $(,)? ) => {{

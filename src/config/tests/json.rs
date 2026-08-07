@@ -1,6 +1,7 @@
 #![cfg(feature = "json")]
 
 use super::{Config, ConfigError};
+use crate::config::Format;
 use crate::test_util::{env_lock, temp_dir, write_file};
 use std::fs;
 
@@ -42,11 +43,11 @@ fn load_json_file_auto_detect() {
 }
 
 #[test]
-fn load_json_file_explicit() {
+fn load_required_as_json_explicit() {
     let dir = temp_dir();
     let path = write_file(&dir, "config.json", r#"{"app": {"name": "myapp"}}"#);
 
-    let config = Config::load_json_file(&path, "/", None).unwrap();
+    let config = Config::load_required_as(&path, "/", None, Format::Json).unwrap();
     assert_eq!(config.str("app/name"), "myapp");
 }
 

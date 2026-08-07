@@ -368,3 +368,49 @@ fn sequence_elements_are_not_addressable_by_index() {
 
     assert_eq!(config.list("sources"), vec!["one", "two"]);
 }
+
+#[test]
+fn non_string_keys_have_no_path_but_still_deserialize() {
+    // The other documented design line, and the one that was stated only in a code
+    // comment: segments are matched as strings, so `retries/1` looks up the *string* "1"
+    // and never the integer 1. Pinned here because the docs now promise the way around it.
+    use std::collections::BTreeMap;
+
+    let config = Config::load_yaml(
+        "retries:\n  1: fast\n  2: slow\nflags:\n  true: on\n  false: off\n",
+        "/",
+    ).unwrap();
+
+    // The parent resolves; the non-string keys under it do not
+    assert!(config.contains("retries"));
+    assert!(!config.contains("retries/1"));
+    assert_eq!(config.str("retries/1"), "");
+    assert!(!config.contains("flags/true"));
+
+    // ...and the outline says so rather than leaving them looking absent
+    assert!(config.outline().contains("retries/1: <string>  # not addressable"));
+
+    // The documented workaround: deserialize the subtree and the keys come back typed
+    let retries: BTreeMap<i64, String> = config.get_as_strict("retries").unwrap();
+    assert_eq!(retries[&1], "fast");
+    assert_eq!(retries[&2], "slow");
+
+    let flags: BTreeMap<bool, String> = config.get_as_strict("flags").unwrap();
+    assert_eq!(flags[&true], "on");
+}
+
+#[test]
+fn a_string_key_and_its_scalar_twin_are_different_keys() {
+    // Why there is no escape for reaching a non-string key, and why the accessors do not
+    // fall back to one: a document can hold both, so any rule that made `mixed/1` reach
+    // the integer would make the string permanently unreachable instead. The string is
+    // the one that resolves, because a path segment *is* a string.
+    let config = Config::load_yaml("mixed:\n  1: int-key\n  \"1\": string-key\n", "/").unwrap();
+
+    assert_eq!(config.str("mixed/1"), "string-key");
+
+    // Both are listed, and the marker is what tells the two lines apart
+    let outline = config.outline();
+    assert!(outline.contains("mixed/1: <string>  # not addressable"));
+    assert!(outline.contains("mixed/1: <string>\n"));
+}

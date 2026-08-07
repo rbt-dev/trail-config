@@ -5,6 +5,22 @@
 //! like any other missing key. Read a sequence whole with [`Config::list`], or into a
 //! typed field with [`Config::get_as`] / [`Config::deserialize`].
 //!
+//! Segments are matched as **strings**, so a key that is not one has no path. YAML permits
+//! `1:`, `true:`, `~:`, even a sequence as a key; `retries/1` looks up the *string* `"1"`,
+//! which is a different key from the integer `1`, and one document can hold both. Such keys
+//! are not hidden — [`Config::outline`] lists them, marked as not addressable — and the
+//! subtree containing them is still readable by deserializing it:
+//!
+//! ```
+//! # use std::collections::BTreeMap;
+//! # use trail_config::Config;
+//! let config = Config::load_yaml("retries:\n  1: fast\n  2: slow\n", "/").unwrap();
+//!
+//! assert!(!config.contains("retries/1"));            // no path reaches an integer key
+//! let retries: BTreeMap<i64, String> = config.get_as("retries").unwrap();
+//! assert_eq!(retries[&1], "fast");                   // deserializing does
+//! ```
+//!
 //! A YAML `!Tag` is **transparent to reading and addressing, and preserved for
 //! deserializing**. `db/host` resolves whether or not `db` is tagged, and `str` on a
 //! tagged scalar returns the scalar — the tag names a serde enum variant, which says

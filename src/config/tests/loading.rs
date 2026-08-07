@@ -163,7 +163,8 @@ fn load_or_create_loads_existing_file() {
 
 #[test]
 fn load_or_create_waits_out_a_file_that_is_still_being_written() {
-    use std::{fs, thread, time::Duration};
+    use crate::config::loader::EMPTY_FILE_WINDOW;
+    use std::{fs, thread};
 
     // The first-run race, staged deterministically. A zero-length file is exactly what
     // the winner of `create_new` leaves behind between creating it and filling it, and a
@@ -174,11 +175,14 @@ fn load_or_create_waits_out_a_file_that_is_still_being_written() {
     fs::write(&path, "").unwrap();
     let file = path.to_string_lossy().into_owned();
 
-    // Stands in for the winner completing its write, inside the settle window.
+    // Stands in for the winner completing its write, inside the settle window. Timed off
+    // the window itself rather than a hardcoded delay, so it stays inside it if the
+    // constants change — a tenth in, leaving the remaining nine tenths of margin for a
+    // machine slow enough to schedule the thread late.
     let writer = {
         let path = path.clone();
         thread::spawn(move || {
-            thread::sleep(Duration::from_millis(25));
+            thread::sleep(EMPTY_FILE_WINDOW / 10);
             fs::write(&path, "app:\n  port: 9090\n").unwrap();
         })
     };
@@ -192,6 +196,7 @@ fn load_or_create_waits_out_a_file_that_is_still_being_written() {
 
 #[test]
 fn load_or_create_accepts_a_file_that_stays_empty() {
+    use crate::config::loader::EMPTY_FILE_WINDOW;
     use std::{fs, time::Instant};
 
     // The other side of the wait: nothing arrives, so the empty file is honoured rather
@@ -206,11 +211,16 @@ fn load_or_create_accepts_a_file_that_stays_empty() {
 
     assert_eq!(config.get_int("app/port"), None, "the empty file wins, not the defaults");
     assert_eq!(fs::read_to_string(&path).unwrap(), "", "and is left as it was");
-    assert!(started.elapsed().as_millis() >= 100, "it was waited on, not accepted at once");
+    assert!(
+        started.elapsed() >= EMPTY_FILE_WINDOW / 2,
+        "it was waited on, not accepted at once — took {:?}",
+        started.elapsed(),
+    );
 }
 
 #[test]
 fn load_or_create_does_not_wait_on_a_comment_only_file() {
+    use crate::config::loader::EMPTY_FILE_WINDOW;
     use std::time::Instant;
 
     // A comment-only document also parses to nothing, but it is not zero-length, so it is
@@ -222,11 +232,16 @@ fn load_or_create_does_not_wait_on_a_comment_only_file() {
     let config = Config::load_or_create(&file, "/", None, "app:\n  port: 8080\n").unwrap();
 
     assert_eq!(config.get_int("app/port"), None);
-    assert!(started.elapsed().as_millis() < 100, "took {:?}", started.elapsed());
+    assert!(
+        started.elapsed() < EMPTY_FILE_WINDOW / 2,
+        "the settle wait should not apply here — took {:?}",
+        started.elapsed(),
+    );
 }
 
 #[test]
 fn load_or_create_does_not_wait_when_the_defaults_are_empty() {
+    use crate::config::loader::EMPTY_FILE_WINDOW;
     use std::{fs, time::Instant};
 
     // With nothing better to substitute, an empty file is already the right answer.
@@ -239,11 +254,16 @@ fn load_or_create_does_not_wait_when_the_defaults_are_empty() {
     let config = Config::load_or_create(&file, "/", None, "").unwrap();
 
     assert_eq!(config.get_int("app/port"), None);
-    assert!(started.elapsed().as_millis() < 100, "took {:?}", started.elapsed());
+    assert!(
+        started.elapsed() < EMPTY_FILE_WINDOW / 2,
+        "the settle wait should not apply here — took {:?}",
+        started.elapsed(),
+    );
 }
 
 #[test]
 fn load_or_create_does_not_wait_on_a_file_with_content() {
+    use crate::config::loader::EMPTY_FILE_WINDOW;
     use std::time::Instant;
 
     // The ordinary path, pinned so the settle can never creep onto it.
@@ -254,7 +274,11 @@ fn load_or_create_does_not_wait_on_a_file_with_content() {
     let config = Config::load_or_create(&file, "/", None, "app:\n  port: 8080\n").unwrap();
 
     assert_eq!(config.get_int("app/port"), Some(9090));
-    assert!(started.elapsed().as_millis() < 100, "took {:?}", started.elapsed());
+    assert!(
+        started.elapsed() < EMPTY_FILE_WINDOW / 2,
+        "the settle wait should not apply here — took {:?}",
+        started.elapsed(),
+    );
 }
 
 #[test]

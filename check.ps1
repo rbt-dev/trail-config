@@ -4,14 +4,19 @@
     combination.
 
 .DESCRIPTION
-    This project has no CI by design, so the four feature combinations, the doctests 
-    and the clippy runs are verified by hand. Doing that by hand is twelve invocations 
+    This project has no CI by design, so the five feature combinations, the doctests
+    and the clippy runs are verified by hand. Doing that by hand is a dozen invocations
     and easy to half-finish; this is one.
 
     Each combination is a separate compilation of the crate: `json` and `toml` are
     additive feature gates, so code that compiles with both enabled can still fail to
     compile with neither, and a test that only exists under one feature is only run
     under that one.
+
+    This covers Windows only, which is the one thing running it by hand cannot fix. Run
+    `./check.sh` under WSL for the Linux half: between them they cover the platform
+    surface this crate actually touches — Windows a case-insensitive filesystem, Linux
+    the Unix error kinds, a case-sensitive filesystem and Unix path handling.
 
 .PARAMETER Msrv
     Also check the crate against the MSRV declared in Cargo.toml, which requires that
@@ -104,7 +109,9 @@ if ($LASTEXITCODE -ne 0) {
     Write-Host '    FAILED (package contents)' -ForegroundColor Red
     $failures.Add('package contents')
 } else {
-    $unwanted = $packaged | Where-Object { $_ -like 'IMPROVEMENTS_*.md' -or $_ -eq 'check.ps1' }
+    $unwanted = $packaged | Where-Object {
+        $_ -like 'IMPROVEMENTS_*.md' -or $_ -eq 'check.ps1' -or $_ -eq 'check.sh' -or $_ -eq '.gitattributes'
+    }
     if ($unwanted) {
         Write-Host '    FAILED (package contents): excluded files are in the crate' -ForegroundColor Red
         foreach ($file in $unwanted) {

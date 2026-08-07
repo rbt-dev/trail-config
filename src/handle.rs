@@ -562,6 +562,7 @@ features:
     #[test]
     fn concurrent_reloads_settle_on_the_newest_document() {
         use crate::test_util::{temp_dir, write_file};
+        use std::sync::atomic::{AtomicBool, Ordering};
         use std::{fs, thread, time::Duration};
 
         // A document big enough that parsing it dominates a reload. The file read
@@ -572,6 +573,14 @@ features:
         for i in 0..20_000 {
             big.push_str(&format!("filler{i}: value{i}\n"));
         }
+
+        // How many iterations actually managed to overlap. The assertion below holds
+        // whether or not they do — if the first reload finishes before the rewrite, the
+        // second still swaps last and the handle still ends up on v2 — so without
+        // counting, faster hardware would turn this from a test into a formality and say
+        // nothing about it. A document size and a sleep tuned on one machine are exactly
+        // the kind of thing that stops meaning what it meant.
+        let mut overlapped = 0usize;
 
         // Repeated because one interleaving proves little. Before reloads were
         // serialized this lost the update on every iteration.
@@ -584,10 +593,23 @@ features:
             );
             assert_eq!(handle.get_int("app/port"), Some(1));
 
-            // Starts reloading the large v1 and is still parsing it a moment later.
-            let h = handle.clone();
-            let slow = thread::spawn(move || h.reload().unwrap());
+            // Starts reloading the large v1 and should still be parsing it a moment later.
+            let finished = Arc::new(AtomicBool::new(false));
+            let slow = {
+                let h = handle.clone();
+                let finished = Arc::clone(&finished);
+                thread::spawn(move || {
+                    h.reload().unwrap();
+                    finished.store(true, Ordering::SeqCst);
+                })
+            };
             thread::sleep(Duration::from_millis(10));
+
+            // Read before the rewrite: if the slow reload is still running now, it is
+            // still holding the reload lock, and this iteration is testing the race.
+            if !finished.load(Ordering::SeqCst) {
+                overlapped += 1;
+            }
 
             // Supersede it: the disk now holds v2, and this reload reads it.
             fs::write(&path, "app:\n  port: 2\n").unwrap();
@@ -604,6 +626,13 @@ features:
                 "a superseded reload swapped over a newer one"
             );
         }
+
+        assert!(
+            overlapped > 0,
+            "no iteration overlapped, so nothing about concurrent reloads was tested — \
+             this machine parses the 20k-key document in under 10ms, so the document \
+             needs to grow or the sleep needs to shrink"
+        );
     }
 
     #[test]

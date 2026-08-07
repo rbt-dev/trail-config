@@ -23,6 +23,17 @@ use super::parser;
 const EMPTY_FILE_RETRIES: usize = 10;
 const EMPTY_FILE_BACKOFF: Duration = Duration::from_millis(20);
 
+/// The total time [`Config::load_or_create`] will spend waiting on a zero-length file.
+///
+/// Derived rather than restated so the tests that assert the wait did or did not happen
+/// are expressed against the real window. They used to carry a hardcoded 100 ms, which
+/// said nothing about the constants above and would have gone quietly wrong the first time
+/// either changed.
+#[cfg(test)]
+pub(in crate::config) const EMPTY_FILE_WINDOW: Duration = Duration::from_millis(
+    EMPTY_FILE_RETRIES as u64 * EMPTY_FILE_BACKOFF.as_millis() as u64,
+);
+
 impl Config {
     /// Loads a Config from a file, returning an error if the file is missing or invalid.
     ///

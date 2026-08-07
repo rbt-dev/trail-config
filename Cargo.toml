@@ -14,12 +14,13 @@ categories = ["config", "parsing", "filesystem", "development-tools"]
 license = "MIT"
 repository = "https://github.com/rbt-dev/trail-config.git"
 # `cargo package` otherwise takes everything `.gitignore` does not cover, so the review
-# notes and the local pre-release script were being unpacked into every consumer's
+# notes and the local pre-release scripts were being unpacked into every consumer's
 # registry cache. `README.md` and `CHANGELOG.md` deliberately stay: the first is named by
 # `readme` above and rendered on crates.io, and a changelog in the crate is conventional.
-# Verify with `cargo package --list` before publishing — a published version cannot be
-# replaced, so this is invisible until it is permanent.
-exclude = ["IMPROVEMENTS_*.md", "check.ps1"]
+# Both check scripts and `.gitattributes` are developer tooling with nothing to say to a
+# consumer. Verified by the `package contents` step in either script — a published version
+# cannot be replaced, so a mistake here is invisible until it is permanent.
+exclude = ["IMPROVEMENTS_*.md", "check.ps1", "check.sh", ".gitattributes"]
 
 [package.metadata.docs.rs]
 # `all-features` makes docs.rs *build* the gated items; `--cfg docsrs` makes it *label* them.

@@ -3,6 +3,11 @@
 /target/
 /.vscode/
 
+# check.sh builds here instead of target/. Cargo namespaces the build directory by
+# profile, not by host triple, so a Windows build and a WSL build otherwise invalidate
+# each other's fingerprints and rebuild the world on every switch.
+/target-linux/
+
 # Remove Cargo.lock from gitignore if creating an executable, leave it for libraries
 # More information here https://doc.rust-lang.org/cargo/guide/cargo-toml-vs-cargo-lock.html
 Cargo.lock

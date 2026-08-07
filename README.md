@@ -1575,20 +1575,43 @@ features:
 
 ## Development
 
-`check.ps1` runs the full pre-release check in one command — clippy and tests across every
-feature combination, the doctests, and the doc build:
+One command runs the full pre-release check — clippy and tests across every feature
+combination, the doctests, the doc build and the package contents. There are two copies of
+it, one per platform, doing the same steps in the same order:
 
 ```powershell
-.\check.ps1           # clippy + tests × 5 feature combinations, doctests, docs
+.\check.ps1           # clippy + tests × 5 feature combinations, doctests, docs, package
 .\check.ps1 -Msrv     # also `cargo +1.85 check` (needs `rustup toolchain install 1.85`)
 .\check.ps1 -Bench    # also the criterion benchmarks
 .\check.ps1 -Docsrs   # also builds docs as docs.rs does (needs `rustup toolchain install nightly`)
 ```
 
-`-Docsrs` builds with nightly and `--cfg docsrs`, which is the only configuration where the
-`#[cfg_attr(docsrs, doc(cfg(feature = "...")))]` labels on the feature-gated items compile.
-Without it a mistake in one of those is invisible until the crate is published and the
-rendered page is wrong.
+```bash
+./check.sh            # the same, under Linux — run it in WSL
+./check.sh --msrv
+./check.sh --bench
+./check.sh --docsrs
+```
+
+**Run both.** This project has no CI, so a check script is the gate — but a script only
+ever runs on the machine you are sitting at, and one machine is one platform. This crate
+reads files by path, derives format from extensions and creates files exclusively, so the
+platform axis is where the untested surface is. Between the two: Windows supplies a
+case-insensitive filesystem, Linux supplies the Unix error kinds, a case-sensitive
+filesystem and Unix path handling. macOS is essentially Linux plus a case-insensitive
+filesystem, so it adds nothing on top of those two for this crate.
+
+WSL is enough for the Linux half even with the checkout on a Windows drive: every
+filesystem test goes through `tempfile::tempdir()`, which resolves to `/tmp` — inside WSL2
+that is the ext4 VHD, not the mounted drive. `check.sh` builds into `target-linux/` rather
+than `target/`, because cargo namespaces the build directory by profile and not by host
+triple, so sharing it would make each toolchain invalidate the other's fingerprints and
+rebuild everything on every switch.
+
+`-Docsrs` / `--docsrs` builds with nightly and `--cfg docsrs`, which is the only
+configuration where the `#[cfg_attr(docsrs, doc(cfg(feature = "...")))]` labels on the
+feature-gated items compile. Without it a mistake in one of those is invisible until the
+crate is published and the rendered page is wrong.
 
 The feature combinations matter: `json` and `toml` are additive gates, so code that
 compiles with both enabled can still fail to compile with neither.

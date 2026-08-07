@@ -33,7 +33,14 @@ use super::Config;
 use super::path::get_leaf;
 
 impl Config {
-    /// Gets a value at the specified path
+    /// Gets a raw value at the specified path.
+    ///
+    /// Returns the crate's [`Value`](crate::Value), so this is the one accessor whose
+    /// return type is the value model itself. Prefer [`get_as`](Config::get_as) — or
+    /// [`str`](Config::str) / [`get_int`](Config::get_int) / [`get_bool`](Config::get_bool)
+    /// for a single scalar — which are generic over your own types and keep the model out
+    /// of your code. Reach for this when you genuinely want the raw document: inspecting a
+    /// shape you do not know ahead of time, or walking keys that are not fixed.
     ///
     /// # Arguments
     /// * `path` - Path to the value (e.g., "db/redis/port")
@@ -361,7 +368,7 @@ impl Config {
         ConfigError::DeserializeError {
             file: (!self.filename.is_empty()).then(|| self.filename.clone()),
             path: path.map(str::to_string),
-            source,
+            source: source.into(),
         }
     }
 }

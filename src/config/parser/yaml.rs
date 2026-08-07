@@ -21,8 +21,5 @@ fn parse_internal(yaml: &str, file: Option<&str>) -> Result<Value, ConfigError> 
     // Every YAML path — file or string — passes through here, so the BOM rule is
     // applied exactly once per format. See `super::strip_bom`.
     let yaml = super::strip_bom(yaml);
-    from_str(yaml).map_err(|e| match file {
-        Some(filename) => ConfigError::yaml_in(filename, e),
-        None => ConfigError::from(e),
-    })
+    from_str(yaml).map_err(|e| ConfigError::yaml_in(file, e))
 }

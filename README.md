@@ -392,11 +392,18 @@ sources:
                          # list:        flattens it to "", like an element that is ""
 ```
 
-The raw value type and the errors behind `ConfigError` are re-exported, so nothing the API
-hands back needs a second dependency to name:
+**Prefer typed access where you can.** `get_as` and `deserialize` are generic over your own
+types, so the value model never appears in your code and the shape your program expects is
+stated once instead of at every call site — see [Typed Access](#typed-access) and
+[Struct Deserialization](#struct-deserialization). Reach for `get` when you genuinely want
+the raw document: inspecting a shape you do not know ahead of time, or walking keys that
+are not fixed.
+
+For that case the raw value type is re-exported, so nothing the API hands back needs a
+second dependency to name:
 
 ```rust
-use trail_config::{Config, ConfigError, Value, YamlError};
+use trail_config::{Config, Value};
 
 let config = Config::load_required("config.yaml", "/", None)?;
 
@@ -407,11 +414,18 @@ match config.get("app/port") {
 }
 ```
 
-`Value`, `Mapping`, `Sequence`, `Number` and `YamlError` come from
-[`yaml_serde`](https://docs.rs/yaml_serde); `JsonError` and `TomlError` are re-exported
-with the corresponding feature. Use these names rather than depending on the underlying
-crates directly — a version that differs from the one this crate resolved produces two
+`Value`, `Mapping`, `Sequence` and `Number` come from
+[`yaml_serde`](https://docs.rs/yaml_serde). Use these names rather than depending on that
+crate directly — a version that differs from the one this crate resolved produces two
 incompatible `Value` types.
+
+The error types work the other way round. `JsonError` and `TomlError` are re-exported
+concretely with their features, because `serde_json` and `toml` are both `1.x` and naming
+them costs nothing. `ConfigError::YamlError` and `ConfigError::DeserializeError` instead
+carry `ValueError`, a type of this crate's own, because `yaml_serde` is `0.x` — where Cargo
+treats every minor release as semver-incompatible, so exposing its error type made routine
+dependency updates breaking changes here. `ValueError` prints exactly what the underlying
+error printed and exposes `location()` for a parse error's line and column.
 
 ### Typed access
 
@@ -531,6 +545,23 @@ Load and parse errors record the offending file (`file` is `None` when parsing f
 string) and preserve the original underlying error in `source`, which is also returned
 by `std::error::Error::source()` for error-chain reporting. Display messages include
 the filename when known, e.g. `YAML parse error in config.prod.yaml: ...`.
+
+The `source` types differ by variant, on purpose. `IoError`, `JsonError` and `TomlError`
+carry `std::io::Error`, `serde_json::Error` and `toml::de::Error` concretely — all stable
+`1.x` types, so naming them costs nothing. `YamlError` and `DeserializeError` carry
+`ValueError`, a type of this crate's own, because the value model underneath is a `0.x`
+dependency and Cargo treats every `0.x` minor release as semver-incompatible: exposing its
+error type directly would make a routine dependency update a breaking change here.
+`ValueError` prints exactly what the underlying error printed, and adds `location()`:
+
+```rust
+if let Err(ConfigError::YamlError { source, .. }) = Config::load_required("config.yaml", "/", None) {
+    match source.location() {
+        Some((line, column)) => eprintln!("bad YAML at {line}:{column}: {source}"),
+        None => eprintln!("bad YAML: {source}"),
+    }
+}
+```
 
 ### Matching on `ConfigError`
 

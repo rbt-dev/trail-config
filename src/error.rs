@@ -1,6 +1,80 @@
 use std::io;
 use thiserror::Error;
 
+/// The detail behind [`ConfigError::YamlError`] and [`ConfigError::DeserializeError`].
+///
+/// Both come from the value model this crate reads through: the first from parsing YAML
+/// text into it, the second from deserializing a document out of it into your type. The
+/// second happens for JSON and TOML configs too, which is why this is named for the value
+/// model rather than for YAML.
+///
+/// # Why it is opaque
+///
+/// The value model is [`yaml_serde`](https://docs.rs/yaml_serde)'s, and that crate is
+/// `0.x`, where Cargo treats **every minor release as semver-incompatible**. Exposing its
+/// error type directly — which this crate did, re-exported as `YamlError` — meant a
+/// `0.10 → 0.11` bump there changed the identity of a type in this crate's public API, so
+/// a routine dependency update became a breaking release here. Wrapping it moves that
+/// boundary inside: the inner type can change without any signature here changing.
+///
+/// The same argument does *not* apply to [`ConfigError::JsonError`] and
+/// [`ConfigError::TomlError`], which still carry `serde_json::Error` and `toml::de::Error`
+/// concretely. Both of those crates are `1.x`, so naming their types costs nothing and
+/// gives callers everything those errors offer. The asymmetry is the point rather than an
+/// oversight — this wraps the one dependency whose version is a liability.
+///
+/// What you can still do with it: print it (the `Display` text is the underlying error's,
+/// unchanged), and ask a parse error where it happened with [`location`](Self::location).
+/// What you can no longer do is match on the upstream error's own variants, which is the
+/// trade.
+#[derive(Debug)]
+pub struct ValueError(yaml_serde::Error);
+
+impl ValueError {
+    /// The 1-based line and column the error points at, when it has one.
+    ///
+    /// A parse error from reading YAML text usually does; an error from deserializing an
+    /// already-parsed document into a type usually does not, because by then there is no
+    /// text to point into — and for a config that came from JSON or TOML there never was
+    /// any YAML text to begin with.
+    ///
+    /// # Example
+    /// ```
+    /// # use trail_config::{Config, ConfigError};
+    /// let err = Config::load_yaml("app:\n  - [unclosed\n", "/").unwrap_err();
+    ///
+    /// if let ConfigError::YamlError { source, .. } = &err {
+    ///     if let Some((line, column)) = source.location() {
+    ///         eprintln!("bad YAML at {line}:{column}");
+    ///     }
+    /// }
+    /// ```
+    pub fn location(&self) -> Option<(usize, usize)> {
+        self.0.location().map(|at| (at.line(), at.column()))
+    }
+}
+
+impl std::fmt::Display for ValueError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl std::error::Error for ValueError {
+    /// Deliberately `None`: this *is* the underlying error, repackaged, not a wrapper
+    /// around a further one. Returning the inner `yaml_serde::Error` would put it back in
+    /// reach of `downcast_ref`, which is the coupling this type exists to remove.
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        None
+    }
+}
+
+impl From<yaml_serde::Error> for ValueError {
+    fn from(source: yaml_serde::Error) -> Self {
+        ValueError(source)
+    }
+}
+
 /// Error type for all fallible Trail Config operations.
 ///
 /// Load and parse errors record the file they occurred in (`file` is `None`
@@ -54,7 +128,7 @@ pub enum ConfigError {
         /// The file being parsed, or `None` for string input or `from_value` failures.
         file: Option<String>,
         /// The underlying YAML error, from parsing or from deserializing into a type.
-        source: yaml_serde::Error,
+        source: ValueError,
     },
 
     /// JSON parsing failure (requires the `json` feature).
@@ -86,9 +160,10 @@ pub enum ConfigError {
     /// Distinct from the parse errors above, which report a file that could not be *read*
     /// as its format. Here the file parsed fine, whatever that format was, and the
     /// mismatch is between the resulting document and the Rust type asked for — so this
-    /// variant names no format. Deserialization runs through the `yaml_serde` value model
-    /// for JSON and TOML configs too, which is why the underlying error is a
-    /// [`yaml_serde::Error`] regardless of where the document came from.
+    /// variant names no format. Deserialization runs through the same value model for JSON
+    /// and TOML configs too, which is why the underlying error is a [`ValueError`]
+    /// regardless of where the document came from — and why that type is named for the
+    /// value model rather than for YAML.
     #[error("Cannot deserialize {}: {source}", fmt_target(.path, .file))]
     #[non_exhaustive]
     DeserializeError {
@@ -97,7 +172,7 @@ pub enum ConfigError {
         /// The path of the subtree being deserialized, or `None` for the whole document.
         path: Option<String>,
         /// The underlying error from the value model.
-        source: yaml_serde::Error,
+        source: ValueError,
     },
 
     /// Configuration path not found in the document.
@@ -131,8 +206,12 @@ impl ConfigError {
         ConfigError::IoError { file: Some(file.to_string()), source }
     }
 
-    pub(crate) fn yaml_in(file: &str, source: yaml_serde::Error) -> Self {
-        ConfigError::YamlError { file: Some(file.to_string()), source }
+    /// Takes `Option<&str>` like [`json_in`](Self::json_in) and [`toml_in`](Self::toml_in),
+    /// so a string parse (`None`) and a file parse go through one constructor. The `None`
+    /// case used to be a public `From<yaml_serde::Error>` impl, which named the wrapped
+    /// crate in this crate's API for no benefit a caller could use.
+    pub(crate) fn yaml_in(file: Option<&str>, source: yaml_serde::Error) -> Self {
+        ConfigError::YamlError { file: file.map(str::to_string), source: source.into() }
     }
 
     #[cfg(feature = "json")]
@@ -152,8 +231,3 @@ impl From<io::Error> for ConfigError {
     }
 }
 
-impl From<yaml_serde::Error> for ConfigError {
-    fn from(err: yaml_serde::Error) -> Self {
-        ConfigError::YamlError { file: None, source: err }
-    }
-}

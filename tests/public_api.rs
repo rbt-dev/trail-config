@@ -9,7 +9,7 @@
 //! use the values and errors the public API hands back. A broader consumer-vantage suite
 //! is still worth having.
 
-use trail_config::{Config, ConfigError, ConfigHandle, Mapping, Number, Sequence, Value, YamlError};
+use trail_config::{Config, ConfigError, ConfigHandle, Mapping, Number, Sequence, Value, ValueError};
 
 const YAML: &str = "app:\n  port: 8080\n  name: myapp\nfeatures:\n  - a\n  - b\n";
 
@@ -69,12 +69,54 @@ fn the_yaml_error_behind_a_config_error_is_nameable() {
     match Config::load_yaml("app: [unclosed", "/") {
         Err(ConfigError::YamlError { file, source, .. }) => {
             // Binding `source` by type is what a caller needs to pass it on, wrap it or
-            // inspect it — the public field was previously of an unnameable type.
-            let source: YamlError = source;
+            // inspect it. It is deliberately *not* `yaml_serde::Error` any more: that
+            // crate is 0.x, so naming it here made every one of its minor releases a
+            // breaking change for this crate's API.
+            let source: ValueError = source;
             assert!(!source.to_string().is_empty());
             assert_eq!(file, None, "a string config has no file to name");
         },
         other => panic!("expected YamlError, got {:?}", other.err()),
+    }
+}
+
+#[test]
+fn a_yaml_parse_error_reports_where_it_happened() {
+    // The one piece of structure the wrapper keeps, because it is the piece a caller can
+    // act on — everything else about the upstream error is reachable through `Display`.
+    let err = Config::load_yaml("app:
+  - [unclosed
+", "/").unwrap_err();
+
+    match err {
+        ConfigError::YamlError { source, .. } => {
+            let (line, column) = source.location().expect("a parse error should have a location");
+            assert!(line >= 1 && column >= 1, "got {line}:{column}");
+        },
+        other => panic!("expected YamlError, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_deserialize_error_carries_the_same_type_whatever_the_format() {
+    use serde::Deserialize;
+
+    #[derive(Deserialize, Debug)]
+    struct Wants {
+        #[allow(dead_code)]
+        port: u16,
+    }
+
+    // The reason the type is named for the value model rather than for YAML: a config
+    // that never saw a line of YAML still fails deserialization through it.
+    let config = Config::load_yaml("port: not-a-number
+", "/").unwrap();
+    match config.deserialize_strict::<Wants>() {
+        Err(ConfigError::DeserializeError { source, path, .. }) => {
+            let _: ValueError = source;
+            assert_eq!(path, None, "the whole document, not a subtree");
+        },
+        other => panic!("expected DeserializeError, got {other:?}"),
     }
 }
 

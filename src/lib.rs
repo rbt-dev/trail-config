@@ -66,6 +66,25 @@
 //! [`deserialize`](Config::deserialize), and sibling values format into a string with
 //! [`fmt`](Config::fmt).
 //!
+//! ```
+//! # use serde::Deserialize;
+//! # use trail_config::{Config, ConfigError};
+//! #[derive(Deserialize)]
+//! struct Db { host: String, port: u16 }
+//!
+//! # let config = Config::load_yaml("db:\n  host: localhost\n  port: 5432", "/")?;
+//! let db: Db = config.get_as_strict("db")?;
+//! assert_eq!(db.port, 5432);
+//! # Ok::<(), ConfigError>(())
+//! ```
+//!
+//! **Prefer this over [`get`](Config::get) where you can.** The typed accessors are generic
+//! over your own types, so they never mention this crate's value model — which means your
+//! code does not depend on what that model happens to be, and a struct states the shape
+//! your program actually expects in one place instead of at every call site. Reach for
+//! `get` when you genuinely want the raw document: inspecting an unknown shape, or walking
+//! something whose keys are not known ahead of time.
+//!
 //! # Layering and reloading
 //!
 //! [`merge_required`](Config::merge_required) and [`merge_optional`](Config::merge_optional)
@@ -95,10 +114,17 @@
 //!
 //! # Value model
 //!
-//! [`Value`] — what [`Config::get`] returns — and the error types behind [`ConfigError`]'s
-//! parse variants are re-exported here, along with [`Mapping`], [`Sequence`] and
-//! [`Number`]. Name them through this crate rather than adding the underlying crates as
-//! dependencies, so the types always match the versions this crate resolved.
+//! [`Value`] — what [`Config::get`] returns — is re-exported here along with [`Mapping`],
+//! [`Sequence`] and [`Number`], as are the concrete error types behind
+//! [`ConfigError::JsonError`] and [`ConfigError::TomlError`]. Name them through this crate
+//! rather than adding the underlying crates as dependencies, so the types always match the
+//! versions this crate resolved.
+//!
+//! Most programs never need any of them. [`get_as`](Config::get_as) and
+//! [`deserialize`](Config::deserialize) are generic over your own types, so the value model
+//! stays an implementation detail unless you ask for it — which is the recommended way
+//! round, and the reason [`ConfigError::YamlError`] and [`ConfigError::DeserializeError`]
+//! carry a crate-local [`ValueError`] rather than the underlying crate's error type.
 //!
 //! # Environment variables
 //!
@@ -143,36 +169,35 @@ mod handle;
 #[cfg(test)]
 mod test_util;
 
-pub use error::ConfigError;
+pub use error::{ConfigError, ValueError};
 pub use config::{Config, Format};
 pub use handle::ConfigHandle;
 
-// The value model and the underlying error types appear in this crate's public API —
-// `get` returns a `Value`, and every parse-error variant of `ConfigError` carries the
-// originating error as a public `source` field. Without these re-exports a caller could
-// not *name* what those APIs hand back: `get` was usable only through `Debug`, and
-// matching on `ConfigError::YamlError { source }` gave a binding of an unnameable type.
-// The alternative — adding `yaml_serde` as a direct dependency — meant guessing the
-// version this crate resolved, and picking a different one produces two incompatible
-// `Value` types whose error message names the same path twice.
+// The value model appears in this crate's public API — `get` returns a `Value` — so
+// without this re-export a caller could not *name* what that hands back, and `get` was
+// usable only through `Debug`. The alternative, adding `yaml_serde` as a direct
+// dependency, meant guessing the version this crate resolved; picking a different one
+// produces two incompatible `Value` types whose error message names the same path twice.
 //
-// Re-exporting does not settle the larger question of whether the value model should be
-// a crate-local type so `yaml_serde` (still 0.x, where every minor bump is breaking) can
-// be upgraded without a breaking release here. It makes the current API honest, and
+// The errors used to be re-exported the same way and no longer are: `ConfigError`'s YAML
+// and deserialize variants carry a crate-local `ValueError` instead, so a `yaml_serde`
+// minor bump — always semver-breaking, since it is 0.x — cannot change a type in this
+// crate's API. See `ValueError`'s docs for why the JSON and TOML variants keep their
+// concrete error types.
+//
+// `Value` itself is still `yaml_serde`'s, which leaves the larger question open: a
+// crate-local value model would let that dependency be upgraded without a breaking
+// release here, at the cost of implementing `Deserializer` for it by hand. Narrowing the
+// surface to one type rather than five makes that decision cheaper either way, and
 // forecloses nothing.
 
 /// The parsed value model, re-exported from [`yaml_serde`](https://docs.rs/yaml_serde).
 ///
-/// [`Config::get`] and [`Config::get_strict`] return a [`Value`], and its variants carry
-/// [`Mapping`], [`Sequence`] and [`Number`]. Prefer [`Config::get_as`] for a typed struct;
-/// reach for these when you want the raw document.
+/// Reach for these when you want the raw document. For reading configuration — which is
+/// almost always the job — prefer [`Config::get_as`] and [`Config::deserialize`], which are
+/// generic over your own types and never mention this model at all; see
+/// [Reading](crate#reading).
 pub use yaml_serde::{Mapping, Number, Sequence, Value};
-
-/// The error carried by [`ConfigError::YamlError`], re-exported from
-/// [`yaml_serde`](https://docs.rs/yaml_serde).
-///
-/// Covers both YAML parse failures and failures to deserialize a document into a type.
-pub use yaml_serde::Error as YamlError;
 
 /// The error carried by [`ConfigError::JsonError`], re-exported from
 /// [`serde_json`](https://docs.rs/serde_json).

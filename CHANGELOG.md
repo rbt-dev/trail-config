@@ -42,6 +42,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added `[package.metadata.docs.rs] all-features = true` so the feature-gated JSON/TOML APIs appear in the docs.rs documentation.
 - Documented three behaviours that were previously unstated, none of which change: paths navigate **mappings only**, so `items/0` is a lookup for a key named `0` rather than a sequence element (read sequences whole with `list`, `get_as` or `deserialize`); `load_or_create` creates the file but **not** its parent directories, so a missing parent is an `IoError` rather than a conjured directory tree; and `env` is interpolated into a filesystem path **without validation**, so it must not come from an untrusted source. Each is now stated in the README and in the relevant rustdoc, and pinned by a test.
 - README: removed the duplicated "Thread Safety" section (merged into "Thread-Safe Shared Config") and documented the `load_or_create` defaults-format behaviour.
+- README: covered the surface this release added but the guide had not caught up with. A "Chaining or in place" section under Merging Configs for `merge_required_in_place` / `merge_optional_in_place`, which appeared nowhere — and whose absence left the `ConfigHandle` table describing the merges as "consume `self`", which stopped being the whole picture the moment the in-place pair landed. Worked examples for `load_optional_as` and `load_or_create_as`, previously listed in the `_as` twin table with only `load_required_as` shown in use. Samples for `separator()` and for the lenient `deserialize()`, both of which were named in a table and never used in code. An `Installation` section, since `trail-config = "0.5"` appeared only inside the JSON and TOML feature blocks and a reader wanting neither had no line to copy. The constructor overview no longer says "four constructors" ahead of a table that now sits alongside three `_as` twins and three string constructors, and the Development section says up front that the check scripts it documents are repository tooling excluded from the published crate — a distinction invisible on GitHub and confusing on the crates.io page.
 - Tests no longer write fixture files into the crate's working directory. All file-based tests now use per-test temp directories (via a new `tempfile` dev-dependency) that are cleaned up automatically, even when a test panics. Previously, fixed-name files like `test_handle_reload.yaml` were created in the CWD and left behind on failure.
 - Tests that mutate process environment variables (`std::env::set_var` / `remove_var`) are now serialized through a shared lock in a new internal `test_util` module, eliminating races under the parallel test runner.
 - Internal restructure: the 1,108-line `src/config/mod.rs` has been split into focused submodules — `loader` (constructors), `accessor` (value reading), `merge`, `reload`, `path` (path parsing/navigation), `env` (variable interpolation) and `fmt`. `mod.rs` now holds only the `Config` type, its `Default` impl and the metadata accessors. Private helpers that never took `self` (`get_leaf`, `parse_path`, `merge_values`, `resolve_env_vars`, `get_file`, `load_auto`, `to_string`) are now free functions in their respective modules. The YAML/JSON/TOML adapters moved into a `parser` submodule alongside the extension-based `load_auto` dispatch, so the format feature gates live in one place and the loader no longer needs to know which formats exist. Every constructor now funnels through a single private `from_parsed` builder and a shared `check_separator` guard, replacing seven copies of the `Config { .. }` literal and five copies of the empty-separator check. No public API, behaviour or documentation changes.
@@ -288,7 +289,7 @@ config.fmt("postgresql://{}@{}:{}/{}", "database", &["username", "host", "port",
 - Added package `description` field in `Cargo.toml`
 - Removed `yml` from crate keywords (kept `yaml`)
 
-## [0.1.0] - Unreleased
+## [0.1.0] - 2021-09-15
 
 ### Added
 
@@ -303,3 +304,20 @@ config.fmt("postgresql://{}@{}:{}/{}", "database", &["username", "host", "port",
 - Customisable path separator (e.g. `/`, `::`)
 - Environment-specific config file loading via `{env}` placeholder
 - Dependencies: `serde_yaml 0.8.21`, `strfmt 0.1.6`
+
+<!-- Every version heading above is a link into the repository: each one compares against its
+     predecessor, so a heading answers "what actually changed" as well as naming the release.
+     0.5.0 points at HEAD while it is unreleased; on publishing, retag and change it to
+     `v0.4.0...v0.5.0`. -->
+
+[0.5.0]: https://github.com/rbt-dev/trail-config/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/rbt-dev/trail-config/compare/v0.3.1...v0.4.0
+[0.3.1]: https://github.com/rbt-dev/trail-config/compare/v0.3.0...v0.3.1
+[0.3.0]: https://github.com/rbt-dev/trail-config/compare/v0.2.0...v0.3.0
+[0.2.0]: https://github.com/rbt-dev/trail-config/compare/v0.1.5...v0.2.0
+[0.1.5]: https://github.com/rbt-dev/trail-config/compare/v0.1.4...v0.1.5
+[0.1.4]: https://github.com/rbt-dev/trail-config/compare/v0.1.3...v0.1.4
+[0.1.3]: https://github.com/rbt-dev/trail-config/compare/v0.1.2...v0.1.3
+[0.1.2]: https://github.com/rbt-dev/trail-config/compare/v0.1.1...v0.1.2
+[0.1.1]: https://github.com/rbt-dev/trail-config/compare/v0.1.0...v0.1.1
+[0.1.0]: https://github.com/rbt-dev/trail-config/releases/tag/v0.1.0

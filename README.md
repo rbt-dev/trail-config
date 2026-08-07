@@ -21,6 +21,23 @@ A Rust library for reading config files with path-based access, typed deserializ
 - ⚡ `config!` macro for concise loading and merging
 - 📂 JSON and TOML support via optional feature flags
 
+## Installation
+
+```toml
+[dependencies]
+trail-config = "0.5"
+```
+
+That is the whole crate for YAML, which needs no feature flags. JSON and TOML are additive
+gates — see [From a JSON file or string](#from-a-json-file-or-string-requires-json-feature)
+and [From a TOML file or string](#from-a-toml-file-or-string-requires-toml-feature) — and
+either or both can be enabled:
+
+```toml
+[dependencies]
+trail-config = { version = "0.5", features = ["json", "toml"] }
+```
+
 ## Quick Start
 
 ```rust
@@ -42,7 +59,8 @@ match config.str_strict("database/host") {
 
 ## Loading Configuration
 
-Trail Config exposes four constructors with a clear, symmetric design:
+Trail Config's constructors fall into three groups. The four below load a **file**, and are
+the ones to reach for first:
 
 | Constructor | File required? | Use case |
 | ----------- | -------------- | -------- |
@@ -50,6 +68,12 @@ Trail Config exposes four constructors with a clear, symmetric design:
 | `Config::load_optional(filename, sep, env)` | No — returns empty config if missing | Optional or environment-specific files |
 | `Config::load_or_create(filename, sep, env, defaults)` | No — creates from defaults if missing | First-run config generation |
 | `Config::default()` | No | Shorthand for `load_optional("config.yaml", "/", None)`. Empty if missing, **panics if broken** |
+
+The other two groups are variations on those. Each of the three named file constructors has
+an `_as` twin taking an explicit `Format`, for
+[files whose extension does not name their format](#files-whose-extension-does-not-name-their-format);
+and `load_yaml`, `load_json` and `load_toml` build a config from a **string** already in
+memory rather than from disk.
 
 ### Required config (production)
 
@@ -221,14 +245,42 @@ let mut config = Config::load_required_as("settings.conf", "/", None, Format::Js
 config.reload()?;
 ```
 
+Each twin keeps its base method's behaviour exactly, adding only the pinned format.
+`load_optional_as` still treats an absent file as an empty config — and still records the
+filename, so the format is already pinned when a later `reload()` finds the file:
+
+```rust
+use trail_config::{Config, Format};
+
+// Absent is fine; the config comes back empty, still knowing what to read and how
+let mut config = Config::load_optional_as("settings.conf", "/", None, Format::Toml)?;
+assert_eq!(config.filename(), "settings.conf");
+
+// IoError (NotFound) while the file is still missing; once it appears it is
+// parsed as TOML, not as YAML
+config.reload()?;
+```
+
 `Format` is `#[non_exhaustive]`, so matching on one needs a `_ => ...` arm; `Format::Json`
 and `Format::Toml` exist only with their features enabled.
 
 `load_or_create_as` uses the format for both halves of its job — the defaults are validated
-against the same parser that will read them back. That is the one place deriving the format
-from the extension would be outright wrong rather than merely redundant: YAML-shaped
-defaults under a `.conf` name pinned to JSON would pass a YAML check (YAML is a superset of
-JSON) and then be written to a file the very next read parses as JSON.
+against the same parser that will read them back, so they must be written in it:
+
+```rust
+use trail_config::{Config, Format};
+
+const DEFAULTS: &str = r#"{"app": {"port": 8080}}"#;
+
+// Creates settings.conf holding DEFAULTS on first run, reads it as JSON on every run
+let config = Config::load_or_create_as("settings.conf", "/", None, Format::Json, DEFAULTS)?;
+assert_eq!(config.get_int("app/port"), Some(8080));
+```
+
+That is the one place deriving the format from the extension would be outright wrong rather
+than merely redundant: YAML-shaped defaults under a `.conf` name pinned to JSON would pass a
+YAML check (YAML is a superset of JSON) and then be written to a file the very next read
+parses as JSON.
 
 The format is recorded on the config, so `reload` and `reload_from` use the same parser.
 Overlays are unaffected and still pick their own parser by their own extension, so a JSON
@@ -459,6 +511,27 @@ error printed and exposes `location()` for a parse error's line and column.
 | `reload()` | `Result<(), ConfigError>` | Reload from current file |
 | `reload_from(filename)` | `Result<(), ConfigError>` | Load from a different file, discarding the overlay chain |
 | `outline()` | `String` | Every path in the document, with values replaced by their types |
+
+The three settings a config carries — `filename()`, `environment()` and `separator()` — are
+readable for the same reason. Code handed a `Config` it did not construct cannot otherwise
+spell a path for it, since the separator is chosen at construction and every accessor is
+defined in terms of it:
+
+```rust
+use trail_config::Config;
+
+// A helper that works whatever separator its caller chose
+fn db_host(config: &Config) -> String {
+    let sep = config.separator();
+    config.str(&format!("database{sep}host"))
+}
+
+let config = Config::load_required("config.yaml", "::", None)?;
+assert_eq!(db_host(&config), config.str("database::host"));
+```
+
+`outline()`'s escaping is defined in terms of the same separator, so this is also what lets
+its output be interpreted by code that did not pick it.
 
 ## Debug Output
 
@@ -756,12 +829,28 @@ struct DatabaseConfig {
 let config = Config::load_required("config.yaml", "/", None)?;
 
 // Deserialize the entire config at once
-let full: FullConfig = config.deserialize_strict()?;
+let full: FullConfig = config.deserialize_strict()?;                // Strict — errors on a mismatch
+let full: Option<FullConfig> = config.deserialize();                // Lenient — None on a mismatch
 
 // Or deserialize just a subtree
 let db: DatabaseConfig = config.get_as_strict("database")?; // Strict — returns a descriptive error on failure
 let db: Option<DatabaseConfig> = config.get_as("database"); // Lenient — returns None if path is missing or struct doesn't match
 ```
+
+The lenient `deserialize` suits a config whose absence is a normal state — an optional
+overlay-only file, or a subsystem that is simply off when unconfigured — since it collapses
+"missing" and "malformed" into `None`:
+
+```rust
+// No telemetry section, or one that does not match: run without it
+match config.deserialize::<TelemetryConfig>() {
+    Some(telemetry) => start_telemetry(telemetry),
+    None => println!("telemetry not configured, skipping"),
+}
+```
+
+Prefer `deserialize_strict` where the config is required, since it says *which* field was
+wrong rather than only that something was.
 
 `deserialize_strict` returns `DeserializeError` if the config can't be deserialized into 
 `T`, naming the file and — for `get_as_strict` — the subtree path. `get_as_strict` 
@@ -1034,9 +1123,16 @@ derefs to `&Config`:
 | `reload` (`&mut self`) | Mirrored as `handle.reload()` |
 | `reload_from` (`&mut self`) | Mirrored as `handle.reload_from(file)` |
 | `merge_required` / `merge_optional` (consume `self`) | Not offered — layer the files, *then* wrap the result in a handle |
+| `merge_required_in_place` / `merge_optional_in_place` (`&mut self`) | Not offered either — see below |
 
 So a handle is not bound to its file for life, but its overlay chain is fixed at
 construction: `reload` re-applies it, `reload_from` clears it.
+
+The [in-place merges](#chaining-or-in-place) have a signature a handle *could* mirror, since
+`&mut self` is no obstacle to interior mutability — they are left off for a reason about
+layering rather than about signatures. A handle re-reads the sources its config was built
+from; it does not acquire new ones behind existing snapshots. Layer the files first, then
+wrap the result.
 
 Because a snapshot is immutable, a concurrent reload can never change it underneath you — take
 one snapshot when you need several values to agree (each convenience call takes its own):
@@ -1145,6 +1241,44 @@ neither does here.
 The overlay filenames are recorded so that `reload()` can re-read and re-apply them in 
 order — required overlays that are missing on reload return an error, optional overlays that 
 are missing are silently skipped.
+
+### Chaining or in place
+
+Each merge comes in two forms, differing only in signature:
+
+| Form | Signature | On failure |
+| ---- | --------- | ---------- |
+| `merge_required(file, env)` / `merge_optional(file, env)` | consume `self`, return `Result<Config, _>` | the base config is gone — it was moved into the call |
+| `merge_required_in_place(file, env)` / `merge_optional_in_place(file, env)` | `&mut self`, return `Result<(), _>` | the receiver is untouched — filename, document and overlay chain all as they were |
+
+Overlay rules, recorded filenames, recorded environments and errors are identical; the
+chaining forms are defined in terms of the in-place ones. Use the chaining form to build a
+config from a known set of files, and the in-place form when a merge might fail and the base
+is worth keeping:
+
+```rust
+use trail_config::Config;
+
+let mut config = Config::load_required("config.yaml", "/", None)?;
+
+// Absent is fine and silent; unreadable is reported and the base survives it
+if let Err(e) = config.merge_optional_in_place("config.local.yaml", None) {
+    eprintln!("config.local.yaml is unusable, continuing without it: {e}");
+}
+
+let port = config.get_int("app/port"); // the base's value, whichever way that went
+```
+
+That matters most for `merge_optional`, whose whole purpose is making an overlay
+survivable. A *missing* optional file is skipped, but a present-but-unparseable one is an
+error — and with the chaining form that error arrived after the base had already been moved
+into the call, so "use `config.local.yaml` if it is present **and readable**, otherwise carry
+on" could not be written at all.
+
+The guarantee is mechanical rather than careful bookkeeping: the overlay is resolved, read,
+parsed and interpolated into a local before anything on `self` is touched, so every failure
+returns before the first mutation. It is the same guarantee `reload` and `reload_from`
+already make.
 
 ### Tagged values
 
@@ -1574,6 +1708,11 @@ features:
 ```
 
 ## Development
+
+This section describes working on the crate itself, from a checkout of the
+[repository](https://github.com/rbt-dev/trail-config). The scripts it names are developer
+tooling and are deliberately excluded from the published package, so they are not in the
+crate you get from crates.io — only in the repository.
 
 One command runs the full pre-release check — clippy and tests across every feature
 combination, the doctests, the doc build and the package contents. There are two copies of

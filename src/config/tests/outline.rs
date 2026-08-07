@@ -70,6 +70,84 @@ plain/key: <string>
 }
 
 #[test]
+fn every_unmarked_outline_line_resolves() {
+    // The invariant the test above asserts, over a document that actually contains the
+    // keys the path syntax cannot express. It passed only because no key it used was of
+    // either kind: an empty key printed `a/`, which `get_leaf` rejects, and a non-string
+    // key printed the literal text `<non-string key>`.
+    let yaml = "\
+plain: 1
+\"\": 2
+nested:
+  \"\": 3
+  ok: 4
+1: 5
+true: 6
+2.5: 7
+~: 8
+under:
+  9:
+    deeper: 10
+? [a, b]
+: 11
+";
+    let config = Config::load_yaml(yaml, "/").unwrap();
+    let outline = config.outline();
+
+    for line in outline.lines() {
+        let path = line.rsplit_once(": ").expect("every line has a type").0;
+        if line.ends_with("# not addressable") {
+            assert!(!config.contains(path), "a marked line resolved after all: {}", line);
+        } else {
+            assert!(config.contains(path), "outline printed an unresolvable path: {}", line);
+        }
+    }
+
+    // Both kinds of unusable key are still *listed* — dropping them would leave the
+    // reader comparing the outline against the file
+    assert!(outline.contains("\"\": <number>  # not addressable"));
+    assert!(outline.contains("nested/\"\": <number>  # not addressable"));
+    assert!(outline.contains("1: <number>  # not addressable"));
+    assert!(outline.contains("true: <number>  # not addressable"));
+    assert!(outline.contains("2.5: <number>  # not addressable"));
+    assert!(outline.contains("null: <number>  # not addressable"));
+    assert!(outline.contains("<complex key>: <number>  # not addressable"));
+
+    // A distinct non-string key is no longer collapsed onto the same text as every other
+    assert_eq!(outline.matches("# not addressable").count(), 8);
+
+    // The marker covers the whole line, so a subtree under an unusable key carries it too
+    assert!(outline.contains("under/9/deeper: <number>  # not addressable"));
+
+    // ...and the addressable siblings are untouched
+    assert!(outline.contains("plain: <number>\n"));
+    assert!(outline.contains("nested/ok: <number>\n"));
+}
+
+#[test]
+fn a_top_level_empty_key_is_not_confused_with_a_scalar_document() {
+    // The empty key at the root printed a bare `<number>` — byte-identical to what
+    // `outline_of_a_pathless_document_prints_its_type_alone` asserts for a document that
+    // holds a single scalar. Two different documents, one output.
+    let empty_key = Config::load_yaml("\"\": 1\n", "/").unwrap();
+    let scalar_doc = Config::load_yaml("1\n", "/").unwrap();
+
+    assert_eq!(empty_key.outline(), "\"\": <number>  # not addressable\n");
+    assert_eq!(scalar_doc.outline(), "<number>\n");
+    assert_ne!(empty_key.outline(), scalar_doc.outline());
+}
+
+#[test]
+fn a_quoted_empty_key_is_told_apart_from_a_two_quote_key() {
+    // Both render as `""`. The marker is what distinguishes them: a key made of two quote
+    // characters is an ordinary string key and resolves.
+    let config = Config::load_yaml("'\"\"': 1\n", "/").unwrap();
+
+    assert_eq!(config.outline(), "\"\": <number>\n");
+    assert!(config.contains("\"\""), "a two-quote key is an ordinary addressable key");
+}
+
+#[test]
 fn outline_uses_the_configs_own_separator() {
     let config = Config::load_yaml("db:\n  redis:\n    port: 6379\n", "::").unwrap();
 

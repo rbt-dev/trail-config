@@ -36,6 +36,24 @@ impl Config {
     /// mapping's keys are listed rather than the tag being printed as a leaf. The tag is
     /// not shown: it is not part of any path, and every line here is a path.
     ///
+    /// # Keys that are not addressable
+    ///
+    /// Two kinds of key cannot be written as a path at all: an **empty** key, because
+    /// every path segment must be non-empty, and a **non-string** key (`1:`, `true:`),
+    /// because a path segment is matched as a string. YAML allows both. They are still
+    /// listed — a key you cannot reach is exactly what you want to see when a lookup is
+    /// failing — but marked, so the output never claims a path that does not resolve:
+    ///
+    /// ```text
+    /// app/port: <number>
+    /// "": <string>                   # not addressable
+    /// retries/1: <string>            # not addressable
+    /// ```
+    ///
+    /// The marker covers the whole line, so everything nested under such a key carries it
+    /// too. Every line without one resolves as written; that is the property worth
+    /// relying on, and it is what the marker exists to keep true.
+    ///
     /// Sequences are leaves: their elements have no addressable path (`items/0` is a
     /// lookup for a key named `0`), so a sequence prints as its length. An empty mapping
     /// likewise prints as itself, since it contains no path to list. A document that is
@@ -55,16 +73,31 @@ impl Config {
     /// ```
     pub fn outline(&self) -> String {
         let mut out = String::new();
-        write_outline(&self.content, &mut String::new(), &self.separator, &mut out);
+        write_outline(&self.content, &mut String::new(), &self.separator, true, &mut out);
         out
     }
 }
 
+/// Appended to any line whose path the accessors cannot resolve.
+///
+/// Marking beats omitting: a key you cannot reach is precisely what you want to see when a
+/// lookup is failing, and dropping it silently leaves you comparing the outline against the
+/// file wondering which of the two is lying.
+const NOT_ADDRESSABLE: &str = "  # not addressable";
+
 /// Walks the document depth-first, appending one line per leaf.
 ///
 /// `prefix` is the path built so far; it is extended and truncated in place rather than
-/// re-joined at every level.
-fn write_outline(value: &Value, prefix: &mut String, separator: &str, out: &mut String) {
+/// re-joined at every level. `addressable` tracks whether every key on the way here could
+/// be written as a path segment — once one cannot, nothing below it can either, so it only
+/// ever goes from true to false.
+fn write_outline(
+    value: &Value,
+    prefix: &mut String,
+    separator: &str,
+    addressable: bool,
+    out: &mut String,
+) {
     // A `!Tag` is transparent to addressing — `Value::get` untags before looking a key
     // up, so `db/host` resolves whether or not `db` is tagged. Listing had to agree: a
     // tagged mapping was treated as a leaf, so its keys were addressable but never
@@ -76,14 +109,8 @@ fn write_outline(value: &Value, prefix: &mut String, separator: &str, out: &mut 
                 if base > 0 {
                     prefix.push_str(separator);
                 }
-                match key.as_str() {
-                    Some(key) => push_escaped(prefix, key, separator),
-                    // A non-string key cannot be written as a path at all — YAML allows
-                    // them, this crate's accessors cannot address them. Say so rather
-                    // than print something unusable.
-                    None => prefix.push_str("<non-string key>"),
-                }
-                write_outline(child, prefix, separator, out);
+                let key_addressable = push_key(prefix, key, separator);
+                write_outline(child, prefix, separator, addressable && key_addressable, out);
                 prefix.truncate(base);
             }
         },
@@ -96,7 +123,53 @@ fn write_outline(value: &Value, prefix: &mut String, separator: &str, out: &mut 
                 out.push_str(": ");
             }
             out.push_str(&describe_leaf(leaf));
+            if !addressable {
+                out.push_str(NOT_ADDRESSABLE);
+            }
             out.push('\n');
+        },
+    }
+}
+
+/// Renders one mapping key into `prefix`, reporting whether a path containing it resolves.
+///
+/// YAML permits keys this crate's path syntax cannot express, and printing them as though
+/// it could was the bug. An empty key rendered as nothing at all, so `{a: {"": 1}}` printed
+/// `a/` — which `get_leaf` rejects, correctly, for having an empty segment — and at the top
+/// level it printed a bare `<number>`, byte-identical to what a document holding a single
+/// scalar prints. A non-string key printed the literal text `<non-string key>`, so `1:` and
+/// `true:` collapsed onto one line and neither resolved.
+///
+/// Each is now rendered as itself and its line marked, which claims nothing and hides
+/// nothing. An empty key shows as `""` — so does a key genuinely made of two quote
+/// characters, but that one is addressable and carries no marker, which tells them apart.
+fn push_key(out: &mut String, key: &Value, separator: &str) -> bool {
+    match key {
+        Value::String(key) if !key.is_empty() => {
+            push_escaped(out, key, separator);
+            true
+        },
+        Value::String(_) => {
+            out.push_str("\"\"");
+            false
+        },
+        Value::Null => {
+            out.push_str("null");
+            false
+        },
+        Value::Bool(value) => {
+            out.push_str(&value.to_string());
+            false
+        },
+        Value::Number(value) => {
+            out.push_str(&value.to_string());
+            false
+        },
+        // A sequence, a mapping or a tagged value used as a *key*. YAML allows it, there
+        // is no sensible one-line rendering, and nothing could address it either way.
+        Value::Sequence(_) | Value::Mapping(_) | Value::Tagged(_) => {
+            out.push_str("<complex key>");
+            false
         },
     }
 }

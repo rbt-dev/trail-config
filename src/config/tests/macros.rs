@@ -59,9 +59,9 @@ fn full_block_syntax() {
 }
 
 #[test]
-fn env_with_merges_matches_the_readme_example() {
-    // The README's flagship `config!` block: an env is supplied, but only the
-    // required overlay carries an `{env}` placeholder. The base file and the
+fn env_with_merges_matches_the_documented_example() {
+    // The flagship `config!` block from `docs/LOADING.md`: an env is supplied, but only
+    // the required overlay carries an `{env}` placeholder. The base file and the
     // optional overlay are plain names.
     let dir = temp_dir();
     let base = write_file(&dir, "config.yaml", "app:\n  port: 8080\n  name: myapp\n");
@@ -87,8 +87,8 @@ fn env_with_merges_matches_the_readme_example() {
 #[test]
 fn positional_options_compose() {
     // None of these compiled while each option had an arm of its own. The block form
-    // could express them, but only by writing `file:` — which the README's list of
-    // positional examples gives no reason to expect.
+    // could express them, but only by writing `file:` — which the guide's list of
+    // positional examples (`docs/LOADING.md`) gives no reason to expect.
     let dir = temp_dir();
     write_file(&dir, "config.prod.yaml", "app:\n  port: 8080\n  name: base\n");
     write_file(&dir, "over.prod.yaml", "app:\n  name: over\n");

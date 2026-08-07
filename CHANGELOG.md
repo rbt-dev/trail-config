@@ -5,9 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.5.0] - Unreleased
-
-<!-- Cargo.toml is bumped to 0.5.0 ahead of the release; set the date here when publishing. -->
+## [0.5.0] - 2026-08-08
 
 ### Added
 
@@ -22,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `rust-version = "1.85"`, verified against that toolchain.
 - Crate-level documentation, `#![warn(missing_docs)]`, and docs.rs feature labels.
 - Repository tooling: `criterion` benchmarks, a `tests/` suite exercising the crate as a consumer, `check.ps1` / `check.sh`, and `exclude` to keep internal notes out of the published crate.
+- Four runnable examples in `examples/` — `web_server`, `environments`, `db_pool`, `feature_flags` — each writing its own config into a temporary directory, so `cargo run --example <name>` works from a fresh checkout with nothing to set up.
 
 ### Changed
 
@@ -46,6 +45,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Performance: accessors borrow instead of cloning (`deserialize` ~3× faster, `get_as` ~2.5×) and path splitting allocates nothing while scanning (~2× on three segments, ~7× on a hundred). Only `get` and `get_as`, which return owned values, still clone.
 - Documentation: `get_as` / `deserialize` are the recommended default and `get` the escape hatch. Newly stated, behaviour unchanged — paths navigate mappings only and match keys as strings; interpolation never touches keys; `load_or_create` does not create parent directories; `env` reaches the filesystem unvalidated; and `Config` is `Send + Sync`, which the docs had denied.
 - Internal: `config/mod.rs` split into `loader`, `accessor`, `merge`, `reload`, `path`, `env`, `fmt`, `outline` and `parser`; tests use temp directories and serialize environment mutation.
+- Documentation: the guide moved out of the README into `docs/`, one file per topic, indexed by `docs/README.md`; the README is now a landing page. Both `docs/` and `examples/` ship in the published crate. Working on the crate itself moved to `CONTRIBUTING.md`.
 
 ### Removed
 
@@ -276,7 +276,7 @@ config.fmt("postgresql://{}@{}:{}/{}", "database", &["username", "host", "port",
      0.5.0 points at HEAD while it is unreleased; on publishing, retag and change it to
      `v0.4.0...v0.5.0`. -->
 
-[0.5.0]: https://github.com/rbt-dev/trail-config/compare/v0.4.0...HEAD
+[0.5.0]: https://github.com/rbt-dev/trail-config/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/rbt-dev/trail-config/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/rbt-dev/trail-config/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/rbt-dev/trail-config/compare/v0.2.0...v0.3.0

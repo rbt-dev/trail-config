@@ -153,7 +153,16 @@
 //! type has no counterpart in the value model above, so a datetime is read as the text the
 //! file contained — see [`load_toml`](Config::load_toml).
 //!
-//! See the [README](https://github.com/rbt-dev/trail-config) for the full guide.
+//! # Further reading
+//!
+//! The full guide lives in the repository, one file per topic — see the
+//! [documentation index](https://github.com/rbt-dev/trail-config/blob/main/docs/README.md).
+//! It goes further than this page on [loading](https://github.com/rbt-dev/trail-config/blob/main/docs/LOADING.md),
+//! [merging](https://github.com/rbt-dev/trail-config/blob/main/docs/MERGING.md),
+//! [environment variables](https://github.com/rbt-dev/trail-config/blob/main/docs/ENV_INTERPOLATION.md)
+//! and [error handling](https://github.com/rbt-dev/trail-config/blob/main/docs/ERROR_HANDLING.md),
+//! and [`examples/`](https://github.com/rbt-dev/trail-config/tree/main/examples) holds four
+//! runnable programs.
 
 #![warn(missing_docs)]
 // Lets rustdoc render a "Available on crate feature `json`" banner beside each
@@ -272,7 +281,7 @@ macro_rules! config {
     // same order. One arm rather than one per option — there used to be four, each
     // matching the file plus exactly one option, so `config!("f.yaml", sep: "::",
     // env: "prod")` was a "no rules expected this token" error pointing at `env`. The
-    // README presents the options as a menu, which is how option lists read, and three
+    // guide presents the options as a menu, which is how option lists read, and three
     // of the combinations it implied did not exist.
     //
     // Delegates to the block arm below rather than repeating its body, so the two

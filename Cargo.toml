@@ -2,9 +2,8 @@
 name = "trail-config"
 version = "0.5.0"
 edition = "2021"
-# Set by the dependency tree, not by this crate's own code: indexmap 2.14 (via yaml_serde) and toml 1.1 both require 1.85.
-# Verified by building: `cargo +1.85 check` passes with all features and with none (`.\check.ps1 -Msrv`).
-# Dev-dependencies need more than this (criterion 0.8 requires 1.86), so `cargo bench` and `cargo test` have a higher floor than using the library does.
+# Set by the dependency tree, not this crate's own code: indexmap 2.14 (via yaml_serde) and toml 1.1.
+# Dev-dependencies need more (criterion 0.8 wants 1.86), so tests and benches have a higher floor.
 rust-version = "1.85"
 authors = ["Robert Lampreht <robert.lampreht@gmail.com>"]
 description = "A Rust library for reading config files with path-based access, typed deserialization, environment overlays, deep merging, env variable interpolation, and hot reload support."
@@ -13,24 +12,16 @@ keywords = ["config", "env", "deserialize", "merge", "hot-reload"]
 categories = ["config", "parsing", "filesystem", "development-tools"]
 license = "MIT"
 repository = "https://github.com/rbt-dev/trail-config.git"
-# `cargo package` otherwise takes everything `.gitignore` does not cover, so the review
-# notes and the local pre-release scripts were being unpacked into every consumer's
-# registry cache. `README.md` and `CHANGELOG.md` deliberately stay: the first is named by
-# `readme` above and rendered on crates.io, and a changelog in the crate is conventional.
-# Both check scripts and `.gitattributes` are developer tooling with nothing to say to a
-# consumer. Verified by the `package contents` step in either script — a published version
-# cannot be replaced, so a mistake here is invisible until it is permanent.
-exclude = ["IMPROVEMENTS_*.md", "check.ps1", "check.sh", ".gitattributes"]
+# Developer tooling with nothing to say to a consumer; `docs/` and `examples/` ship on purpose.
+# Checked by the `package contents` step in either check script — a published version is permanent.
+exclude = ["check.ps1", "check.sh", ".gitattributes"]
 
 [package.metadata.docs.rs]
-# `all-features` makes docs.rs *build* the gated items; `--cfg docsrs` makes it *label* them.
-# Without the second, `load_json`, `load_toml`, `JsonError`, `TomlError` and friends render
-# alongside `load_yaml` with nothing to say they need a feature flag.
+# `all-features` builds the gated items; `--cfg docsrs` is what makes their feature labels render.
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
-# `docsrs` is set only by the docs.rs build above, never by a normal one,
-# so the compiler would otherwise flag it as an unrecognised cfg name.
+# `docsrs` is set only by the docs.rs build above, so it needs declaring as a known cfg name.
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(docsrs)'] }
 
@@ -46,17 +37,10 @@ toml = ["dep:toml"]
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", optional = true }
 thiserror = "2"
-# `preserve_order` backs `toml::map::Map` with an `IndexMap` instead of a `BTreeMap`.
-# Without it every TOML config's keys arrive sorted alphabetically, and the document order
-# is gone before this crate sees it — making `outline`'s "keys appear in document order"
-# and the merge's key-order preservation untrue for `.toml` files alone. `indexmap` is
-# already in the tree (`yaml_serde`'s `Mapping` is built on it) and is one of the two
-# crates setting the 1.85 MSRV, so this adds no dependency and moves no floor.
-#
-# The JSON side of the same problem is solved without a feature flag — see
-# `src/config/parser/json.rs` — because `serde_json` is common enough in a dependency
-# graph that enabling `preserve_order` on it would change other crates' behaviour too.
-# `toml::Value` has no such reach, and the datetime handling in `parser/toml.rs` needs it.
+# Without `preserve_order`, TOML keys arrive alphabetically and document order is gone before this
+# crate sees it, making `outline` and the merge's key-order guarantee untrue for `.toml` alone.
+# Adds no dependency — `indexmap` is already in the tree via `yaml_serde`.
+# JSON solves the same problem without a feature flag; see `src/config/parser/json.rs`.
 toml = { version = "1.1", optional = true, features = ["preserve_order"] }
 yaml_serde = "0.10"
 

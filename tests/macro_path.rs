@@ -1,4 +1,4 @@
-//! `config!` invoked by its full path, the way the rustdoc and README show it.
+//! `config!` invoked by its full path, the way the rustdoc and `docs/LOADING.md` show it.
 //!
 //! **This file must not import `config!`.** `macro_rules!` expansion is textual and
 //! resolved at the call site, so a `use trail_config::config;` anywhere in the file
@@ -13,7 +13,7 @@ mod common;
 
 use common::{path_in, temp_dir, write_file};
 
-/// The block arm — the form the README leads with, and the only one that recurses
+/// The block arm — the form the guide leads with, and the only one that recurses
 /// into `config!` for its `@sep` / `@env` helpers.
 #[test]
 fn the_block_form_expands_without_the_macro_in_scope() {

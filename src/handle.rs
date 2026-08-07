@@ -620,7 +620,7 @@ features:
         handle.reload_from(&second).unwrap();
 
         assert_eq!(clone.get_int("app/port"), Some(2222), "every clone sees the switch");
-        assert_eq!(handle.read().get_filename(), second);
+        assert_eq!(handle.read().filename(), second);
         // A snapshot is immutable, exactly as across a `reload`
         assert_eq!(snapshot.get_int("app/port"), Some(1111));
 
@@ -676,7 +676,7 @@ features:
 
         // No swap happened, so the filename is intact too — not just the values
         assert_eq!(handle.get_int("app/port"), Some(1111));
-        assert_eq!(handle.read().get_filename(), first);
+        assert_eq!(handle.read().filename(), first);
     }
 
     #[test]
@@ -759,7 +759,7 @@ features:
         let (tx, rx) = mpsc::channel();
         let h = handle.clone();
         thread::spawn(move || {
-            let _ = tx.send((h.get_int("app/port"), h.read().get_filename().to_string()));
+            let _ = tx.send((h.get_int("app/port"), h.read().filename().to_string()));
         });
 
         // Readers take only the RwLock, so this must arrive without the reload

@@ -203,7 +203,7 @@ fn fmt_combines_sibling_values() {
 fn metadata_is_readable_and_a_string_config_has_no_filename() {
     let config = config();
 
-    assert_eq!(config.get_filename(), "");
+    assert_eq!(config.filename(), "");
     assert_eq!(config.environment(), None);
     assert_eq!(config.separator(), "/");
 }

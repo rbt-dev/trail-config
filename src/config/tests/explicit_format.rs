@@ -104,7 +104,7 @@ fn switching_to_another_format_with_reload_from_fails_loudly() {
 
     // And the failed switch left everything intact, as `reload_from` promises
     assert_eq!(config.get_int("app/port"), Some(1111));
-    assert_eq!(config.get_filename(), json);
+    assert_eq!(config.filename(), json);
 }
 
 #[test]
@@ -142,7 +142,7 @@ fn an_env_placeholder_resolves_in_the_filename() {
     assert_eq!(config.get_int("app/port"), Some(8080));
     assert_eq!(config.environment(), Some("prod"), "the environment must be recorded");
     // The *resolved* name is stored, so a later reload reads the same file
-    assert!(config.get_filename().ends_with("cfg.prod.conf"));
+    assert!(config.filename().ends_with("cfg.prod.conf"));
 }
 
 #[test]

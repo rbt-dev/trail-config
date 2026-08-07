@@ -27,12 +27,12 @@ fn reload_from_different_file() {
     let mut config = Config::load_optional(&file1, "/", None).unwrap();
     assert_eq!(config.str("config/name"), "first");
     assert_eq!(config.str("config/value"), "100");
-    assert_eq!(config.get_filename(), file1);
+    assert_eq!(config.filename(), file1);
 
     config.reload_from(&file2).unwrap();
     assert_eq!(config.str("config/name"), "second");
     assert_eq!(config.str("config/value"), "200");
-    assert_eq!(config.get_filename(), file2);
+    assert_eq!(config.filename(), file2);
 }
 
 #[test]
@@ -55,7 +55,7 @@ fn missing_optional_file_records_its_filename() {
     let missing = dir.path().join("absent.yaml").to_string_lossy().into_owned();
 
     let config = Config::load_optional(&missing, "/", None).unwrap();
-    assert_eq!(config.get_filename(), missing);
+    assert_eq!(config.filename(), missing);
     assert_eq!(config.str("app/port"), "");
 }
 
@@ -88,7 +88,7 @@ fn missing_optional_file_records_the_resolved_env_filename() {
 
     let mut config = Config::load_optional(&template, "/", Some("prod")).unwrap();
     // The placeholder is substituted before the name is recorded
-    assert_eq!(config.get_filename(), resolved);
+    assert_eq!(config.filename(), resolved);
     assert_eq!(config.environment(), Some("prod"));
 
     fs::write(&resolved, "app:\n  port: 8080\n").unwrap();
@@ -234,7 +234,7 @@ fn reload_from_substitutes_env_placeholder() {
     assert_eq!(config.environment(), Some("dev"));
 
     // The *resolved* name is recorded, so reload() still works afterwards
-    assert!(config.get_filename().ends_with("other_dev.yaml"));
+    assert!(config.filename().ends_with("other_dev.yaml"));
     config.reload().unwrap();
     assert_eq!(config.str("config/name"), "other-dev");
 }
@@ -257,7 +257,7 @@ fn reload_from_placeholder_without_environment_errors() {
 
     // And the config is left untouched
     assert_eq!(config.str("app/port"), "8080");
-    assert_eq!(config.get_filename(), base);
+    assert_eq!(config.filename(), base);
 }
 
 #[test]
@@ -287,7 +287,7 @@ fn reload_from_preserves_state_when_env_resolution_fails() {
     // Content and filename untouched
     assert_eq!(config.str("app/port"), "8080");
     assert_eq!(config.str("app/tag"), "overlay");
-    assert_eq!(config.get_filename(), base);
+    assert_eq!(config.filename(), base);
 
     // The clinching check: a later reload() must still read the *base* file and
     // re-apply the overlay. If reload_from had committed the filename it would read
@@ -308,7 +308,7 @@ fn reload_from_preserves_state_when_new_file_is_invalid() {
 
     assert!(config.reload_from(&broken).is_err());
     assert_eq!(config.str("app/port"), "8080");
-    assert_eq!(config.get_filename(), base);
+    assert_eq!(config.filename(), base);
 }
 
 #[test]
@@ -321,7 +321,7 @@ fn reload_from_preserves_state_when_new_file_is_missing() {
     let missing = format!("{}.nope", base);
     assert!(config.reload_from(&missing).is_err());
     assert_eq!(config.str("app/port"), "8080");
-    assert_eq!(config.get_filename(), base);
+    assert_eq!(config.filename(), base);
 }
 
 #[test]
@@ -343,5 +343,5 @@ fn reload_from_rejects_empty_filename() {
 
     // Config is left unchanged — the check fires before any state mutation
     assert_eq!(config.str("app/port"), "8080");
-    assert_eq!(config.get_filename(), test_file);
+    assert_eq!(config.filename(), test_file);
 }

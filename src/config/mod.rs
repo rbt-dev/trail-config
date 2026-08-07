@@ -150,7 +150,7 @@ impl Config {
     /// Returns the separator this config's paths are written with.
     ///
     /// The third of the settings a config carries, alongside
-    /// [`get_filename`](Config::get_filename) and [`environment`](Config::environment) —
+    /// [`filename`](Config::filename) and [`environment`](Config::environment) —
     /// and the only one *required* to address anything. Code handed a `Config` it did not
     /// construct could not build a path for it, or read an [`outline`](Config::outline),
     /// whose escaping is written in terms of this separator.
@@ -175,7 +175,7 @@ impl Config {
     /// it is the file a later [`reload`](Config::reload) will read. Only a config parsed
     /// from a string ([`load_yaml`](Config::load_yaml), [`load_json`](Config::load_json),
     /// [`load_toml`](Config::load_toml)) has no filename, and returns `""`.
-    pub fn get_filename(&self) -> &str {
+    pub fn filename(&self) -> &str {
         &self.filename
     }
 }

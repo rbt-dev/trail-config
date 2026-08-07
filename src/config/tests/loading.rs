@@ -169,7 +169,7 @@ fn load_or_create_supports_reload() {
     let test_file = dir.path().join("new.yaml").to_string_lossy().into_owned();
 
     let mut config = Config::load_or_create(&test_file, "/", None, "app:\n  port: 8080\n").unwrap();
-    assert_eq!(config.get_filename(), test_file);
+    assert_eq!(config.filename(), test_file);
     assert_eq!(config.str("app/port"), "8080");
 
     // The created config records its filename, so reload() picks up edits

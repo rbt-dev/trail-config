@@ -81,7 +81,7 @@ so a file created later is picked up by `reload()`:
 
 ```rust
 let mut config = Config::load_optional("config.local.yaml", "/", None)?;
-assert_eq!(config.get_filename(), "config.local.yaml"); // recorded even though absent
+assert_eq!(config.filename(), "config.local.yaml"); // recorded even though absent
 
 // Errors with IoError (NotFound) while the file is still missing, leaving the
 // config unchanged; succeeds as soon as it appears.
@@ -392,7 +392,7 @@ incompatible `Value` types.
 
 | Method | Returns | Description |
 | ------ | ------- | ----------- |
-| `get_filename()` | `&str` | Resolved filename of the config; `""` only for configs parsed from a string |
+| `filename()` | `&str` | Resolved filename of the config; `""` only for configs parsed from a string |
 | `environment()` | `Option<&str>` | Environment name used when loading |
 | `separator()` | `&str` | Separator this config's paths are written with |
 | `reload()` | `Result<(), ConfigError>` | Reload from current file |
@@ -945,7 +945,7 @@ handler. The wait is paid only by reloads.
 `ConfigHandle` mirrors the complete **lenient** accessor surface of `Config` — `get`, `str`,
 `list`, `contains`, `get_int`, `get_float`, `get_bool`, `get_as`, `deserialize` and `fmt` — each
 a shorthand for the same call on a snapshot. The `*_strict` variants and the metadata accessors
-(`get_filename`, `environment`) are reached through `read()`, which gets you every `Config`
+(`filename`, `environment`) are reached through `read()`, which gets you every `Config`
 method taking `&self`.
 
 The methods that don't take `&self` can't be reached that way, since a snapshot only ever

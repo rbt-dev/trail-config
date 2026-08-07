@@ -23,7 +23,7 @@ fn the_four_constructors_differ_only_in_how_they_treat_a_missing_file() {
     let empty = Config::load_optional(&absent, "/", None).unwrap();
     assert_eq!(empty.get_int("app/port"), None);
     // ...but it remembers the file it looked for, so a later reload can pick it up
-    assert_eq!(empty.get_filename(), absent);
+    assert_eq!(empty.filename(), absent);
 
     let created = path_in(&dir, "created.yaml");
     let config = Config::load_or_create(&created, "/", None, "app:\n  port: 1234\n").unwrap();
@@ -56,7 +56,7 @@ fn the_env_placeholder_selects_a_file_and_is_recorded() {
     assert_eq!(config.str("app/tier"), "production");
     assert_eq!(config.environment(), Some("prod"));
     // The resolved name is what is recorded, so reload() reads the same file
-    assert!(config.get_filename().ends_with("config.prod.yaml"));
+    assert!(config.filename().ends_with("config.prod.yaml"));
 
     // A placeholder with no environment to fill it is an error, not a file named "{env}"
     assert!(Config::load_required(&template, "/", None).is_err());
@@ -111,7 +111,7 @@ fn reload_from_switches_file_and_drops_the_overlay_chain() {
 
     config.reload_from(&other).unwrap();
     assert_eq!(config.get_int("app/port"), Some(3000), "the overlay must not be re-applied");
-    assert_eq!(config.get_filename(), other);
+    assert_eq!(config.filename(), other);
 }
 
 #[test]
@@ -129,7 +129,7 @@ fn a_handle_can_switch_files_without_being_rebuilt() {
     handle.reload_from(&other).unwrap();
 
     assert_eq!(clone.get_int("app/port"), Some(3000), "every clone follows the switch");
-    assert_eq!(clone.read().get_filename(), other);
+    assert_eq!(clone.read().filename(), other);
 }
 
 #[test]

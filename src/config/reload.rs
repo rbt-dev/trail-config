@@ -100,7 +100,7 @@ impl Config {
         }
     }
 
-    /// Reloads the configuration from a different file
+    /// Reloads the configuration from a different file, discarding the overlay chain.
     ///
     /// Changes the config's filename and reloads from the new file.
     /// The separator and environment settings remain the same, and so does an explicitly
@@ -110,6 +110,16 @@ impl Config {
     /// [`load_or_create_as`](Config::load_or_create_as) — reads the new file with that same
     /// parser. Construct a new `Config` to change format. Configs loaded any other way
     /// have no pinned format and pick the parser from the new file's extension, as always.
+    ///
+    /// **Overlays are not carried over.** Every file added by
+    /// [`merge_required`](Config::merge_required) or
+    /// [`merge_optional`](Config::merge_optional) is dropped, so the result holds the new
+    /// file and nothing else, and a later [`reload`](Config::reload) re-reads only that
+    /// file. Keeping them would be the worse default: an overlay chain describes what was
+    /// layered onto *this* base, and re-applying it to a different one silently merges
+    /// files the caller never paired. Layer the new base yourself if you want overlays on
+    /// it — the merges take `&mut self` as well, so
+    /// [`merge_required_in_place`](Config::merge_required_in_place) picks up right here.
     ///
     /// The filename may contain an `{env}` placeholder, which is resolved against the
     /// environment this config already carries — there is no `env` argument because
@@ -131,7 +141,8 @@ impl Config {
     /// # Note
     /// If the switch fails for any reason, the existing configuration is preserved
     /// unchanged — filename, content and the overlay chain are committed together
-    /// only once the new file has been read, parsed and resolved.
+    /// only once the new file has been read, parsed and resolved. So a failed switch
+    /// keeps the overlays too, rather than clearing them on the way out.
     ///
     /// # Example
     /// ```no_run

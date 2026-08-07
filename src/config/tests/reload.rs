@@ -312,6 +312,32 @@ fn reload_from_preserves_state_when_new_file_is_invalid() {
 }
 
 #[test]
+fn a_failed_reload_from_keeps_the_overlay_chain() {
+    // `reload_from` clears the overlays on success, so the failure path has to be checked
+    // separately: clearing them on the way out would leave a config that had lost its
+    // layering without having gained the file it was switching to.
+    let dir = temp_dir();
+    let base = write_file(&dir, "base.yaml", "app:\n  port: 8080\n  name: base\n");
+    let overlay = write_file(&dir, "over.yaml", "app:\n  name: over\n");
+    let broken = write_file(&dir, "broken.yaml", "invalid: [unclosed\n");
+
+    let mut config = Config::load_required(&base, "/", None)
+        .unwrap()
+        .merge_required(&overlay, None)
+        .unwrap();
+    assert_eq!(config.str("app/name"), "over");
+
+    assert!(config.reload_from(&broken).is_err());
+
+    // Not merely the current document: the chain itself must still be registered, which a
+    // reload is what actually proves — it re-reads the base and re-applies the overlay.
+    config.reload().unwrap();
+    assert_eq!(config.str("app/name"), "over", "the overlay is still in the chain");
+    assert_eq!(config.get_int("app/port"), Some(8080));
+    assert_eq!(config.filename(), base);
+}
+
+#[test]
 fn reload_from_preserves_state_when_new_file_is_missing() {
     let dir = temp_dir();
     let base = write_file(&dir, "base.yaml", "app:\n  port: 8080\n");

@@ -457,7 +457,7 @@ error printed and exposes `location()` for a parse error's line and column.
 | `environment()` | `Option<&str>` | Environment name used when loading |
 | `separator()` | `&str` | Separator this config's paths are written with |
 | `reload()` | `Result<(), ConfigError>` | Reload from current file |
-| `reload_from(filename)` | `Result<(), ConfigError>` | Load from a different file |
+| `reload_from(filename)` | `Result<(), ConfigError>` | Load from a different file, discarding the overlay chain |
 | `outline()` | `String` | Every path in the document, with values replaced by their types |
 
 ## Debug Output

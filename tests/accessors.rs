@@ -6,7 +6,7 @@
 //! that each of these methods *is* public and keeps its signature.
 
 use serde::Deserialize;
-use trail_config::{Config, ConfigError, Value};
+use trail_config::{Config, ConfigError, ConfigHandle, Value};
 
 const YAML: &str = r#"
 app:
@@ -205,6 +205,43 @@ fn metadata_is_readable_and_a_string_config_has_no_filename() {
 
     assert_eq!(config.get_filename(), "");
     assert_eq!(config.environment(), None);
+    assert_eq!(config.separator(), "/");
+}
+
+#[test]
+fn a_path_can_be_built_without_knowing_how_the_config_was_constructed() {
+    // The case `separator()` exists for, and the reason this test is here rather than in
+    // `src/`: code handed a `Config` it did not build. Without a getter it could not spell
+    // a path at all — the separator is the one setting addressing cannot proceed without.
+    fn host_of(config: &Config) -> String {
+        config.str(&["db", "host"].join(config.separator()))
+    }
+
+    for separator in ["/", "::", "->", "."] {
+        let config = Config::load_yaml("db:\n  host: localhost\n", separator).unwrap();
+        assert_eq!(host_of(&config), "localhost", "separator {separator:?}");
+    }
+}
+
+#[test]
+fn the_separator_survives_the_operations_that_carry_a_config_forward() {
+    // It is part of a config's identity, so anything that produces a new `Config` from an
+    // old one has to bring it along — a merge returns a new value, and a handle rebuilds
+    // one from `sources()` on every reload.
+    let dir = tempfile::tempdir().unwrap();
+    let base = dir.path().join("base.yaml");
+    let overlay = dir.path().join("over.yaml");
+    std::fs::write(&base, "db:\n  host: base\n").unwrap();
+    std::fs::write(&overlay, "db:\n  host: overlaid\n").unwrap();
+
+    let config = Config::load_required(&base.to_string_lossy(), "::", None).unwrap()
+        .merge_required(&overlay.to_string_lossy(), None).unwrap();
+    assert_eq!(config.separator(), "::");
+    assert_eq!(config.str("db::host"), "overlaid");
+
+    let handle = ConfigHandle::new(config);
+    handle.reload().unwrap();
+    assert_eq!(handle.read().separator(), "::", "a reload must not lose the separator");
 }
 
 #[test]

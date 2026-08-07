@@ -147,6 +147,27 @@ impl Config {
         self.environment.as_deref()
     }
 
+    /// Returns the separator this config's paths are written with.
+    ///
+    /// The third of the settings a config carries, alongside
+    /// [`get_filename`](Config::get_filename) and [`environment`](Config::environment) —
+    /// and the only one *required* to address anything. Code handed a `Config` it did not
+    /// construct could not build a path for it, or read an [`outline`](Config::outline),
+    /// whose escaping is written in terms of this separator.
+    ///
+    /// # Example
+    /// ```
+    /// # use trail_config::Config;
+    /// let config = Config::load_yaml("db:\n  host: localhost\n", "::").unwrap();
+    ///
+    /// // Build a path without having to know how the config was constructed
+    /// let path = ["db", "host"].join(config.separator());
+    /// assert_eq!(config.str(&path), "localhost");
+    /// ```
+    pub fn separator(&self) -> &str {
+        &self.separator
+    }
+
     /// Returns the filename of the loaded config file.
     ///
     /// This is the *resolved* name, with any `{env}` placeholder substituted. A config

@@ -66,9 +66,19 @@ fn convert(value: toml::Value) -> Value {
         // dependency on `toml`, which this crate's docs already advise against.
         toml::Value::Datetime(datetime) => Value::String(datetime.to_string()),
         toml::Value::Array(items) => Value::Sequence(items.into_iter().map(convert).collect()),
-        // Key order is whatever `toml::Value` hands back — alphabetical, since the `toml`
-        // crate stores tables in a `BTreeMap` unless its `preserve_order` feature is on.
-        // Unchanged by this rewrite: `to_value` iterated the same map.
+        // Document order, not alphabetical: `Cargo.toml` enables the `toml` crate's
+        // `preserve_order`, which backs `toml::map::Map` with an `IndexMap`. Without that
+        // flag every `.toml` config's keys arrive sorted, and `outline`'s "keys appear in
+        // document order" and the merge's key-order preservation are untrue for this
+        // format alone — see the note beside the dependency in `Cargo.toml`. Iterating
+        // `toml::Value` therefore preserves what the file wrote, and collecting into
+        // `Mapping` (also `IndexMap`-backed) keeps it.
+        //
+        // The JSON side of the same problem is answered differently — `super::json` parses
+        // straight into this value model rather than enabling `serde_json`'s
+        // `preserve_order`, because that feature would unify across the whole dependency
+        // graph. TOML's parse has to go through `toml::Value` for the datetime handling
+        // above, so the flag is the only route here.
         toml::Value::Table(table) => Value::Mapping(
             table.into_iter()
                 .map(|(key, value)| (Value::String(key), convert(value)))

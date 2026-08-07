@@ -31,6 +31,11 @@ pub(crate) fn parse_in(json: &str, filename: &str) -> Result<Value, ConfigError>
 /// silently change `serde_json::Value`'s iteration order for every other crate in a
 /// consumer's build. Not this crate's call to make.
 ///
+/// TOML answers the same question the other way — `super::toml` *does* enable the flag,
+/// because its parse has to go through `toml::Value` for the datetime handling and
+/// `toml::Value` has no comparable reach into a consumer's dependency graph. The two
+/// comments describe one decision made twice, on different evidence.
+///
 /// Going direct also drops the intermediate document and a fallible step with it —
 /// `to_value` returned a `Result`, so a `.json` file could fail with a `YamlError`.
 fn parse_internal(json: &str, file: Option<&str>) -> Result<Value, ConfigError> {

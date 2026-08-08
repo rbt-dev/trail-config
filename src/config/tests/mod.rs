@@ -1,15 +1,21 @@
 mod accessors;
+mod bom;
+mod debug;
 mod env_vars;
 mod escape;
+mod explicit_format;
 mod formatting;
 mod internals;
 #[cfg(feature = "json")]
 mod json;
+mod key_order;
 mod loading;
 mod macros;
 mod merge;
+mod outline;
 mod reload;
 mod structs;
+mod tagged;
 #[cfg(feature = "toml")]
 mod toml;
 

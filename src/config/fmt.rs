@@ -1,0 +1,243 @@
+//! Formatting sibling config values into a string template.
+
+use crate::error::ConfigError;
+use super::Config;
+use super::accessor::{not_a_scalar, scalar_to_string};
+use super::path::get_leaf;
+
+/// One resolved piece of a format string.
+///
+/// `Literal` borrows from the format string; `{{` and `}}` yield the static
+/// `"{"` / `"}"`, so unescaping costs no allocation.
+enum Piece<'a> {
+    Literal(&'a str),
+    /// Index into the caller's `keys` slice.
+    Value(usize),
+}
+
+impl Config {
+    /// Formats a string template with values from the config
+    ///
+    /// See [`fmt_strict`](Config::fmt_strict) for the placeholder syntax. Returns an
+    /// empty string if the template is invalid or any value is missing.
+    ///
+    /// # Example
+    /// ```
+    /// # use trail_config::Config;
+    /// # let yaml = "db:\n  redis:\n    server: 127.0.0.1\n    port: 6379";
+    /// # let config = Config::load_yaml(yaml, "/").unwrap();
+    /// let result = config.fmt("{}:{}", "db/redis", &["server", "port"]);
+    /// assert_eq!(result, "127.0.0.1:6379");
+    /// ```
+    pub fn fmt(&self, format: &str, base: &str, keys: &[&str]) -> String {
+        self.fmt_strict(format, base, keys).unwrap_or_else(|_| String::new())
+    }
+
+    /// Formats a string template with values from the config, returning an error if the
+    /// template is invalid or any value is missing.
+    ///
+    /// # Placeholders
+    ///
+    /// | Syntax | Meaning |
+    /// | ------ | ------- |
+    /// | `{}` | The next unused key, left to right |
+    /// | `{N}` | `keys[N]` — may reorder and repeat keys |
+    /// | `{{` / `}}` | A literal `{` / `}` |
+    ///
+    /// Auto-numbered and indexed placeholders can be mixed; `{}` counts only its own
+    /// occurrences, exactly as [`std::format!`] does.
+    ///
+    /// # Keys
+    ///
+    /// `base` and each key are resolved with the same path syntax as every other
+    /// accessor: the separator splits them, `\` escapes a literal separator, and empty
+    /// segments are rejected. Keys are therefore paths *relative to* `base` — usually a
+    /// single key naming a sibling value, but `fmt("{}", "db", &["redis/port"])` reaches
+    /// deeper, and a key that genuinely contains the separator is escaped as
+    /// `r"a\/b"`, exactly as it would be anywhere else. An empty `base` means the keys
+    /// are at the top level.
+    ///
+    /// Each key must resolve to a scalar. One naming a mapping or a sequence is an error
+    /// rather than an empty string in the output.
+    ///
+    /// Every placeholder must have a corresponding key and every key must be used at
+    /// least once — a mismatch in either direction is an error rather than a silently
+    /// half-formatted string.
+    ///
+    /// Substituted values are never rescanned, so a config value containing `{}` is
+    /// emitted verbatim instead of consuming the next key.
+    ///
+    /// # Errors
+    /// Returns `ConfigError::FormatError` if the template has an unclosed `{`, an
+    /// unmatched `}`, a named placeholder, an index with no matching key, if the
+    /// placeholder and key counts disagree, or if a key resolves to a non-scalar value
+    /// Returns `ConfigError::PathNotFound` if `base` or any key does not exist
+    ///
+    /// # Example
+    /// ```
+    /// # use trail_config::Config;
+    /// # let yaml = "db:\n  redis:\n    server: 127.0.0.1\n    port: 6379";
+    /// # let config = Config::load_yaml(yaml, "/").unwrap();
+    /// let result = config.fmt_strict("{}:{}", "db/redis", &["server", "port"]).unwrap();
+    /// assert_eq!(result, "127.0.0.1:6379");
+    ///
+    /// // Indices allow reuse, and `{{`/`}}` emit literal braces
+    /// let result = config.fmt_strict("{{{0}:{1}}} via {0}", "db/redis", &["server", "port"]).unwrap();
+    /// assert_eq!(result, "{127.0.0.1:6379} via 127.0.0.1");
+    /// ```
+    pub fn fmt_strict(&self, format: &str, base: &str, keys: &[&str]) -> Result<String, ConfigError> {
+        let pieces = parse_format(format)?;
+        check_keys_match(&pieces, keys)?;
+
+        // An empty base means "the keys are at the top level"; anything else navigates
+        // by the same rules as every other accessor, including the rejection of empty
+        // segments. This used to be a second, subtly different copy of `get_leaf`.
+        let content = if base.is_empty() {
+            &self.content
+        } else {
+            get_leaf(&self.content, base, &self.separator)
+                .ok_or_else(|| ConfigError::PathNotFound(base.to_string()))?
+        };
+
+        // Resolve every key up front so a value containing `{}` can never be
+        // rescanned as a placeholder for a later key.
+        //
+        // Keys navigate by the same rules as `base` and every other accessor. A raw
+        // `Value::get` here gave `fmt` a second key namespace: a key containing the
+        // separator worked verbatim, while the same key needed a backslash escape
+        // everywhere else — and `key_path` then rendered an error naming a path that the
+        // crate's own accessors could not resolve.
+        let values = keys.iter()
+            .map(|key| {
+                let value = get_leaf(content, key, &self.separator)
+                    .ok_or_else(|| ConfigError::PathNotFound(key_path(base, key, &self.separator)))?;
+                // Strict about the value, like every other `*_strict` accessor: a key
+                // naming a mapping or a sequence is reported rather than formatted in
+                // as an empty string.
+                scalar_to_string(value)
+                    .ok_or_else(|| not_a_scalar(&key_path(base, key, &self.separator)))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let mut result = String::with_capacity(format.len());
+        for piece in pieces {
+            match piece {
+                Piece::Literal(text) => result.push_str(text),
+                Piece::Value(index) => result.push_str(&values[index]),
+            }
+        }
+
+        Ok(result)
+    }
+}
+
+/// Renders the full path of `key` under `base` for an error message.
+///
+/// Uses the config's own separator: hardcoding `/` here named a path that did not exist
+/// in the caller's addressing scheme — a config using `::` reported `db::redis/port`.
+/// An empty `base` means the keys are at the top level, so the key stands alone rather
+/// than picking up a leading separator.
+///
+/// Joining the two is only meaningful because `key` is itself path syntax, resolved by
+/// the same `get_leaf` as `base`. While keys were looked up raw, this rendered a path
+/// for anything containing a separator that the crate's own accessors could not resolve —
+/// an error message naming a location that does not exist.
+fn key_path(base: &str, key: &str, separator: &str) -> String {
+    if base.is_empty() {
+        key.to_string()
+    } else {
+        format!("{}{}{}", base, separator, key)
+    }
+}
+
+/// Splits a format string into literals and placeholder indices.
+///
+/// Auto-numbered `{}` placeholders are assigned indices in order of appearance,
+/// independently of any explicit `{N}`, matching `std::format!`.
+fn parse_format(format: &str) -> Result<Vec<Piece<'_>>, ConfigError> {
+    let mut pieces = Vec::new();
+    let mut auto_index = 0usize;
+    let mut rest = format;
+
+    while !rest.is_empty() {
+        // Emit everything up to the next brace as one borrowed literal
+        match rest.find(['{', '}']) {
+            Some(0) => {},
+            Some(at) => {
+                let (literal, tail) = rest.split_at(at);
+                pieces.push(Piece::Literal(literal));
+                rest = tail;
+            },
+            None => {
+                pieces.push(Piece::Literal(rest));
+                break;
+            },
+        }
+
+        if let Some(tail) = rest.strip_prefix("{{") {
+            pieces.push(Piece::Literal("{"));
+            rest = tail;
+        } else if let Some(tail) = rest.strip_prefix("}}") {
+            pieces.push(Piece::Literal("}"));
+            rest = tail;
+        } else if let Some(after_brace) = rest.strip_prefix('{') {
+            let end = after_brace.find('}').ok_or_else(|| {
+                ConfigError::FormatError(format!(
+                    "Unclosed '{{' in format string \"{}\" (use '{{{{' for a literal brace)",
+                    format
+                ))
+            })?;
+
+            let spec = &after_brace[..end];
+            let index = if spec.is_empty() {
+                auto_index += 1;
+                auto_index - 1
+            } else {
+                spec.parse::<usize>().map_err(|_| {
+                    ConfigError::FormatError(format!(
+                        "Unsupported placeholder '{{{}}}' in format string \"{}\": \
+                         only '{{}}' and '{{N}}' are supported",
+                        spec, format
+                    ))
+                })?
+            };
+
+            pieces.push(Piece::Value(index));
+            rest = &after_brace[end + 1..];
+        } else {
+            return Err(ConfigError::FormatError(format!(
+                "Unmatched '}}' in format string \"{}\" (use '}}}}' for a literal brace)",
+                format
+            )));
+        }
+    }
+
+    Ok(pieces)
+}
+
+/// Rejects a template whose placeholders and keys do not correspond one to one.
+///
+/// Both directions used to fail silently: a surplus placeholder was left in the output
+/// verbatim, and a surplus key was dropped without a trace.
+fn check_keys_match(pieces: &[Piece<'_>], keys: &[&str]) -> Result<(), ConfigError> {
+    let mut used = vec![false; keys.len()];
+
+    for piece in pieces {
+        if let Piece::Value(index) = piece {
+            match used.get_mut(*index) {
+                Some(slot) => *slot = true,
+                None => return Err(ConfigError::FormatError(format!(
+                    "Format string references key {} but only {} key(s) were provided",
+                    index, keys.len()
+                ))),
+            }
+        }
+    }
+
+    match used.iter().position(|used| !used) {
+        Some(unused) => Err(ConfigError::FormatError(format!(
+            "Key '{}' is never used by the format string", keys[unused]
+        ))),
+        None => Ok(()),
+    }
+}

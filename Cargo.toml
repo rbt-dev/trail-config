@@ -1,7 +1,10 @@
 [package]
 name = "trail-config"
-version = "0.4.0"
+version = "0.5.0"
 edition = "2021"
+# Set by the dependency tree, not this crate's own code: indexmap 2.14 (via yaml_serde) and toml 1.1.
+# Dev-dependencies need more (criterion 0.8 wants 1.86), so tests and benches have a higher floor.
+rust-version = "1.85"
 authors = ["Robert Lampreht <robert.lampreht@gmail.com>"]
 description = "A Rust library for reading config files with path-based access, typed deserialization, environment overlays, deep merging, env variable interpolation, and hot reload support."
 readme = "README.md"
@@ -9,6 +12,18 @@ keywords = ["config", "env", "deserialize", "merge", "hot-reload"]
 categories = ["config", "parsing", "filesystem", "development-tools"]
 license = "MIT"
 repository = "https://github.com/rbt-dev/trail-config.git"
+# Developer tooling with nothing to say to a consumer; `docs/` and `examples/` ship on purpose.
+# Checked by the `package contents` step in either check script — a published version is permanent.
+exclude = ["check.ps1", "check.sh", ".gitattributes"]
+
+[package.metadata.docs.rs]
+# `all-features` builds the gated items; `--cfg docsrs` is what makes their feature labels render.
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+# `docsrs` is set only by the docs.rs build above, so it needs declaring as a known cfg name.
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(docsrs)'] }
 
 [lib]
 name = "trail_config"
@@ -21,5 +36,19 @@ toml = ["dep:toml"]
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", optional = true }
-toml = { version = "1.1", optional = true }
+thiserror = "2"
+# Without `preserve_order`, TOML keys arrive alphabetically and document order is gone before this
+# crate sees it, making `outline` and the merge's key-order guarantee untrue for `.toml` alone.
+# Adds no dependency — `indexmap` is already in the tree via `yaml_serde`.
+# JSON solves the same problem without a feature flag; see `src/config/parser/json.rs`.
+toml = { version = "1.1", optional = true, features = ["preserve_order"] }
 yaml_serde = "0.10"
+
+[dev-dependencies]
+criterion = { version = "0.8.2", default-features = false, features = ["cargo_bench_support"] }
+tempfile = "3"
+
+# Criterion supplies its own harness; without this, libtest also claims the target.
+[[bench]]
+name = "config"
+harness = false

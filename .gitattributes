@@ -1,0 +1,9 @@
+# Shell scripts must keep LF endings whatever the checkout platform. This repository is
+# developed on Windows, where core.autocrlf normally rewrites text files to CRLF on
+# checkout — and a CRLF `check.sh` fails on its first line under WSL with the singularly
+# unhelpful `$'\r': command not found`, because the shebang picks up the carriage return.
+*.sh text eol=lf
+
+# The PowerShell counterpart has the opposite requirement in principle, but PowerShell
+# accepts either, so this only pins what git already does on Windows.
+*.ps1 text eol=crlf

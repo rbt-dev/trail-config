@@ -31,6 +31,59 @@ sections:
 }
 
 #[test]
+fn fmt_strict_keys_use_the_same_escape_syntax_as_paths() {
+    let yaml = r#"
+db:
+  "a/b": 1
+  host: h
+"#;
+    let config = Config::load_yaml(yaml, "/").unwrap();
+
+    // A key containing the separator is escaped, exactly as it is in `base` and in
+    // every other accessor. It used to work *unescaped* here and only here — `fmt` had
+    // its own key namespace, so the same key needed two different spellings depending
+    // on which method you reached for.
+    assert_eq!(config.fmt_strict("{}", "db", &[r"a\/b"]).unwrap(), "1");
+    assert_eq!(config.str_strict(r"db/a\/b").unwrap(), "1");
+
+    // And the unescaped spelling now fails, naming a path the accessors agree about
+    match config.fmt_strict("{}", "db", &["a/b"]) {
+        Err(ConfigError::PathNotFound(path)) => {
+            assert_eq!(path, "db/a/b");
+            assert!(!config.contains(&path), "the reported path must be one the accessors resolve the same way");
+        },
+        other => panic!("Expected PathNotFound, got {:?}", other),
+    }
+}
+
+#[test]
+fn fmt_strict_keys_may_reach_deeper_than_one_level() {
+    // Keys are paths relative to `base`, so composing them with the rest of the path
+    // syntax works rather than being a separate, flatter namespace
+    let config = Config::load_yaml(YAML, "/").unwrap();
+
+    let result = config.fmt_strict("{}:{}", "db", &["redis/server", "redis/port"]).unwrap();
+    assert_eq!(result, config.fmt_strict("{}:{}", "db/redis", &["server", "port"]).unwrap());
+}
+
+#[test]
+fn fmt_strict_errors_on_a_non_scalar_key() {
+    // Same shape as list_strict's elements: the strict half must report rather than
+    // format a mapping in as an empty string
+    let config = Config::load_yaml(YAML, "/").unwrap();
+
+    match config.fmt_strict("{}", "db", &["redis"]) {
+        Err(ConfigError::FormatError(msg)) => {
+            assert!(msg.contains("db/redis"), "message should name the key path: {}", msg);
+        },
+        other => panic!("Expected FormatError for a mapping-valued key, got {:?}", other),
+    }
+
+    // The lenient half still yields an empty string
+    assert_eq!(config.fmt("{}", "db", &["redis"]), "");
+}
+
+#[test]
 fn fmt_strict_missing_path() {
     let config = Config::load_yaml(YAML, "/").unwrap();
     let result = config.fmt_strict("{}:{}", "db/nonexistent", &["server", "port"]);
@@ -49,7 +102,161 @@ fn fmt_strict_missing_attribute() {
 
     assert!(result.is_err());
     match result {
-        Err(ConfigError::PathNotFound(_)) => (),
+        Err(ConfigError::PathNotFound(path)) => assert_eq!(path, "db/redis/nonexistent"),
         _ => panic!("Expected PathNotFound error"),
     }
+}
+
+#[test]
+fn fmt_strict_missing_key_is_named_with_the_config_separator() {
+    // The message must name a path that exists in the caller's addressing scheme —
+    // this used to hardcode `/` and report `db::redis/nonexistent`
+    let config = Config::load_yaml(YAML, "::").unwrap();
+    let result = config.fmt_strict("{}:{}", "db::redis", &["server", "nonexistent"]);
+
+    match result {
+        Err(ConfigError::PathNotFound(path)) => assert_eq!(path, "db::redis::nonexistent"),
+        other => panic!("Expected PathNotFound, got {:?}", other),
+    }
+}
+
+#[test]
+fn fmt_strict_missing_key_at_top_level_has_no_leading_separator() {
+    // An empty base means "the keys are at the top level", so the key stands alone
+    let config = Config::load_yaml("app: 1", "/").unwrap();
+
+    match config.fmt_strict("{}", "", &["nonexistent"]) {
+        Err(ConfigError::PathNotFound(path)) => assert_eq!(path, "nonexistent"),
+        other => panic!("Expected PathNotFound, got {:?}", other),
+    }
+}
+
+const BRACES: &str = r#"
+tpl:
+  a: "x{}y"
+  b: "B"
+  c: "C"
+"#;
+
+#[test]
+fn fmt_strict_does_not_substitute_into_substituted_values() {
+    // A value that itself contains "{}" must not become a placeholder for the
+    // next key. Repeated `replacen` over the accumulating result did exactly that.
+    let config = Config::load_yaml(BRACES, "/").unwrap();
+    let result = config.fmt_strict("{}-{}", "tpl", &["a", "b"]).unwrap();
+    assert_eq!(result, "x{}y-B");
+}
+
+#[test]
+fn fmt_strict_errors_on_more_placeholders_than_keys() {
+    let config = Config::load_yaml(BRACES, "/").unwrap();
+    let result = config.fmt_strict("{}-{}-{}", "tpl", &["a", "b"]);
+    match result {
+        Err(ConfigError::FormatError(_)) => (),
+        other => panic!("Expected FormatError, got {:?}", other),
+    }
+}
+
+#[test]
+fn fmt_strict_errors_on_more_keys_than_placeholders() {
+    let config = Config::load_yaml(BRACES, "/").unwrap();
+    let result = config.fmt_strict("{}", "tpl", &["a", "b", "c"]);
+    match result {
+        Err(ConfigError::FormatError(_)) => (),
+        other => panic!("Expected FormatError, got {:?}", other),
+    }
+}
+
+#[test]
+fn fmt_strict_escapes_literal_braces() {
+    let config = Config::load_yaml(BRACES, "/").unwrap();
+    let result = config.fmt_strict("{{{}}}", "tpl", &["b"]).unwrap();
+    assert_eq!(result, "{B}");
+}
+
+#[test]
+fn fmt_strict_literal_braces_without_placeholders() {
+    let config = Config::load_yaml(BRACES, "/").unwrap();
+    let result = config.fmt_strict("{{}}", "tpl", &[]).unwrap();
+    assert_eq!(result, "{}");
+}
+
+#[test]
+fn fmt_strict_indexed_placeholders() {
+    let config = Config::load_yaml(BRACES, "/").unwrap();
+    // Indices allow reordering and reuse, which auto-numbering cannot express
+    let result = config.fmt_strict("{1}/{0}/{1}", "tpl", &["b", "c"]).unwrap();
+    assert_eq!(result, "C/B/C");
+}
+
+#[test]
+fn fmt_strict_errors_on_index_out_of_range() {
+    let config = Config::load_yaml(BRACES, "/").unwrap();
+    let result = config.fmt_strict("{5}", "tpl", &["b"]);
+    match result {
+        Err(ConfigError::FormatError(_)) => (),
+        other => panic!("Expected FormatError, got {:?}", other),
+    }
+}
+
+#[test]
+fn fmt_strict_errors_on_unclosed_brace() {
+    let config = Config::load_yaml(BRACES, "/").unwrap();
+    let result = config.fmt_strict("{", "tpl", &["b"]);
+    match result {
+        Err(ConfigError::FormatError(_)) => (),
+        other => panic!("Expected FormatError, got {:?}", other),
+    }
+}
+
+#[test]
+fn fmt_strict_errors_on_unmatched_closing_brace() {
+    let config = Config::load_yaml(BRACES, "/").unwrap();
+    let result = config.fmt_strict("}", "tpl", &["b"]);
+    match result {
+        Err(ConfigError::FormatError(_)) => (),
+        other => panic!("Expected FormatError, got {:?}", other),
+    }
+}
+
+#[test]
+fn fmt_strict_errors_on_named_placeholder() {
+    let config = Config::load_yaml(BRACES, "/").unwrap();
+    let result = config.fmt_strict("{name}", "tpl", &["b"]);
+    match result {
+        Err(ConfigError::FormatError(msg)) => {
+            assert!(msg.contains("name"), "message should name the placeholder: {}", msg);
+        },
+        other => panic!("Expected FormatError, got {:?}", other),
+    }
+}
+
+#[test]
+fn fmt_strict_empty_base_reads_top_level_keys() {
+    // An empty base means "the keys are at the top level" — distinct from a base of
+    // just the separator, which is a malformed path
+    let config = Config::load_yaml("host: localhost\nport: 5432\n", "/").unwrap();
+    let result = config.fmt_strict("{}:{}", "", &["host", "port"]).unwrap();
+    assert_eq!(result, "localhost:5432");
+}
+
+#[test]
+fn fmt_strict_rejects_base_with_empty_segment() {
+    let config = Config::load_yaml(BRACES, "/").unwrap();
+
+    for base in ["/tpl", "tpl/", "//tpl", "/"] {
+        match config.fmt_strict("{}", base, &["b"]) {
+            Err(ConfigError::PathNotFound(path)) => assert_eq!(path, base),
+            other => panic!("Expected PathNotFound for base {:?}, got {:?}", base, other),
+        }
+    }
+}
+
+#[test]
+fn fmt_lenient_returns_empty_on_mismatch() {
+    let config = Config::load_yaml(BRACES, "/").unwrap();
+    // The lenient variant swallows the error; the point is that it no longer
+    // returns a half-formatted string
+    assert_eq!(config.fmt("{}-{}-{}", "tpl", &["a", "b"]), "");
+    assert_eq!(config.fmt("{}", "tpl", &["a", "b"]), "");
 }

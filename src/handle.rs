@@ -1,15 +1,61 @@
-use std::sync::{Arc, RwLock, RwLockReadGuard};
+use std::fmt;
+use std::mem;
+use std::sync::{Arc, Mutex, RwLock};
+use yaml_serde::Value;
 use crate::{Config, ConfigError};
 
-/// A thread-safe, cloneable handle to a [`Config`].
+/// A cloneable handle to a [`Config`] that can be **replaced** at runtime.
 ///
-/// `ConfigHandle` wraps a `Config` in an `Arc<RwLock<...>>` so it can be
-/// shared across threads and reloaded at runtime without restarting.
-/// Cloning a `ConfigHandle` is cheap — all clones refer to the same
-/// underlying config.
+/// `ConfigHandle` wraps a `Config` in an `Arc<RwLock<Arc<Config>>>`. Cloning one is
+/// cheap and all clones refer to the same underlying config, so a
+/// [`reload`](ConfigHandle::reload) through any of them is visible through all of them.
 ///
-/// Reads acquire a shared read lock; [`reload`](ConfigHandle::reload) acquires
-/// an exclusive write lock for the duration of the file read and parse.
+/// Note what this is *not* for. [`Config`] is already `Send + Sync`, so a config that
+/// never changes is shared perfectly well as an `Arc<Config>` — no lock, no second
+/// indirection. What an `Arc<Config>` cannot do is swap the document behind the
+/// references it has handed out, because [`Config::reload`] takes `&mut self`. The
+/// handle exists for that: interior mutability, not thread-safety.
+///
+/// The config is stored behind an inner `Arc` so that neither side holds a lock for
+/// long: [`read`](ConfigHandle::read) locks only long enough to clone that `Arc` and
+/// hands back an immutable snapshot, and [`reload`](ConfigHandle::reload) does its
+/// file read and parse with no lock held, taking the write lock only for a pointer
+/// swap. Readers are never blocked on disk I/O, and holding a snapshot never blocks
+/// a reload.
+///
+/// Reloads are serialized against each other by a second lock that readers never
+/// touch, so two concurrent reloads cannot race to swap and leave the handle serving
+/// the older document. See [`reload`](ConfigHandle::reload).
+///
+/// # Method surface
+///
+/// `ConfigHandle` mirrors the complete **lenient** accessor surface of [`Config`] —
+/// [`get`](ConfigHandle::get), [`str`](ConfigHandle::str), [`list`](ConfigHandle::list),
+/// [`contains`](ConfigHandle::contains), [`get_int`](ConfigHandle::get_int),
+/// [`get_float`](ConfigHandle::get_float), [`get_bool`](ConfigHandle::get_bool),
+/// [`get_as`](ConfigHandle::get_as), [`deserialize`](ConfigHandle::deserialize) and
+/// [`fmt`](ConfigHandle::fmt) — each a one-line shorthand for the same call on a
+/// snapshot.
+///
+/// The `*_strict` variants and the metadata accessors are deliberately not mirrored:
+/// go through [`read`](ConfigHandle::read), which reaches every [`Config`] method that
+/// takes `&self`. Reach for a snapshot anyway when reading several values that must
+/// agree, since each convenience call takes its own.
+///
+/// The methods that do **not** take `&self` cannot be reached that way, since a
+/// snapshot only ever derefs to `&Config`:
+///
+/// - [`Config::reload`] and [`Config::reload_from`] take `&mut self`, so both are
+///   mirrored here as [`reload`](ConfigHandle::reload) and
+///   [`reload_from`](ConfigHandle::reload_from). They are the whole point of the type.
+/// - [`Config::merge_required`] and [`Config::merge_optional`] consume `self` and
+///   return a new `Config`; their `_in_place` counterparts take `&mut self`, which a
+///   snapshot cannot give either. None of the four are mirrored, and that is a choice
+///   about *layering* rather than about signatures: the overlay chain describes where a
+///   config came from, and a handle exists to re-read those sources, not to acquire new
+///   ones behind the holders of existing snapshots. Layer the files first, then wrap the
+///   result. A handle's chain is therefore fixed — `reload` re-applies it, `reload_from`
+///   clears it.
 ///
 /// # Example
 /// ```no_run
@@ -30,23 +76,51 @@ use crate::{Config, ConfigError};
 /// # Ok(())
 /// # }
 /// ```
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct ConfigHandle {
-    inner: Arc<RwLock<Config>>,
+    inner: Arc<RwLock<Arc<Config>>>,
+    /// Held for the whole of [`reload`](ConfigHandle::reload) so that two reloads
+    /// cannot overlap. Separate from `inner` on purpose: a reader takes only the
+    /// `RwLock`, so serializing reloads costs readers nothing.
+    reloading: Arc<Mutex<()>>,
+}
+
+impl fmt::Debug for ConfigHandle {
+    /// Defers to [`Config`]'s `Debug`, which prints the config's shape and elides the
+    /// document — a derived impl here would print the whole resolved tree, secrets
+    /// included, wrapped in the `RwLock`'s own debug output.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut out = f.debug_struct("ConfigHandle");
+        match self.inner.try_read() {
+            Ok(config) => out.field("config", &**config),
+            // `try_read`, not `read`: formatting a value must never block, let alone
+            // deadlock against a reload. The write lock is held for a pointer swap
+            // and nothing else, so this branch is vanishingly rare.
+            Err(_) => out.field("config", &format_args!("<locked>")),
+        };
+        out.finish()
+    }
 }
 
 impl ConfigHandle {
     /// Creates a new `ConfigHandle` wrapping the given [`Config`].
     pub fn new(config: Config) -> Self {
         Self {
-            inner: Arc::new(RwLock::new(config)),
+            inner: Arc::new(RwLock::new(Arc::new(config))),
+            reloading: Arc::new(Mutex::new(())),
         }
     }
 
-    /// Acquires a read lock and returns a guard giving access to the inner [`Config`].
+    /// Returns an immutable snapshot of the current [`Config`].
     ///
-    /// Use this to call any [`Config`] method directly. The lock is released
-    /// when the guard is dropped.
+    /// `Arc<Config>` derefs to `Config`, so every [`Config`] method is available
+    /// directly on the returned value.
+    ///
+    /// The read lock is held only long enough to clone an `Arc`, so a snapshot can be
+    /// kept for as long as you like without blocking [`reload`](ConfigHandle::reload).
+    /// The snapshot is also stable: a concurrent reload swaps a *new* config into the
+    /// handle and leaves this one intact, so a series of reads from one snapshot can
+    /// never straddle a reload.
     ///
     /// # Example
     /// ```
@@ -54,16 +128,34 @@ impl ConfigHandle {
     /// # let config = Config::load_yaml("app:\n  port: 8080", "/").unwrap();
     /// # let handle = ConfigHandle::new(config);
     /// let port = handle.read().get_int("app/port");
+    ///
+    /// // Or keep a snapshot for a consistent multi-value read
+    /// let snapshot = handle.read();
+    /// let host = snapshot.str("app/host");
+    /// let port = snapshot.get_int("app/port");
     /// ```
-    pub fn read(&self) -> RwLockReadGuard<'_, Config> {
-        self.inner.read().unwrap_or_else(|e| e.into_inner())
+    pub fn read(&self) -> Arc<Config> {
+        Arc::clone(&self.inner.read().unwrap_or_else(|e| e.into_inner()))
     }
 
     /// Reloads the config from disk, re-applying all overlays in order.
     ///
-    /// Acquires a write lock for the duration of the reload. All reads will
-    /// block until the reload completes. If the reload fails, the existing
-    /// configuration is preserved unchanged.
+    /// The file reads and parsing happen with **no lock held**. The source list
+    /// (base filename plus the overlay chain) is copied under a read lock, the new
+    /// config is built off to the side, and the write lock is taken only to swap the
+    /// finished config in. Readers are therefore never blocked on disk I/O — only for
+    /// the swap itself.
+    ///
+    /// If the reload fails, no swap occurs and the existing configuration is preserved
+    /// unchanged.
+    ///
+    /// Reloads are serialized against each other: a second concurrent reload waits for
+    /// the first to finish rather than reading the files alongside it. Without that,
+    /// two overlapping reloads would each build a config off to the side and the
+    /// *slower* one would swap last, leaving the handle serving a superseded document
+    /// indefinitely even though both calls returned `Ok`. The wait is paid only by
+    /// reloads — the lock is never taken by [`read`](ConfigHandle::read) or any of the
+    /// convenience accessors, so readers still never block on disk I/O.
     ///
     /// # Errors
     /// Returns the same errors as [`Config::reload`].
@@ -78,9 +170,84 @@ impl ConfigHandle {
     /// # }
     /// ```
     pub fn reload(&self) -> Result<(), ConfigError> {
-        self.inner.write()
-            .unwrap_or_else(|e| e.into_inner())
-            .reload()
+        self.rebuild(Config::reload)
+    }
+
+    /// Switches the handle to a different config file, discarding the overlay chain.
+    ///
+    /// The handle-level counterpart to [`Config::reload_from`], with the same locking
+    /// discipline as [`reload`](ConfigHandle::reload): the file is read and parsed with
+    /// no lock held and swapped in afterwards, and the reload lock is taken for the
+    /// duration so a concurrent `reload` and `reload_from` cannot race each other. All
+    /// clones of the handle see the new file.
+    ///
+    /// This has to be mirrored rather than reached through
+    /// [`read`](ConfigHandle::read): `Config::reload_from` takes `&mut self`, and a
+    /// snapshot only ever derefs to `&Config`. Without it a handle would be bound to
+    /// its file for life while a bare `Config` is not.
+    ///
+    /// The separator and environment are preserved, so an `{env}` placeholder in
+    /// `filename` resolves against the environment the config already carries — which
+    /// is why, like `Config::reload_from`, this takes no `env` argument.
+    ///
+    /// # Errors
+    /// Returns the same errors as [`Config::reload_from`]. On failure no swap occurs
+    /// and the handle keeps serving the config it already had.
+    ///
+    /// # Example
+    /// ```no_run
+    /// # use trail_config::{Config, ConfigHandle, ConfigError};
+    /// # fn main() -> Result<(), ConfigError> {
+    /// # let handle = ConfigHandle::new(Config::load_required("config.yaml", "/", None)?);
+    /// handle.reload_from("other_config.yaml")?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn reload_from(&self, filename: &str) -> Result<(), ConfigError> {
+        self.rebuild(|config| config.reload_from(filename))
+    }
+
+    /// The shared body of [`reload`](ConfigHandle::reload) and
+    /// [`reload_from`](ConfigHandle::reload_from): build the next config off to the
+    /// side, then swap it in.
+    ///
+    /// Both go through here so the locking discipline is written once. Getting it
+    /// subtly different between the two is exactly how the lost update this mutex
+    /// exists to prevent would come back.
+    fn rebuild(
+        &self,
+        build: impl FnOnce(&mut Config) -> Result<(), ConfigError>,
+    ) -> Result<(), ConfigError> {
+        // Held until this method returns, so the read-parse-swap sequence below is
+        // atomic with respect to another reload. Whoever reads the files last is then
+        // also the one who swaps last, which is what makes the newest document win.
+        let _reloading = self.reloading.lock().unwrap_or_else(|e| e.into_inner());
+
+        // Snapshot the sources: filenames and the overlay chain, not the document.
+        let mut next = self.read().sources();
+
+        // No lock held — disk I/O and parsing happen here. On failure we return
+        // early and the live config is left untouched.
+        build(&mut next)?;
+        let next = Arc::new(next);
+
+        // Write lock held for a pointer swap and nothing else.
+        let previous = {
+            let mut guard = self.inner.write().unwrap_or_else(|e| e.into_inner());
+            mem::replace(&mut *guard, next)
+        };
+
+        // Released outside the lock: if no snapshot outlives this handle's reference,
+        // dropping the old config walks and frees the whole document tree.
+        drop(previous);
+        Ok(())
+    }
+
+    /// Convenience method — gets the raw value at the specified path.
+    ///
+    /// Equivalent to `handle.read().get(path)`.
+    pub fn get(&self, path: &str) -> Option<Value> {
+        self.read().get(path)
     }
 
     /// Convenience method — gets a value as a string at the specified path.
@@ -88,6 +255,20 @@ impl ConfigHandle {
     /// Equivalent to `handle.read().str(path)`.
     pub fn str(&self, path: &str) -> String {
         self.read().str(path)
+    }
+
+    /// Convenience method — gets a value as a list of strings at the specified path.
+    ///
+    /// Equivalent to `handle.read().list(path)`.
+    pub fn list(&self, path: &str) -> Vec<String> {
+        self.read().list(path)
+    }
+
+    /// Convenience method — checks if a path exists in the configuration.
+    ///
+    /// Equivalent to `handle.read().contains(path)`.
+    pub fn contains(&self, path: &str) -> bool {
+        self.read().contains(path)
     }
 
     /// Convenience method — gets a value as an integer at the specified path.
@@ -111,11 +292,27 @@ impl ConfigHandle {
         self.read().get_bool(path)
     }
 
-    /// Convenience method — checks if a path exists in the configuration.
+    /// Convenience method — deserializes the config subtree at the specified path
+    /// into a typed struct.
     ///
-    /// Equivalent to `handle.read().contains(path)`.
-    pub fn contains(&self, path: &str) -> bool {
-        self.read().contains(path)
+    /// Equivalent to `handle.read().get_as(path)`.
+    pub fn get_as<T: serde::de::DeserializeOwned>(&self, path: &str) -> Option<T> {
+        self.read().get_as(path)
+    }
+
+    /// Convenience method — deserializes the entire config into a typed struct.
+    ///
+    /// Equivalent to `handle.read().deserialize()`.
+    pub fn deserialize<T: serde::de::DeserializeOwned>(&self) -> Option<T> {
+        self.read().deserialize()
+    }
+
+    /// Convenience method — formats sibling config values into a string.
+    ///
+    /// Equivalent to `handle.read().fmt(format, base, keys)`. See
+    /// [`Config::fmt_strict`] for the placeholder syntax.
+    pub fn fmt(&self, format: &str, base: &str, keys: &[&str]) -> String {
+        self.read().fmt(format, base, keys)
     }
 }
 
@@ -126,6 +323,19 @@ impl From<Config> for ConfigHandle {
 }
 
 #[cfg(test)]
+const _: () = {
+    fn _assert_send_sync<T: Send + Sync>() {}
+    fn _check() {
+        // `Config` first: it is documented as shareable as a bare `Arc<Config>`, and
+        // `ConfigHandle`'s `Arc<RwLock<Arc<Config>>>` is `Sync` only because of it.
+        // A field that is not `Send + Sync` would break both claims at once, so this
+        // line fails before the one below and names the actual cause.
+        _assert_send_sync::<Config>();
+        _assert_send_sync::<ConfigHandle>();
+    }
+};
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -133,7 +343,7 @@ mod tests {
 app:
   port: 8080
   debug: true
-  timeout: 3.14
+  timeout: 4.55
 ";
 
     #[test]
@@ -142,7 +352,7 @@ app:
         assert_eq!(handle.str("app/port"), "8080");
         assert_eq!(handle.get_int("app/port"), Some(8080));
         assert_eq!(handle.get_bool("app/debug"), Some(true));
-        assert_eq!(handle.get_float("app/timeout"), Some(3.14));
+        assert_eq!(handle.get_float("app/timeout"), Some(4.55));
         assert!(handle.contains("app/port"));
         assert!(!handle.contains("app/missing"));
     }
@@ -165,77 +375,460 @@ app:
 
     #[test]
     fn reload_picks_up_changes() {
-        use std::fs::{self, File};
-        use std::io::Write;
+        use crate::test_util::{temp_dir, write_file};
+        use std::fs;
 
-        let path = "test_handle_reload.yaml";
-        let mut f = File::create(path).unwrap();
-        writeln!(f, "app:\n  port: 8080").unwrap();
-        drop(f);
+        let dir = temp_dir();
+        let path = write_file(&dir, "config.yaml", "app:\n  port: 8080\n");
 
         let handle = ConfigHandle::new(
-            Config::load_required(path, "/", None).unwrap()
+            Config::load_required(&path, "/", None).unwrap()
         );
         assert_eq!(handle.str("app/port"), "8080");
 
-        let mut f = File::create(path).unwrap();
-        writeln!(f, "app:\n  port: 9090").unwrap();
-        drop(f);
+        fs::write(&path, "app:\n  port: 9090\n").unwrap();
 
         handle.reload().unwrap();
         assert_eq!(handle.str("app/port"), "9090");
-
-        fs::remove_file(path).ok();
     }
 
     #[test]
     fn reload_visible_to_all_clones() {
-        use std::fs::{self, File};
-        use std::io::Write;
+        use crate::test_util::{temp_dir, write_file};
+        use std::fs;
 
-        let path = "test_handle_reload_clones.yaml";
-        let mut f = File::create(path).unwrap();
-        writeln!(f, "app:\n  port: 1111").unwrap();
-        drop(f);
+        let dir = temp_dir();
+        let path = write_file(&dir, "config.yaml", "app:\n  port: 1111\n");
 
         let handle1 = ConfigHandle::new(
-            Config::load_required(path, "/", None).unwrap()
+            Config::load_required(&path, "/", None).unwrap()
         );
         let handle2 = handle1.clone();
 
-        let mut f = File::create(path).unwrap();
-        writeln!(f, "app:\n  port: 2222").unwrap();
-        drop(f);
+        fs::write(&path, "app:\n  port: 2222\n").unwrap();
 
         handle1.reload().unwrap();
         // handle2 sees the change because they share the same Arc
         assert_eq!(handle2.str("app/port"), "2222");
-
-        fs::remove_file(path).ok();
     }
 
     #[test]
     fn reload_preserves_config_on_failure() {
-        use std::fs::{self, File};
-        use std::io::Write;
+        use crate::test_util::{temp_dir, write_file};
+        use std::fs;
 
-        let path = "test_handle_reload_fail.yaml";
-        let mut f = File::create(path).unwrap();
-        writeln!(f, "app:\n  port: 8080").unwrap();
-        drop(f);
+        let dir = temp_dir();
+        let path = write_file(&dir, "config.yaml", "app:\n  port: 8080\n");
 
         let handle = ConfigHandle::new(
-            Config::load_required(path, "/", None).unwrap()
+            Config::load_required(&path, "/", None).unwrap()
         );
 
-        let mut f = File::create(path).unwrap();
-        writeln!(f, "invalid: [unclosed").unwrap();
-        drop(f);
+        fs::write(&path, "invalid: [unclosed\n").unwrap();
 
         assert!(handle.reload().is_err());
         assert_eq!(handle.str("app/port"), "8080"); // still intact
+    }
 
-        fs::remove_file(path).ok();
+    #[test]
+    fn convenience_methods_mirror_config() {
+        use serde::Deserialize;
+
+        const FULL: &str = "
+app:
+  port: 8080
+  debug: true
+db:
+  host: localhost
+  port: 5432
+features:
+  - alpha
+  - beta
+";
+
+        #[derive(Deserialize, PartialEq, Debug)]
+        struct Db {
+            host: String,
+            port: u16,
+        }
+
+        let handle = ConfigHandle::new(Config::load_yaml(FULL, "/").unwrap());
+        let snapshot = handle.read();
+
+        // Each convenience method must agree with the same call on a snapshot
+        assert_eq!(handle.get("app/port"), snapshot.get("app/port"));
+        assert_eq!(handle.str("db/host"), "localhost");
+        assert_eq!(handle.list("features"), vec!["alpha", "beta"]);
+        assert!(handle.contains("db/port"));
+        assert!(!handle.contains("db/missing"));
+        assert_eq!(handle.get_int("app/port"), Some(8080));
+        assert_eq!(handle.get_bool("app/debug"), Some(true));
+        assert_eq!(handle.fmt("{}:{}", "db", &["host", "port"]), "localhost:5432");
+
+        let db: Db = handle.get_as("db").unwrap();
+        assert_eq!(db, Db { host: "localhost".to_string(), port: 5432 });
+
+        // Missing paths stay lenient rather than panicking
+        assert_eq!(handle.get("nope"), None);
+        assert_eq!(handle.str("nope"), "");
+        assert!(handle.list("nope").is_empty());
+        assert_eq!(handle.get_int("nope"), None);
+        assert_eq!(handle.get_float("nope"), None);
+        assert_eq!(handle.get_bool("nope"), None);
+        assert_eq!(handle.get_as::<Db>("nope"), None);
+        assert_eq!(handle.fmt("{}", "nope", &["x"]), "");
+    }
+
+    #[test]
+    fn deserialize_whole_config() {
+        use serde::Deserialize;
+
+        #[derive(Deserialize, PartialEq, Debug)]
+        struct App {
+            port: u16,
+            debug: bool,
+            timeout: f64,
+        }
+        #[derive(Deserialize, PartialEq, Debug)]
+        struct Root {
+            app: App,
+        }
+
+        let handle = ConfigHandle::new(Config::load_yaml(YAML, "/").unwrap());
+        let root: Root = handle.deserialize().unwrap();
+
+        assert_eq!(root.app, App { port: 8080, debug: true, timeout: 4.55 });
+    }
+
+    #[test]
+    fn read_snapshot_is_stable_across_reload() {
+        use crate::test_util::{temp_dir, write_file};
+        use std::fs;
+
+        let dir = temp_dir();
+        let path = write_file(&dir, "config.yaml", "app:\n  port: 8080\n");
+
+        let handle = ConfigHandle::new(
+            Config::load_required(&path, "/", None).unwrap()
+        );
+
+        let snapshot = handle.read();
+        assert_eq!(snapshot.get_int("app/port"), Some(8080));
+
+        fs::write(&path, "app:\n  port: 9090\n").unwrap();
+
+        // Holding a snapshot must not block the reload. Under the old
+        // guard-returning `read()` this call would have deadlocked.
+        handle.reload().unwrap();
+
+        // The snapshot still sees the config it was taken from...
+        assert_eq!(snapshot.get_int("app/port"), Some(8080));
+        // ...while the handle sees the new one.
+        assert_eq!(handle.get_int("app/port"), Some(9090));
+    }
+
+    #[test]
+    fn reload_while_readers_are_active() {
+        use crate::test_util::{temp_dir, write_file};
+        use std::{fs, thread};
+
+        let dir = temp_dir();
+        let path = write_file(&dir, "config.yaml", "app:\n  port: 1000\n");
+
+        let handle = ConfigHandle::new(
+            Config::load_required(&path, "/", None).unwrap()
+        );
+
+        // Readers hammer the handle while the reload runs. This would hang if
+        // reload took a read lock and then a write lock without releasing.
+        let readers: Vec<_> = (0..4).map(|_| {
+            let h = handle.clone();
+            thread::spawn(move || {
+                for _ in 0..500 {
+                    // Always a committed value — never a half-swapped state
+                    let port = h.get_int("app/port").unwrap();
+                    assert!(port == 1000 || port == 2000, "unexpected port {}", port);
+                }
+            })
+        }).collect();
+
+        fs::write(&path, "app:\n  port: 2000\n").unwrap();
+        handle.reload().unwrap();
+
+        for r in readers { r.join().unwrap(); }
+        assert_eq!(handle.get_int("app/port"), Some(2000));
+    }
+
+    #[test]
+    fn concurrent_reloads_settle_on_the_newest_document() {
+        use crate::test_util::{temp_dir, write_file};
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::{fs, thread, time::Duration};
+
+        // A document big enough that parsing it dominates a reload. The file read
+        // itself stays a single fast syscall, so the rewrite below lands while the
+        // first reload is parsing rather than reading — no torn read, but a wide
+        // window for a second reload to overlap the first.
+        let mut big = String::from("app:\n  port: 1\n");
+        for i in 0..20_000 {
+            big.push_str(&format!("filler{i}: value{i}\n"));
+        }
+
+        // How many iterations actually managed to overlap. The assertion below holds
+        // whether or not they do — if the first reload finishes before the rewrite, the
+        // second still swaps last and the handle still ends up on v2 — so without
+        // counting, faster hardware would turn this from a test into a formality and say
+        // nothing about it. A document size and a sleep tuned on one machine are exactly
+        // the kind of thing that stops meaning what it meant.
+        let mut overlapped = 0usize;
+
+        // Repeated because one interleaving proves little. Before reloads were
+        // serialized this lost the update on every iteration.
+        for _ in 0..20 {
+            let dir = temp_dir();
+            let path = write_file(&dir, "config.yaml", &big);
+
+            let handle = ConfigHandle::new(
+                Config::load_required(&path, "/", None).unwrap()
+            );
+            assert_eq!(handle.get_int("app/port"), Some(1));
+
+            // Starts reloading the large v1 and should still be parsing it a moment later.
+            let finished = Arc::new(AtomicBool::new(false));
+            let slow = {
+                let h = handle.clone();
+                let finished = Arc::clone(&finished);
+                thread::spawn(move || {
+                    h.reload().unwrap();
+                    finished.store(true, Ordering::SeqCst);
+                })
+            };
+            thread::sleep(Duration::from_millis(10));
+
+            // Read before the rewrite: if the slow reload is still running now, it is
+            // still holding the reload lock, and this iteration is testing the race.
+            if !finished.load(Ordering::SeqCst) {
+                overlapped += 1;
+            }
+
+            // Supersede it: the disk now holds v2, and this reload reads it.
+            fs::write(&path, "app:\n  port: 2\n").unwrap();
+            handle.reload().unwrap();
+
+            slow.join().unwrap();
+
+            // Both calls returned Ok, so the handle must agree with the disk.
+            // Unserialized, the slow reload swaps its stale v1 in last and the
+            // handle serves port 1 forever.
+            assert_eq!(
+                handle.get_int("app/port"),
+                Some(2),
+                "a superseded reload swapped over a newer one"
+            );
+        }
+
+        assert!(
+            overlapped > 0,
+            "no iteration overlapped, so nothing about concurrent reloads was tested — \
+             this machine parses the 20k-key document in under 10ms, so the document \
+             needs to grow or the sleep needs to shrink"
+        );
+    }
+
+    #[test]
+    fn reload_from_switches_the_file_for_every_clone() {
+        use crate::test_util::{temp_dir, write_file};
+
+        let dir = temp_dir();
+        let first = write_file(&dir, "first.yaml", "app:\n  port: 1111\n");
+        let second = write_file(&dir, "second.yaml", "app:\n  port: 2222\n");
+
+        let handle = ConfigHandle::new(
+            Config::load_required(&first, "/", None).unwrap()
+        );
+        let clone = handle.clone();
+        let snapshot = handle.read();
+
+        handle.reload_from(&second).unwrap();
+
+        assert_eq!(clone.get_int("app/port"), Some(2222), "every clone sees the switch");
+        assert_eq!(handle.read().filename(), second);
+        // A snapshot is immutable, exactly as across a `reload`
+        assert_eq!(snapshot.get_int("app/port"), Some(1111));
+
+        // The handle now reloads the *new* file
+        std::fs::write(&second, "app:\n  port: 3333\n").unwrap();
+        handle.reload().unwrap();
+        assert_eq!(handle.get_int("app/port"), Some(3333));
+    }
+
+    #[test]
+    fn reload_from_clears_the_overlay_chain() {
+        use crate::test_util::{temp_dir, write_file};
+        use std::fs;
+
+        let dir = temp_dir();
+        let base = write_file(&dir, "base.yaml", "app:\n  port: 1111\n  name: base\n");
+        let overlay = write_file(&dir, "over.yaml", "app:\n  name: overlaid\n");
+        let other = write_file(&dir, "other.yaml", "app:\n  port: 2222\n  name: other\n");
+
+        let handle = ConfigHandle::new(
+            Config::load_required(&base, "/", None)
+                .unwrap()
+                .merge_required(&overlay, None)
+                .unwrap(),
+        );
+        assert_eq!(handle.str("app/name"), "overlaid");
+
+        handle.reload_from(&other).unwrap();
+        assert_eq!(handle.str("app/name"), "other");
+
+        // The overlay must be gone, not merely inactive — a later reload that
+        // re-applied it would be the stale-chain bug `Config::reload_from` fixes.
+        fs::write(&overlay, "app:\n  name: should_not_appear\n").unwrap();
+        handle.reload().unwrap();
+        assert_eq!(handle.str("app/name"), "other");
+        assert_eq!(handle.get_int("app/port"), Some(2222));
+    }
+
+    #[test]
+    fn reload_from_preserves_the_config_on_failure() {
+        use crate::test_util::{temp_dir, write_file};
+
+        let dir = temp_dir();
+        let first = write_file(&dir, "first.yaml", "app:\n  port: 1111\n");
+        let broken = write_file(&dir, "broken.yaml", "invalid: [unclosed\n");
+
+        let handle = ConfigHandle::new(
+            Config::load_required(&first, "/", None).unwrap()
+        );
+
+        assert!(handle.reload_from(&broken).is_err());
+        assert!(handle.reload_from("no_such_file_xyz.yaml").is_err());
+
+        // No swap happened, so the filename is intact too — not just the values
+        assert_eq!(handle.get_int("app/port"), Some(1111));
+        assert_eq!(handle.read().filename(), first);
+    }
+
+    #[test]
+    fn reload_from_resolves_env_against_the_carried_environment() {
+        use crate::test_util::{temp_dir, write_file};
+
+        let dir = temp_dir();
+        let base = write_file(&dir, "config.prod.yaml", "app:\n  port: 1111\n");
+        write_file(&dir, "other.prod.yaml", "app:\n  port: 2222\n");
+        let template = dir.path().join("other.{env}.yaml").to_string_lossy().into_owned();
+
+        let handle = ConfigHandle::new(
+            Config::load_required(&base, "/", Some("prod")).unwrap()
+        );
+
+        // `sources()` carries the environment across, so the placeholder resolves —
+        // this is the case that fails if the handle rebuilds from anything less.
+        handle.reload_from(&template).unwrap();
+        assert_eq!(handle.get_int("app/port"), Some(2222));
+        assert_eq!(handle.read().environment(), Some("prod"));
+    }
+
+    #[test]
+    fn reload_from_is_serialized_against_reload() {
+        use crate::test_util::{temp_dir, write_file};
+        use std::{sync::mpsc, thread, time::Duration};
+
+        let dir = temp_dir();
+        let first = write_file(&dir, "first.yaml", "app:\n  port: 1111\n");
+        let second = write_file(&dir, "second.yaml", "app:\n  port: 2222\n");
+
+        let handle = ConfigHandle::new(
+            Config::load_required(&first, "/", None).unwrap()
+        );
+
+        let (tx, rx) = mpsc::channel();
+        let worker = {
+            let h = handle.clone();
+            let second = second.clone();
+            // Hold the reload lock, standing in for a reload already in flight
+            let guard = handle.reloading.lock().unwrap();
+            let worker = thread::spawn(move || {
+                h.reload_from(&second).unwrap();
+                let _ = tx.send(());
+            });
+
+            // `reload_from` must take the same lock as `reload`, so it cannot finish
+            // while this is held. A short wait is enough to tell "blocked" from
+            // "raced past" — if it were not serialized it would complete immediately.
+            assert!(
+                rx.recv_timeout(Duration::from_millis(200)).is_err(),
+                "reload_from swapped while a reload held the lock"
+            );
+            drop(guard);
+            worker
+        };
+
+        worker.join().unwrap();
+        rx.recv_timeout(Duration::from_secs(5))
+            .expect("reload_from should complete once the lock is free");
+        assert_eq!(handle.get_int("app/port"), Some(2222));
+    }
+
+    #[test]
+    fn serializing_reloads_does_not_block_readers() {
+        use crate::test_util::{temp_dir, write_file};
+        use std::{sync::mpsc, thread, time::Duration};
+
+        let dir = temp_dir();
+        let path = write_file(&dir, "config.yaml", "app:\n  port: 1000\n");
+
+        let handle = ConfigHandle::new(
+            Config::load_required(&path, "/", None).unwrap()
+        );
+
+        // Stand in for a reload in flight: the reload lock is held for the whole
+        // of `reload`, so this is the state a reader meets during one.
+        let _reloading = handle.reloading.lock().unwrap();
+
+        let (tx, rx) = mpsc::channel();
+        let h = handle.clone();
+        thread::spawn(move || {
+            let _ = tx.send((h.get_int("app/port"), h.read().filename().to_string()));
+        });
+
+        // Readers take only the RwLock, so this must arrive without the reload
+        // lock being released. A fix that locked readers out too would time out.
+        let (port, filename) = rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("a reader blocked while a reload held the reload lock");
+        assert_eq!(port, Some(1000));
+        assert_eq!(filename, path);
+    }
+
+    #[test]
+    fn debug_does_not_print_config_values() {
+        let handle = ConfigHandle::new(
+            Config::load_yaml("db:\n  password: hunter2\n", "/").unwrap()
+        );
+        let printed = format!("{:?}", handle);
+
+        assert!(!printed.contains("hunter2"), "Debug leaked a password: {}", printed);
+        assert!(!printed.contains("password"), "Debug leaked the document: {}", printed);
+        // Flattened onto Config's shape rather than the RwLock's derived output
+        assert!(printed.starts_with("ConfigHandle { config: Config {"), "got: {}", printed);
+    }
+
+    #[test]
+    fn debug_does_not_block_against_a_writer() {
+        use std::thread;
+
+        let handle = ConfigHandle::new(Config::load_yaml(YAML, "/").unwrap());
+        let printed = {
+            // Hold the write lock for the duration of the format
+            let _guard = handle.inner.write().unwrap();
+            let h = handle.clone();
+            thread::spawn(move || format!("{:?}", h)).join().unwrap()
+        };
+
+        assert!(printed.contains("<locked>"), "got: {}", printed);
     }
 
     #[test]
@@ -253,11 +846,3 @@ app:
         for t in threads { t.join().unwrap(); }
     }
 }
-
-#[cfg(test)]
-const _: () = {
-    fn _assert_send_sync<T: Send + Sync>() {}
-    fn _check() {
-        _assert_send_sync::<ConfigHandle>();
-    }
-};

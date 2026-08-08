@@ -1,4 +1,5 @@
 use super::Config;
+use crate::config::path::parse_path;
 
 #[test]
 fn escaped_separator_in_key() {
@@ -75,36 +76,71 @@ database:
 
 #[test]
 fn parse_path_basic() {
-    let parts = Config::parse_path("a/b/c", "/");
+    let parts = parse_path("a/b/c", "/");
     assert_eq!(parts, vec!["a", "b", "c"]);
 }
 
 #[test]
 fn parse_path_with_escaped_separator() {
-    let parts = Config::parse_path("a/b\\/c/d", "/");
+    let parts = parse_path("a/b\\/c/d", "/");
     assert_eq!(parts, vec!["a", "b/c", "d"]);
 }
 
 #[test]
 fn parse_path_with_escaped_backslash() {
-    let parts = Config::parse_path("a/b\\\\c/d", "/");
+    let parts = parse_path("a/b\\\\c/d", "/");
     assert_eq!(parts, vec!["a", "b\\c", "d"]);
 }
 
 #[test]
 fn parse_path_multiple_escapes() {
-    let parts = Config::parse_path("a\\/b\\/c/d", "/");
+    let parts = parse_path("a\\/b\\/c/d", "/");
     assert_eq!(parts, vec!["a/b/c", "d"]);
 }
 
 #[test]
 fn parse_path_with_custom_separator() {
-    let parts = Config::parse_path("a::b\\::c::d", "::");
+    let parts = parse_path("a::b\\::c::d", "::");
     assert_eq!(parts, vec!["a", "b::c", "d"]);
 }
 
 #[test]
 fn parse_path_escape_requires_full_separator() {
-    let parts = Config::parse_path(r"a::b\:c::d", "::");
+    let parts = parse_path(r"a::b\:c::d", "::");
     assert_eq!(parts, vec!["a", r"b\:c", "d"]);
+}
+
+#[test]
+fn parse_path_trailing_backslash_is_literal() {
+    // A backslash with nothing left to escape stays as itself
+    let parts = parse_path(r"a/b\", "/");
+    assert_eq!(parts, vec!["a", r"b\"]);
+}
+
+#[test]
+fn parse_path_backslash_before_ordinary_char_is_literal() {
+    let parts = parse_path(r"a/b\c", "/");
+    assert_eq!(parts, vec!["a", r"b\c"]);
+}
+
+#[test]
+fn parse_path_empty_segments_are_preserved() {
+    // Leading, doubled and trailing separators all yield empty segments here;
+    // `get_leaf` is what skips them when navigating.
+    let parts = parse_path("/a//b/", "/");
+    assert_eq!(parts, vec!["", "a", "", "b", ""]);
+}
+
+#[test]
+fn parse_path_multibyte_separator() {
+    let parts = parse_path("a→b\\→c→d", "→");
+    assert_eq!(parts, vec!["a", "b→c", "d"]);
+}
+
+#[test]
+fn parse_path_empty_separator_terminates() {
+    // Unreachable through the public API — `check_separator` rejects an empty
+    // separator at construction — but must not loop forever if it is reached.
+    let parts = parse_path("a/b", "");
+    assert_eq!(parts, vec!["a/b"]);
 }

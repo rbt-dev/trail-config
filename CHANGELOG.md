@@ -5,7 +5,74 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.4.0] - Unreleased
+## [0.5.0] - 2026-08-08
+
+### Added
+
+- `Format` and `_as` constructor twins — `load_required_as`, `load_optional_as`, `load_or_create_as` — pinning the parser for a file whose extension does not name its format. The choice is kept across `reload` and `reload_from`. Replaces `load_json_file` / `load_toml_file`.
+- `merge_required_in_place` / `merge_optional_in_place` — `&mut self` merges that leave the receiver untouched on failure.
+- `Config::separator()`, completing the trio with `filename()` and `environment()`.
+- `Config::outline()` — every path in the document with values replaced by their types, so it is safe to log. Keys that no path can reach are listed and marked `# not addressable`.
+- `ConfigHandle::reload_from`, plus the rest of the lenient accessor surface: `get`, `list`, `get_as`, `deserialize` and `fmt`.
+- Re-exports so callers can name what the API hands back: `Value`, `Mapping`, `Sequence`, `Number`, and `JsonError` / `TomlError` under their features.
+- `ValueError`, and `ConfigError::DeserializeError { file, path, source }` for failures that are not parse errors.
+- `config!`'s positional form takes any combination of `sep`, `env`, `merge` and `merge_optional` (in that order), not exactly one.
+- `rust-version = "1.85"`, verified against that toolchain.
+- Crate-level documentation, `#![warn(missing_docs)]`, and docs.rs feature labels.
+- Repository tooling: `criterion` benchmarks, a `tests/` suite exercising the crate as a consumer, `check.ps1` / `check.sh`, and `exclude` to keep internal notes out of the published crate.
+- Four runnable examples in `examples/` — `web_server`, `environments`, `db_pool`, `feature_flags` — each writing its own config into a temporary directory, so `cargo run --example <name>` works from a fresh checkout with nothing to set up.
+
+### Changed
+
+- **Breaking:** `ConfigError` is a `thiserror` enum, and `IoError` / `YamlError` / `JsonError` / `TomlError` are struct variants carrying `{ file: Option<String>, source }` instead of stringified messages — so `source()` chains and `Display` names the file. `JsonError` and `TomlError` exist only with their features.
+- **Breaking:** `ConfigError` and its struct variants are `#[non_exhaustive]`: a match needs a `_` arm and a trailing `..`. `PathNotFound` and `FormatError` are exempt.
+- **Breaking:** `YamlError` and `DeserializeError` carry `ValueError` rather than `yaml_serde::Error`, keeping a `0.x` type out of the public API. Same `Display`, plus `location()`; the upstream variants can no longer be matched.
+- **Breaking:** `Config::get_filename()` is renamed to `Config::filename()`.
+- **Breaking:** `Config::default()` panics on a present-but-broken `config.yaml` instead of silently returning an empty config. A missing file is still empty.
+- **Breaking:** empty path segments are rejected, so `a//b`, `/a/b`, `a/b/` and a bare separator no longer resolve. Escapes (`db/host\/port`) are unaffected, and an empty `fmt` base still means top level.
+- **Breaking:** a separator containing a backslash is a `FormatError`; it collided with the escape character, silently making every lookup return nothing.
+- **Breaking:** `{env}` is one-directional — an environment with no placeholder is fine, a placeholder with no environment is a `FormatError`.
+- **Breaking:** interpolation gained `$${` for a literal `${`, and brace-depth matching so defaults nest (`${A:-${B:-c}}`, capped at 32). Nesting inside a variable *name* is rejected; lone or doubled dollars elsewhere are untouched.
+- **Breaking:** `fmt` / `fmt_strict` parse the format string — `{{` / `}}` for literal braces, indexed `{N}` placeholders, and a placeholder/key count mismatch is an error rather than silently dropped.
+- **Breaking:** `fmt` keys are paths relative to `base` with the usual escaping, so `fmt("{}", "db", &["redis/port"])` works and a key containing the separator needs `r"a\/b"`.
+- **Breaking:** `ConfigHandle::read` returns `Arc<Config>` rather than `RwLockReadGuard`. It derefs, so only code naming the guard type breaks; reads no longer block reloads, and a snapshot is stable across one.
+- **Behaviour:** an overlay can clear a value with null, which used to be discarded. Empty and comment-only overlays remain a no-op.
+- **Behaviour:** `list_strict` rejects non-scalar *elements*, naming them `path[index]`, instead of rendering them as `""`. `list` is unchanged.
+- **Behaviour:** a `fmt` key resolving to a mapping or sequence is a `FormatError` from `fmt_strict`.
+- **Behaviour:** `Debug` elides the document, which by then holds interpolated secrets, printing filename, separator, environment, format and overlays with `content: <N keys>`.
+- `{env}` in an overlay or reload target resolves against the environment the config already carries, so a layered stack names it once; `reload_from` accepts a placeholder at all now.
+- `ConfigHandle::reload` builds the new config with no lock held and takes the write lock only to swap it in; a mutex serializes concurrent reloads.
+- Performance: accessors borrow instead of cloning (`deserialize` ~3× faster, `get_as` ~2.5×) and path splitting allocates nothing while scanning (~2× on three segments, ~7× on a hundred). Only `get` and `get_as`, which return owned values, still clone.
+- Documentation: `get_as` / `deserialize` are the recommended default and `get` the escape hatch. Newly stated, behaviour unchanged — paths navigate mappings only and match keys as strings; interpolation never touches keys; `load_or_create` does not create parent directories; `env` reaches the filesystem unvalidated; and `Config` is `Send + Sync`, which the docs had denied.
+- Internal: `config/mod.rs` split into `loader`, `accessor`, `merge`, `reload`, `path`, `env`, `fmt`, `outline` and `parser`; tests use temp directories and serialize environment mutation.
+- Documentation: the guide moved out of the README into `docs/`, one file per topic, indexed by `docs/README.md`; the README is now a landing page. Both `docs/` and `examples/` ship in the published crate. Working on the crate itself moved to `CONTRIBUTING.md`.
+
+### Removed
+
+- **Breaking:** `load_json_file` / `load_toml_file` — use `load_required_as(f, sep, env, Format::Json)`.
+- **Breaking:** the `YamlError` re-export of `yaml_serde::Error` and `impl From<yaml_serde::Error> for ConfigError` — use `ValueError`.
+
+### Fixed
+
+- **`json`, breaking:** a duplicated JSON key is an error, matching YAML and TOML.
+- **`toml`, breaking:** datetimes read as the text in the file instead of `toml_datetime`'s private marker mapping, which broke `str`, `get_as` and `outline`. They no longer deserialize into `toml::value::Datetime`.
+- Extension dispatch is case-insensitive and matches the extension rather than the path suffix, so `config.TOML` no longer routes to the YAML parser and a file named `.json` is a dotfile that parses as YAML.
+- A leading UTF-8 BOM is stripped for every format and for strings. Previously only `.json` rejected one — and a BOM is what PowerShell's `>` and `Out-File` write.
+- JSON and TOML keep document key order instead of arriving alphabetized, making `outline`'s and the merge's order guarantees true for all three formats. No new dependency, MSRV unmoved.
+- JSON and TOML parse straight into the value model, so neither can fail with a `YamlError` any more.
+- Deep merge keeps mapping key order; `Mapping::remove` is `swap_remove`, so a single override used to displace two keys.
+- A YAML `!Tag` is no longer a hole in the value walkers: tagged subtrees are interpolated (an unset `${VAR}` under a tag used to survive silently), deep-merged under the same tag, and transparent to `str`, `get_int`, `list`, `outline` and `Debug`, while `get` / `get_as` still see the tag.
+- A variable that is set but not valid Unicode is a `FormatError` naming the cause, instead of being reported as unset or silently taking the default.
+- Variables are resolved once per file, at load. The merges re-scanned the merged tree and `reload()` resolved over it once, so a value containing `${` broke or double-expanded.
+- The merges record the environment they resolve, unless the config already carries one.
+- `load_or_create` is safe on first run: defaults are parsed before anything is written, the file is created with `create_new`, the loser of that race waits out the winner's zero-length window instead of discarding the defaults, defaults parse in the file's own format, and the filename is recorded so `reload()` works.
+- `load_optional` records the resolved filename when the file is missing, so a later `reload()` can pick it up. `filename()` is now `""` only for a config parsed from a string.
+- `reload_from` commits filename, content and overlays together, so a failed switch no longer leaves the new name with the old content and a stale overlay chain.
+- Empty filenames are `IoError(InvalidInput)` everywhere — every loader, `reload_from` and both merges. `merge_optional("")` used to succeed and record a dead overlay.
+- `config!` works by full path (`trail_config::config!`), not only when imported by name.
+- `fmt` no longer rescans substituted values, so a value containing `{}` is not read as the next placeholder. Missing keys are named with the config's separator instead of a hardcoded `/`.
+
+## [0.4.0] - 2026-04-01
 
 ### Changed
 
@@ -188,7 +255,7 @@ config.fmt("postgresql://{}@{}:{}/{}", "database", &["username", "host", "port",
 - Added package `description` field in `Cargo.toml`
 - Removed `yml` from crate keywords (kept `yaml`)
 
-## [0.1.0] - Unreleased
+## [0.1.0] - 2021-09-15
 
 ### Added
 
@@ -203,3 +270,20 @@ config.fmt("postgresql://{}@{}:{}/{}", "database", &["username", "host", "port",
 - Customisable path separator (e.g. `/`, `::`)
 - Environment-specific config file loading via `{env}` placeholder
 - Dependencies: `serde_yaml 0.8.21`, `strfmt 0.1.6`
+
+<!-- Every version heading above is a link into the repository: each one compares against its
+     predecessor, so a heading answers "what actually changed" as well as naming the release.
+     0.5.0 points at HEAD while it is unreleased; on publishing, retag and change it to
+     `v0.4.0...v0.5.0`. -->
+
+[0.5.0]: https://github.com/rbt-dev/trail-config/compare/v0.4.0...v0.5.0
+[0.4.0]: https://github.com/rbt-dev/trail-config/compare/v0.3.1...v0.4.0
+[0.3.1]: https://github.com/rbt-dev/trail-config/compare/v0.3.0...v0.3.1
+[0.3.0]: https://github.com/rbt-dev/trail-config/compare/v0.2.0...v0.3.0
+[0.2.0]: https://github.com/rbt-dev/trail-config/compare/v0.1.5...v0.2.0
+[0.1.5]: https://github.com/rbt-dev/trail-config/compare/v0.1.4...v0.1.5
+[0.1.4]: https://github.com/rbt-dev/trail-config/compare/v0.1.3...v0.1.4
+[0.1.3]: https://github.com/rbt-dev/trail-config/compare/v0.1.2...v0.1.3
+[0.1.2]: https://github.com/rbt-dev/trail-config/compare/v0.1.1...v0.1.2
+[0.1.1]: https://github.com/rbt-dev/trail-config/compare/v0.1.0...v0.1.1
+[0.1.0]: https://github.com/rbt-dev/trail-config/releases/tag/v0.1.0

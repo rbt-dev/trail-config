@@ -124,7 +124,7 @@ fn get_bool_strict_success() {
 
     let result = config.get_bool_strict("app/debug");
     assert!(result.is_ok());
-    assert_eq!(result.unwrap(), true);
+    assert!(result.unwrap());
 }
 
 #[test]
@@ -244,6 +244,48 @@ fn list_strict_errors_on_non_sequence() {
 }
 
 #[test]
+fn list_strict_errors_on_a_non_scalar_element() {
+    // Previously only the container was type-checked: a nested sequence, a nested
+    // mapping and a null all came back as "", indistinguishable from an element that
+    // genuinely is the empty string.
+    let config = Config::load_yaml(
+        "nested_seq:\n  - [1, 2]\n  - x\nnested_map:\n  - k: v\n  - x\nnulls:\n  - x\n  -\n",
+        "/",
+    ).unwrap();
+
+    for (path, index) in [("nested_seq", 0), ("nested_map", 0), ("nulls", 1)] {
+        match config.list_strict(path) {
+            Err(ConfigError::FormatError(msg)) => {
+                assert!(
+                    msg.contains(&format!("{}[{}]", path, index)),
+                    "message should name the offending element: {}",
+                    msg
+                );
+            },
+            other => panic!("Expected FormatError for {}, got: {:?}", path, other),
+        }
+    }
+}
+
+#[test]
+fn list_strict_accepts_every_scalar_type_and_the_empty_string() {
+    let config = Config::load_yaml("mixed:\n  - text\n  - 42\n  - 3.5\n  - true\n  - \"\"\n", "/").unwrap();
+
+    // An element that genuinely is "" is a scalar and stays one — the value the old
+    // behaviour was indistinguishable from
+    assert_eq!(config.list_strict("mixed").unwrap(), ["text", "42", "3.5", "true", ""]);
+}
+
+#[test]
+fn list_stays_lenient_about_elements() {
+    // The lenient half is unchanged: it flattens rather than reports, like every other
+    // lenient accessor
+    let config = Config::load_yaml("a:\n  - [1, 2]\n  - x\n  -\n", "/").unwrap();
+
+    assert_eq!(config.list("a"), ["", "x", ""]);
+}
+
+#[test]
 fn contains_test() {
     let config = Config::load_yaml(YAML, "/").unwrap();
 
@@ -268,20 +310,107 @@ fn empty_path() {
 }
 
 #[test]
-fn path_with_only_separator() {
+fn path_of_only_separators_does_not_return_the_whole_tree() {
     let config = Config::load_yaml(YAML, "/").unwrap();
 
-    let result = config.get("/");
-    assert!(result.is_some());
-
-    let result = config.get("//");
-    assert!(result.is_some());
+    // Every segment is empty, so there is nothing to navigate to. Skipping them
+    // used to hand back the entire document.
+    assert!(config.get("/").is_none());
+    assert!(config.get("//").is_none());
+    assert!(!config.contains("/"));
 }
 
 #[test]
-fn path_with_leading_trailing_separator() {
+fn leading_or_trailing_separator_is_rejected() {
     let config = Config::load_yaml(YAML, "/").unwrap();
 
-    let result = config.get("/db/redis/port/");
-    assert!(result.is_some());
+    // The same path without the stray separators resolves
+    assert!(config.get("db/redis/port").is_some());
+
+    assert!(config.get("/db/redis/port").is_none());
+    assert!(config.get("db/redis/port/").is_none());
+    assert!(config.get("/db/redis/port/").is_none());
+}
+
+#[test]
+fn doubled_separator_is_rejected() {
+    let config = Config::load_yaml(YAML, "/").unwrap();
+
+    assert!(config.get("db//redis/port").is_none());
+    assert_eq!(config.str("db//redis/port"), "");
+    assert!(!config.contains("db//redis/port"));
+}
+
+#[test]
+fn empty_segment_reports_the_path_in_strict_methods() {
+    let config = Config::load_yaml(YAML, "/").unwrap();
+
+    match config.str_strict("db//redis/port") {
+        Err(ConfigError::PathNotFound(path)) => assert_eq!(path, "db//redis/port"),
+        other => panic!("Expected PathNotFound, got {:?}", other),
+    }
+}
+
+
+#[test]
+fn sequence_elements_are_not_addressable_by_index() {
+    // Documented design line: paths navigate mappings only. `list` is the way into
+    // a sequence — a numeric segment is just a key that does not exist.
+    let config = Config::load_yaml("sources:\n  - one\n  - two\n", "/").unwrap();
+
+    assert_eq!(config.get("sources/0"), None);
+    assert!(!config.contains("sources/0"));
+    assert_eq!(config.str("sources/0"), "");
+    assert!(matches!(
+        config.get_strict("sources/0"),
+        Err(ConfigError::PathNotFound(_))
+    ));
+
+    assert_eq!(config.list("sources"), vec!["one", "two"]);
+}
+
+#[test]
+fn non_string_keys_have_no_path_but_still_deserialize() {
+    // The other documented design line, and the one that was stated only in a code
+    // comment: segments are matched as strings, so `retries/1` looks up the *string* "1"
+    // and never the integer 1. Pinned here because the docs now promise the way around it.
+    use std::collections::BTreeMap;
+
+    let config = Config::load_yaml(
+        "retries:\n  1: fast\n  2: slow\nflags:\n  true: on\n  false: off\n",
+        "/",
+    ).unwrap();
+
+    // The parent resolves; the non-string keys under it do not
+    assert!(config.contains("retries"));
+    assert!(!config.contains("retries/1"));
+    assert_eq!(config.str("retries/1"), "");
+    assert!(!config.contains("flags/true"));
+
+    // ...and the outline says so rather than leaving them looking absent
+    assert!(config.outline().contains("retries/1: <string>  # not addressable"));
+
+    // The documented workaround: deserialize the subtree and the keys come back typed
+    let retries: BTreeMap<i64, String> = config.get_as_strict("retries").unwrap();
+    assert_eq!(retries[&1], "fast");
+    assert_eq!(retries[&2], "slow");
+
+    let flags: BTreeMap<bool, String> = config.get_as_strict("flags").unwrap();
+    assert_eq!(flags[&true], "on");
+}
+
+#[test]
+fn a_string_key_and_its_scalar_twin_are_different_keys() {
+    // Why there is no escape for reaching a non-string key, and why the accessors do not
+    // fall back to one: a document can hold both, so any rule that made `mixed/1` reach
+    // the integer would make the string permanently unreachable instead. The string is
+    // the one that resolves, because a path segment *is* a string.
+    let config = Config::load_yaml("mixed:\n  1: int-key\n  \"1\": string-key\n", "/").unwrap();
+
+    assert_eq!(config.str("mixed/1"), "string-key");
+
+    // Both are listed, and the marker is what tells the two lines apart
+    let outline = config.outline();
+    assert!(outline.contains("mixed/1: <string>  # not addressable"));
+    assert!(outline.contains("mixed/1: <string>\n"));
 }

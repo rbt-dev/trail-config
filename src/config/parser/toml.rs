@@ -74,8 +74,8 @@ fn convert(value: toml::Value) -> Value {
         // `toml::Value` therefore preserves what the file wrote, and collecting into
         // `Mapping` (also `IndexMap`-backed) keeps it.
         //
-        // The JSON side of the same problem is answered differently — `super::json` parses
-        // straight into this value model rather than enabling `serde_json`'s
+        // The JSON side uses borrowed raw tokens and an ordered mapping visitor rather
+        // than enabling `serde_json`'s
         // `preserve_order`, because that feature would unify across the whole dependency
         // graph. TOML's parse has to go through `toml::Value` for the datetime handling
         // above, so the flag is the only route here.

@@ -190,7 +190,7 @@ impl Config {
         match untagged(value) {
             Value::Number(num) => {
                 num.as_i64()
-                    .ok_or_else(|| ConfigError::FormatError(format!("Cannot convert {} to i64", num)))
+                    .ok_or_else(|| ConfigError::FormatError(format!("Cannot convert value at {} to i64", path)))
             },
             _ => Err(ConfigError::FormatError(format!("Value at {} is not a number", path)))
         }
@@ -218,7 +218,7 @@ impl Config {
         match untagged(value) {
             Value::Number(num) => {
                 num.as_f64()
-                    .ok_or_else(|| ConfigError::FormatError(format!("Cannot convert {} to f64", num)))
+                    .ok_or_else(|| ConfigError::FormatError(format!("Cannot convert value at {} to f64", path)))
             },
             _ => Err(ConfigError::FormatError(format!("Value at {} is not a number", path)))
         }
@@ -273,7 +273,8 @@ impl Config {
     ///
     /// # Errors
     /// Returns `ConfigError::PathNotFound` if the path does not exist
-    /// Returns `ConfigError::DeserializeError`, naming the path and the file, if the
+    /// Returns `ConfigError::DeserializeError`, naming the path and the single source
+    ///     file (or the merged configuration when overlays are registered), if the
     ///     value cannot be deserialized into `T`
     ///
     /// # Example
@@ -297,7 +298,7 @@ impl Config {
             .ok_or_else(|| ConfigError::PathNotFound(path.to_string()))?;
         // Deserialize straight from the borrowed subtree. `yaml_serde::from_value`
         // takes `Value` by value and would force a deep clone of the subtree first.
-        T::deserialize(value).map_err(|e| self.deserialize_error(Some(path), e))
+        T::deserialize(value).map_err(|e| self.deserialize_error::<T>(Some(path), e))
     }
 
     /// Deserializes the entire config into a typed struct
@@ -327,7 +328,8 @@ impl Config {
     /// Deserializes the entire config into a typed struct, returning an error if deserialization fails
     ///
     /// # Errors
-    /// Returns `ConfigError::DeserializeError`, naming the file, if the config cannot be
+    /// Returns `ConfigError::DeserializeError`, naming the single source file or the
+    ///     merged configuration when overlays are registered, if the config cannot be
     ///     deserialized into `T`
     ///
     /// # Example
@@ -353,21 +355,18 @@ impl Config {
     pub fn deserialize_strict<T: serde::de::DeserializeOwned>(&self) -> Result<T, ConfigError> {
         // Borrowed, not cloned — see `get_as_strict`. This matters most here, where
         // the alternative is deep-cloning the entire document on every call.
-        T::deserialize(&self.content).map_err(|e| self.deserialize_error(None, e))
+        T::deserialize(&self.content).map_err(|e| self.deserialize_error::<T>(None, e))
     }
 
-    /// Builds the error for a failed deserialization, attributing it to this config's
-    /// file and — for [`get_as_strict`](Config::get_as_strict) — the subtree path.
-    ///
-    /// These used to go through `From<yaml_serde::Error>` and surface as `YamlError`,
-    /// rendering as "YAML parse error: …" even for a config loaded from `.toml`.
-    /// Mechanically true — deserialization runs through the `yaml_serde` value model
-    /// whatever the source format — but a caller has to know the crate's internals for
-    /// that to make sense, and nothing was parsed at this point in any case.
-    fn deserialize_error(&self, path: Option<&str>, source: yaml_serde::Error) -> ConfigError {
+    /// Without per-value provenance, an overlay chain cannot identify the offending
+    /// file. Preserve the requested path, but do not blame the base for merged values.
+    fn deserialize_error<T>(&self, path: Option<&str>, source: yaml_serde::Error) -> ConfigError {
+        let merged = !self.overlays.is_empty();
         ConfigError::DeserializeError {
-            file: (!self.filename.is_empty()).then(|| self.filename.clone()),
+            file: (!merged && !self.filename.is_empty()).then(|| self.filename.clone()),
+            merged,
             path: path.map(str::to_string),
+            expected_type: std::any::type_name::<T>(),
             source: source.into(),
         }
     }
@@ -375,18 +374,8 @@ impl Config {
 
 /// Looks through any `!Tag` wrapping a value.
 ///
-/// A tag names a serde enum variant; it says nothing about how the value is *read*. The
-/// value model already takes this view when indexing — `Value::get("key")` untags before
-/// looking the key up — so `db/host` resolves whether or not `db` is tagged. The readers
-/// below have to agree, or a tagged scalar would resolve as a path and then read back as
-/// `""` from `str` and `None` from every typed accessor.
-///
-/// Looping rather than unwrapping once mirrors the value model, which allows a tag to
-/// wrap a tag.
-///
-/// The tag is only skipped for *reading*. [`Config::get`] and
-/// [`get_as`](Config::get_as) still see the tagged value, because deserializing an enum
-/// is exactly what the tag is for.
+/// Scalar readers skip tags to agree with path lookup. Loop because tags may nest.
+/// [`Config::get`] and [`get_as`](Config::get_as) retain tags for enum deserialization.
 pub(super) fn untagged(mut value: &Value) -> &Value {
     while let Value::Tagged(tagged) = value {
         value = &tagged.value;

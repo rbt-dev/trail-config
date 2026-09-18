@@ -4,16 +4,15 @@
     combination.
 
 .DESCRIPTION
-    This project has no CI by design, so the five feature combinations, the doctests
-    and the clippy runs are verified by hand. Doing that by hand is a dozen invocations
-    and easy to half-finish; this is one.
+    CI and local development use this script for the five feature combinations,
+    doctests, clippy, documentation and package-content checks on Windows.
 
     Each combination is a separate compilation of the crate: `json` and `toml` are
     additive feature gates, so code that compiles with both enabled can still fail to
     compile with neither, and a test that only exists under one feature is only run
     under that one.
 
-    This covers Windows only, which is the one thing running it by hand cannot fix. Run
+    This covers Windows only. Run
     `./check.sh` under WSL for the Linux half: between them they cover the platform
     surface this crate actually touches — Windows a case-insensitive filesystem, Linux
     the Unix error kinds, a case-sensitive filesystem and Unix path handling.
@@ -89,14 +88,21 @@ foreach ($combination in $combinations) {
     Invoke-Step "test [$name]"   (@('test') + $flags)
 }
 
+# A separate consumer enables dependency features without changing the main matrix.
+$jsonFixture = 'tests/downstream-json/Cargo.toml'
+Invoke-Step 'downstream JSON [default]' @('test', '--manifest-path', $jsonFixture)
+Invoke-Step 'downstream JSON [arbitrary precision]' @('test', '--manifest-path', $jsonFixture, '--features', 'arbitrary')
+Invoke-Step 'downstream JSON [all dependency features]' @('test', '--manifest-path', $jsonFixture, '--all-features')
+Invoke-Step 'downstream JSON clippy' @('clippy', '--manifest-path', $jsonFixture, '--all-targets', '--all-features', '--', '-D', 'warnings')
+
 # Doctests run once: they are feature-independent, and `cargo test` above already ran
 # them for each combination that compiles them. This pins the count in the summary.
 Invoke-Step 'doctests' @('test', '--all-features', '--doc')
 
 Invoke-Step 'docs' @('doc', '--all-features', '--no-deps')
 
-# What `cargo publish` would actually upload. `exclude` in Cargo.toml keeps the review
-# notes and this script out of the tarball; nothing else enforces that, and the failure is
+# What `cargo publish` would actually upload. `exclude` in Cargo.toml keeps developer
+# tooling out of the tarball; nothing else enforces that, and the failure is
 # invisible until the crate is on crates.io, where a published version cannot be replaced.
 # `--allow-dirty` so the check is usable mid-change: it inspects the file list, not the
 # VCS state, and a dirty tree is the normal case when running this script.
@@ -110,7 +116,7 @@ if ($LASTEXITCODE -ne 0) {
     $failures.Add('package contents')
 } else {
     $unwanted = $packaged | Where-Object {
-        $_ -like 'IMPROVEMENTS_*.md' -or $_ -eq 'check.ps1' -or $_ -eq 'check.sh' -or $_ -eq '.gitattributes'
+        $_ -eq 'check.ps1' -or $_ -eq 'check.sh' -or $_ -eq '.gitattributes' -or $_ -like '.github/*'
     }
     if ($unwanted) {
         Write-Host '    FAILED (package contents): excluded files are in the crate' -ForegroundColor Red

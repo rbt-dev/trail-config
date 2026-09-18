@@ -33,6 +33,9 @@ pub(super) fn get_leaf<'a>(mut content: &'a Value, path: &str, separator: &str) 
 /// - `\<sep>` becomes a literal separator in the key (e.g. `\/` for `/`, `\::` for `::`)
 /// - `\\` becomes a literal backslash in the key
 ///
+/// A partial separator cannot be escaped on its own. Some multi-character key
+/// boundaries are consequently unrepresentable; `outline` marks those paths.
+///
 /// Yields lazily and borrows wherever it can: a segment is only copied when it actually
 /// contains an escape sequence, which real paths almost never do. Collecting into
 /// `Vec<String>` instead cost roughly 36 ns per segment — about 78% of the total time

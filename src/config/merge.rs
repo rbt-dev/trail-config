@@ -103,7 +103,7 @@ impl Config {
     ///
     /// // The config survives a failed merge, so this can be reported and shrugged off
     /// if let Err(e) = config.merge_required_in_place("config.prod.yaml", None) {
-    ///     eprintln!("ignoring unusable overlay: {e}");
+    ///     eprintln!("ignoring unusable overlay: {}", e.safe_diagnostic());
     /// }
     ///
     /// let port = config.get_int("app/port"); // still the base's value
@@ -216,7 +216,7 @@ impl Config {
     ///
     /// // Absent is fine and silent; unreadable is reported and the base survives it
     /// if let Err(e) = config.merge_optional_in_place("config.local.yaml", None) {
-    ///     eprintln!("config.local.yaml is unusable, continuing without it: {e}");
+    ///     eprintln!("config.local.yaml is unusable, continuing without it: {}", e.safe_diagnostic());
     /// }
     /// # Ok(())
     /// # }

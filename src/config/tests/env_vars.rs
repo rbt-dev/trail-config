@@ -358,15 +358,17 @@ fn set_but_empty_variable_does_not_fall_back_to_default() {
 #[cfg(windows)]
 fn set_but_not_unicode() -> std::ffi::OsString {
     use std::os::windows::ffi::OsStringExt;
-    // 'a' followed by a lone high surrogate: a legal UTF-16 code-unit sequence to the
-    // OS, but not convertible to UTF-8
-    std::ffi::OsString::from_wide(&[0x0061, 0xD800])
+    let mut units: Vec<u16> = "dummy-secret".encode_utf16().collect();
+    units.push(0xD800);
+    std::ffi::OsString::from_wide(&units)
 }
 
 #[cfg(unix)]
 fn set_but_not_unicode() -> std::ffi::OsString {
     use std::os::unix::ffi::OsStringExt;
-    std::ffi::OsString::from_vec(vec![0x61, 0xFF])
+    let mut bytes = b"dummy-secret".to_vec();
+    bytes.push(0xFF);
+    std::ffi::OsString::from_vec(bytes)
 }
 
 #[cfg(any(windows, unix))]
@@ -383,6 +385,9 @@ fn set_but_not_unicode_variable_is_an_error_naming_the_real_cause() {
     );
 
     let result = Config::load_yaml("db:\n  host: ${TRAIL_TEST_NOT_UNICODE}", "/");
+    let err = result.as_ref().unwrap_err();
+    assert!(!err.to_string().contains("dummy-secret"));
+    assert!(!format!("{err:?}").contains("dummy-secret"));
     match result {
         Err(ConfigError::FormatError(msg)) => {
             // Reporting "is not set" sent the operator to verify an export that was

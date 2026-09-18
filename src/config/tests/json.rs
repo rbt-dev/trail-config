@@ -68,11 +68,7 @@ fn load_json_env_var_interpolation() {
 
 #[test]
 fn duplicate_json_keys_are_rejected() {
-    // All three formats now agree: YAML and TOML always rejected a duplicated key, and
-    // JSON used to take the last one silently, because it parsed through
-    // `serde_json::Value` whose map simply overwrites. Deserializing straight into this
-    // crate's value model — done for key order — brought JSON in line, since that
-    // model's visitor refuses a duplicate entry.
+    // JSON's ordered mapping visitor must reject duplicates, including nested ones.
     let result = Config::load_json(r#"{"a": 1, "a": 2}"#, "/");
 
     match result {
@@ -89,9 +85,7 @@ fn duplicate_json_keys_are_rejected() {
 
 #[test]
 fn json_documents_reject_trailing_content() {
-    // Parsing now drives `serde_json` into this crate's value model rather than into
-    // `serde_json::Value`. `from_str` still checks that the document is the whole input,
-    // which a hand-driven `Deserializer` would not have.
+    // Raw token validation must still consume the complete document.
     assert!(Config::load_json(r#"{"a": 1} trailing"#, "/").is_err());
     assert!(Config::load_json(r#"{"a": 1}{"b": 2}"#, "/").is_err());
 }

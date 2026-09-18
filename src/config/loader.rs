@@ -7,23 +7,13 @@ use super::Config;
 use super::env::resolve_env_vars;
 use super::parser;
 
-/// How many times [`Config::load_or_create`] re-reads a zero-length config file before
-/// accepting it as genuinely empty, and how long it waits between attempts.
-///
-/// Together these bound the wait at 200 ms. The window exists because `create_new` makes
-/// *creating* the file atomic but not *filling* it — see [`create_new_file`] — so the
-/// loser of a first-run race can read the winner's file between the two syscalls and get
-/// nothing. Waiting turns that from a silently empty config into a brief pause.
-///
-/// Only a **zero-length** file waits, and only when `defaults` is not itself empty, so
-/// nothing on the ordinary paths pays for this: a file with content settles on the first
-/// read, and a file holding only comments is not zero-length and is accepted immediately.
-/// The one case that pays the full 200 ms is a deliberately empty file loaded with
-/// non-empty defaults, which is a contradiction in the call itself.
+/// Best-effort retries after reading a null document from a zero-length file with
+/// nonempty defaults. Ten 20 ms sleeps request 200 ms of delay; I/O and scheduling
+/// can add time. Neither the deadline nor a successful parse proves a write is complete.
 const EMPTY_FILE_RETRIES: usize = 10;
 const EMPTY_FILE_BACKOFF: Duration = Duration::from_millis(20);
 
-/// The total time [`Config::load_or_create`] will spend waiting on a zero-length file.
+/// The total requested sleep time for zero-length-file retries, excluding I/O and scheduling.
 ///
 /// Derived rather than restated so the tests that assert the wait did or did not happen
 /// are expressed against the real window. They used to carry a hardcoded 100 ms, which
@@ -238,18 +228,21 @@ impl Config {
     ///
     /// # First-run races
     ///
-    /// Creating the file and filling it are two syscalls, so the winner of that race leaves
-    /// a zero-length file visible for a moment. A loser arriving in that gap would read
-    /// nothing and return an **empty** config — no error, defaults discarded, every accessor
-    /// answering `""` / `None` / `[]`. To close it, a config that reads as empty *from a
-    /// zero-length file* is re-read for up to 200 ms before being accepted, which is far
-    /// longer than the gap and is only ever waited out when the file really is empty.
+    /// Exclusive creation prevents overwriting an existing file; it does not publish the
+    /// contents atomically. Other readers can observe the empty file or a partial write.
+    /// A write failure can also leave an empty or partially written file behind.
     ///
-    /// What remains: a file still zero-length after that wait is returned as an empty
-    /// config, and one still unparseable is returned as the parse error. Both are the right
-    /// answer by then — 200 ms is not a partial write. A deliberately empty file is
-    /// therefore honoured, at the cost of that wait; pass empty `defaults` and it is
-    /// returned immediately instead.
+    /// When the initial read returns a null document and the file is zero-length, nonempty
+    /// `defaults` enable a **best-effort** retry: at most ten re-reads, each after a 20 ms
+    /// sleep. I/O and scheduling can extend the elapsed time beyond 200 ms. A successfully
+    /// parsed non-null document returns immediately, even if it is only a valid prefix of
+    /// an unfinished write. An initial parse error does not enter this retry loop.
+    ///
+    /// If retries expire, the last config or error is returned. An empty result or parse
+    /// error does not establish that the writer has finished. Empty `defaults` skip the
+    /// retry. This policy also applies to [`load_or_create_as`](Self::load_or_create_as).
+    /// Coordinate writers and readers externally when complete-file reads are required;
+    /// parsing or application validation alone cannot establish write completion.
     ///
     /// Only the file is created — **parent directories are not**. A missing parent returns
     /// `IoError` rather than being created, so a mistyped path cannot leave a junk directory
@@ -355,36 +348,24 @@ impl Config {
         defaults: &str,
     ) -> Result<Config, ConfigError> {
         match Self::load_internal_as(filename, sep, env, format) {
-            // The file was already there. It may still be the *winner's* file caught
-            // between its creation and its contents, which reads as an empty config —
-            // this is the likelier half of the race, since a process arriving a moment
-            // late never reaches the create path below at all.
+            // Existing files can still be mid-creation; apply the empty-file heuristic.
             Ok(config) => Self::settle_empty(config, filename, sep, env, format, defaults),
             Err(ConfigError::IoError { ref source, .. }) if source.kind() == io::ErrorKind::NotFound => {
                 let (file, _) = get_file(filename, env)?;
 
-                // Validate the defaults *before* writing them. Writing first and parsing
-                // second left a broken file on disk when the defaults did not parse in the
-                // file's format — and because the file then existed, this branch never ran
-                // again: every subsequent run read the same broken file and failed
-                // identically, turning a first-run error into a permanent one.
-                //
-                // In `format` when one was pinned, so this checks the defaults against the
-                // parser that will actually read them back rather than against the one the
-                // extension names.
+                // Reject invalid defaults before creating a file, using the same parser
+                // that will read it back, including any explicitly pinned format.
                 parser::parse_in(format, defaults, &file)?;
 
-                // The parsed value is deliberately discarded and the file re-read below,
-                // so the created config is built by exactly the same path as an existing
-                // one — filename recorded, `reload()` working, no second code path to
-                // keep in step.
+                // Re-read through the normal loader to retain source metadata and
+                // keep creation and existing-file loading consistent.
                 match create_new_file(&file, defaults) {
                     // We created *and* filled it, so there is nothing to wait for.
                     Ok(()) => return Self::load_internal_as(filename, sep, env, format),
                     // Another process created the file between the not-found check and
                     // here — the first-run race this method exists for. `create_new`
-                    // means we did not clobber it; fall through and load what they wrote,
-                    // once they have written it.
+                    // means we did not clobber it; read the visible contents and apply
+                    // the best-effort empty-file retry if eligible.
                     Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {},
                     Err(e) => return Err(ConfigError::io_in(&file, e)),
                 }
@@ -396,27 +377,13 @@ impl Config {
         }
     }
 
-    /// Waits out a config that read as empty from a zero-length file, in case the file is
-    /// mid-creation by another process.
+    /// Retries a null document from a zero-length file in case a concurrent writer
+    /// makes progress. This is a heuristic, not a write-completion protocol.
     ///
-    /// `create_new` makes creating the file atomic but not filling it, so between those two
-    /// syscalls the file exists and is empty. Every format parses nothing to `Value::Null`,
-    /// so a reader in that gap gets a `Config` that is indistinguishable from a legitimately
-    /// empty one and reports no error at all — the silent-wrong-answer shape this crate
-    /// rejects elsewhere (an empty path segment resolving, a `${VAR}` served as literal
-    /// text). Re-reading for a bounded spell tells the two apart, because only one of them
-    /// changes.
-    ///
-    /// Three guards keep this off every ordinary path, in increasing order of cost:
-    /// a document that is not null has nothing to settle; empty `defaults` mean an empty
-    /// file is the correct answer and there is nothing better to wait for; and a file that
-    /// is not zero-length is empty for its own reasons — a comment-only document — rather
-    /// than because a write is in flight.
-    ///
-    /// A parse failure during the wait is treated as "not settled yet" for the same reason:
-    /// a partly-written document is not valid in any of the three formats. If it is still
-    /// failing when the attempts run out, that error is returned — by then the file is
-    /// broken rather than incomplete, which is what the caller needs to hear.
+    /// A non-null document, empty defaults, or nonzero file length bypass the retry.
+    /// During retries, a successfully parsed non-null document returns immediately;
+    /// that can be an incomplete but valid prefix. All other outcomes are retried,
+    /// with the most recent config or error returned when attempts run out.
     fn settle_empty(
         config: Config,
         filename: &str,
@@ -450,12 +417,8 @@ impl Config {
     /// Loads a file with an explicitly chosen parser, or by extension when `format` is
     /// `None`.
     ///
-    /// The one path every file constructor takes, so the filename check, the separator
-    /// check and `{env}` resolution cannot differ between them — which is what makes the
-    /// format a *parameter* of the three constructors rather than an axis of new ones.
-    /// `load_json_file` and `load_toml_file`, which this replaces, each bypassed all three
-    /// checks, and skipping the last meant they alone could not take a `config.{env}.json`
-    /// template.
+    /// All file constructors share filename and separator validation, `{env}`
+    /// resolution, and source metadata construction through this path.
     fn load_internal_as(
         filename: &str,
         sep: &str,
@@ -509,6 +472,11 @@ impl Config {
     }
 
     /// Parses a JSON string into a Config object.
+    ///
+    /// Integers within `i64` or `u64` range are exact. Other numbers use finite
+    /// `f64` and may lose precision; numbers that overflow `f64` are rejected.
+    /// This policy also applies when a downstream dependency enables
+    /// `serde_json/arbitrary_precision`; it does not extend this crate's value model.
     ///
     /// # Errors
     /// Returns `ConfigError::FormatError` if the separator is empty or contains a backslash
@@ -572,11 +540,10 @@ impl Config {
 /// and turns the loser of the race into an `AlreadyExists` the caller can handle by loading
 /// the winner's file.
 ///
-/// The file is created empty and filled a moment later, so a racing reader can still
-/// observe it part-written. Closing that here would need a write-to-temp-and-rename dance,
-/// and rename replaces the destination — reintroducing the clobbering this call prevents.
-/// It is closed on the *reading* side instead, by `Config::settle_empty`, which waits a
-/// zero-length file out rather than accepting it as an empty config.
+/// Contents are written after creation, so readers can observe a partial write.
+/// `Config::settle_empty` only retries some empty reads; it does not close this race.
+/// Stronger publication would need a portable no-clobber mechanism for completed files.
+/// A write error leaves the created file in place, possibly empty or partial.
 pub(super) fn create_new_file(file: &str, contents: &str) -> io::Result<()> {
     fs::OpenOptions::new()
         .write(true)

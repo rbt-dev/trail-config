@@ -1,8 +1,11 @@
 use std::fmt;
 use std::mem;
+use std::panic::RefUnwindSafe;
 use std::sync::{Arc, Mutex, RwLock};
 use yaml_serde::Value;
 use crate::{Config, ConfigError};
+
+type Validator = dyn Fn(&Config) -> Result<(), ConfigError> + Send + Sync + RefUnwindSafe;
 
 /// A cloneable handle to a [`Config`] that can be **replaced** at runtime.
 ///
@@ -19,13 +22,15 @@ use crate::{Config, ConfigError};
 /// The config is stored behind an inner `Arc` so that neither side holds a lock for
 /// long: [`read`](ConfigHandle::read) locks only long enough to clone that `Arc` and
 /// hands back an immutable snapshot, and [`reload`](ConfigHandle::reload) does its
-/// file read and parse with no lock held, taking the write lock only for a pointer
-/// swap. Readers are never blocked on disk I/O, and holding a snapshot never blocks
-/// a reload.
+/// file read and parse without holding the reader/writer lock, taking the write lock
+/// only for a pointer swap. Readers are never blocked on disk I/O, and holding a
+/// snapshot never blocks a reload.
 ///
 /// Reloads are serialized against each other by a second lock that readers never
 /// touch, so two concurrent reloads cannot race to swap and leave the handle serving
 /// the older document. See [`reload`](ConfigHandle::reload).
+/// Use [`with_validator`](ConfigHandle::with_validator) to enforce application types
+/// and domain rules before the initial configuration or a replacement is published.
 ///
 /// # Method surface
 ///
@@ -83,6 +88,7 @@ pub struct ConfigHandle {
     /// cannot overlap. Separate from `inner` on purpose: a reader takes only the
     /// `RwLock`, so serializing reloads costs readers nothing.
     reloading: Arc<Mutex<()>>,
+    validator: Option<Arc<Validator>>,
 }
 
 impl fmt::Debug for ConfigHandle {
@@ -108,7 +114,54 @@ impl ConfigHandle {
         Self {
             inner: Arc::new(RwLock::new(Arc::new(config))),
             reloading: Arc::new(Mutex::new(())),
+            validator: None,
         }
+    }
+
+    /// Creates a handle that validates its initial config and every replacement.
+    ///
+    /// The validator sees the complete configuration after merging and interpolation.
+    /// It is shared by all clones and runs on both [`reload`](Self::reload) and
+    /// [`reload_from`](Self::reload_from), before publication. Returning an error
+    /// leaves the current snapshot and its source metadata unchanged.
+    ///
+    /// Validation holds the reload mutex, but no reader/writer lock, so readers can
+    /// keep using the current snapshot. Do not reload this handle (or one of its
+    /// clones) from inside the validator: reloads are serialized and would deadlock.
+    /// Prefer side-effect-free validation; external side effects cannot be rolled back.
+    /// A panic propagates without publishing the candidate.
+    ///
+    /// The validator must implement [`RefUnwindSafe`]. Handles with or without a
+    /// validator can be used with [`std::panic::catch_unwind`].
+    /// This is a compile-time constraint on captured state, not a prohibition on
+    /// panicking. Immutable settings, atomics, and standard mutex-protected state
+    /// can be captured. Side effects are still the validator's responsibility.
+    ///
+    /// # Errors
+    /// Returns the validator's error unchanged if the initial config is rejected.
+    /// Custom error messages should omit sensitive values; use
+    /// [`ConfigError::safe_diagnostic`] when logging errors.
+    ///
+    /// # Example
+    /// ```
+    /// use trail_config::{Config, ConfigError, ConfigHandle};
+    /// let config = Config::load_yaml("port: 8080", "/")?;
+    /// let handle = ConfigHandle::with_validator(config, |candidate| {
+    ///     let port = candidate.get_as_strict::<u16>("port")?;
+    ///     if port == 0 {
+    ///         return Err(ConfigError::FormatError("port must be nonzero".into()));
+    ///     }
+    ///     Ok(())
+    /// })?;
+    /// assert_eq!(handle.get_int("port"), Some(8080));
+    /// # Ok::<(), ConfigError>(())
+    /// ```
+    pub fn with_validator(
+        config: Config,
+        validator: impl Fn(&Config) -> Result<(), ConfigError> + Send + Sync + RefUnwindSafe + 'static,
+    ) -> Result<Self, ConfigError> {
+        validator(&config)?;
+        Ok(Self { validator: Some(Arc::new(validator)), ..Self::new(config) })
     }
 
     /// Returns an immutable snapshot of the current [`Config`].
@@ -140,8 +193,8 @@ impl ConfigHandle {
 
     /// Reloads the config from disk, re-applying all overlays in order.
     ///
-    /// The file reads and parsing happen with **no lock held**. The source list
-    /// (base filename plus the overlay chain) is copied under a read lock, the new
+    /// The file reads, parsing, and validation happen with **no reader/writer lock held**.
+    /// The source list (base filename plus the overlay chain) is copied under a read lock, the new
     /// config is built off to the side, and the write lock is taken only to swap the
     /// finished config in. Readers are therefore never blocked on disk I/O — only for
     /// the swap itself.
@@ -158,7 +211,8 @@ impl ConfigHandle {
     /// convenience accessors, so readers still never block on disk I/O.
     ///
     /// # Errors
-    /// Returns the same errors as [`Config::reload`].
+    /// Returns the same errors as [`Config::reload`], or the error from a validator
+    /// registered with [`with_validator`](Self::with_validator).
     ///
     /// # Example
     /// ```no_run
@@ -177,9 +231,9 @@ impl ConfigHandle {
     ///
     /// The handle-level counterpart to [`Config::reload_from`], with the same locking
     /// discipline as [`reload`](ConfigHandle::reload): the file is read and parsed with
-    /// no lock held and swapped in afterwards, and the reload lock is taken for the
-    /// duration so a concurrent `reload` and `reload_from` cannot race each other. All
-    /// clones of the handle see the new file.
+    /// no reader/writer lock held and swapped in afterwards. The reload mutex is held
+    /// throughout, so a concurrent `reload` and `reload_from` cannot race each other.
+    /// All clones of the handle see the new file.
     ///
     /// This has to be mirrored rather than reached through
     /// [`read`](ConfigHandle::read): `Config::reload_from` takes `&mut self`, and a
@@ -191,8 +245,8 @@ impl ConfigHandle {
     /// is why, like `Config::reload_from`, this takes no `env` argument.
     ///
     /// # Errors
-    /// Returns the same errors as [`Config::reload_from`]. On failure no swap occurs
-    /// and the handle keeps serving the config it already had.
+    /// Returns the same errors as [`Config::reload_from`], or the registered validator's
+    /// error. On failure no swap occurs and the handle keeps serving its current config.
     ///
     /// # Example
     /// ```no_run
@@ -211,24 +265,24 @@ impl ConfigHandle {
     /// [`reload_from`](ConfigHandle::reload_from): build the next config off to the
     /// side, then swap it in.
     ///
-    /// Both go through here so the locking discipline is written once. Getting it
-    /// subtly different between the two is exactly how the lost update this mutex
-    /// exists to prevent would come back.
+    /// Both operations share the same reload mutex and publication path.
     fn rebuild(
         &self,
         build: impl FnOnce(&mut Config) -> Result<(), ConfigError>,
     ) -> Result<(), ConfigError> {
-        // Held until this method returns, so the read-parse-swap sequence below is
-        // atomic with respect to another reload. Whoever reads the files last is then
-        // also the one who swaps last, which is what makes the newest document win.
+        // Serialize reading, validation, and publication so a slower reload cannot
+        // overwrite a newer one. Readers never acquire this mutex.
         let _reloading = self.reloading.lock().unwrap_or_else(|e| e.into_inner());
 
         // Snapshot the sources: filenames and the overlay chain, not the document.
         let mut next = self.read().sources();
 
-        // No lock held — disk I/O and parsing happen here. On failure we return
-        // early and the live config is left untouched.
+        // No reader/writer lock held during I/O, parsing, or validation. Any failure
+        // returns before publication, leaving the live config untouched.
         build(&mut next)?;
+        if let Some(validate) = &self.validator {
+            validate(&next)?;
+        }
         let next = Arc::new(next);
 
         // Write lock held for a pointer swap and nothing else.

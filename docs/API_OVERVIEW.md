@@ -74,7 +74,7 @@ let config = Config::load_required("config.yaml", "/", None)?;
 
 match config.get("app/port") {
     Some(Value::Number(n)) => println!("port {}", n),
-    Some(other) => eprintln!("app/port is not a number: {:?}", other),
+    Some(_) => eprintln!("app/port is not a number"),
     None => eprintln!("app/port is not set"),
 }
 ```

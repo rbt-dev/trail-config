@@ -19,7 +19,7 @@ if let Some(port) = port {
 // Strict - returns error details
 match config.get_int_strict("app/port") {
     Ok(port) => println!("Port: {}", port),
-    Err(e) => eprintln!("Failed to read port: {}", e),
+    Err(e) => eprintln!("Failed to read port: {}", e.safe_diagnostic()),
 }
 ```
 
@@ -31,6 +31,11 @@ app:
   timeout: 30.5
   debug: true
 ```
+
+Interpolated values remain strings. See the [explicit number and boolean conversion
+recipe](ENV_INTERPOLATION.md#numbers-and-booleans-remain-strings). To enforce these
+conversions and domain rules before publishing a reload, use a
+[handle validator](SHARED_CONFIG.md#validating-replacements).
 
 # Struct Deserialization
 
@@ -93,7 +98,8 @@ Prefer `deserialize_strict` where the config is required, since it says *which* 
 wrong rather than only that something was.
 
 `deserialize_strict` returns `DeserializeError` if the config can't be deserialized into 
-`T`, naming the file and — for `get_as_strict` — the subtree path. `get_as_strict` 
+`T`, naming the single source file (or the merged configuration when overlays are
+registered) and — for `get_as_strict` — the subtree path. `get_as_strict`
 additionally returns `PathNotFound` if the path doesn't exist.
 
 Sample YAML:

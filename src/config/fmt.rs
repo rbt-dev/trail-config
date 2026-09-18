@@ -182,10 +182,9 @@ fn parse_format(format: &str) -> Result<Vec<Piece<'_>>, ConfigError> {
             rest = tail;
         } else if let Some(after_brace) = rest.strip_prefix('{') {
             let end = after_brace.find('}').ok_or_else(|| {
-                ConfigError::FormatError(format!(
-                    "Unclosed '{{' in format string \"{}\" (use '{{{{' for a literal brace)",
-                    format
-                ))
+                ConfigError::FormatError(
+                    "Unclosed '{' in format string (use '{{' for a literal brace)".to_string()
+                )
             })?;
 
             let spec = &after_brace[..end];
@@ -194,21 +193,18 @@ fn parse_format(format: &str) -> Result<Vec<Piece<'_>>, ConfigError> {
                 auto_index - 1
             } else {
                 spec.parse::<usize>().map_err(|_| {
-                    ConfigError::FormatError(format!(
-                        "Unsupported placeholder '{{{}}}' in format string \"{}\": \
-                         only '{{}}' and '{{N}}' are supported",
-                        spec, format
-                    ))
+                    ConfigError::FormatError(
+                        "Unsupported placeholder in format string: only '{}' and '{N}' are supported".to_string()
+                    )
                 })?
             };
 
             pieces.push(Piece::Value(index));
             rest = &after_brace[end + 1..];
         } else {
-            return Err(ConfigError::FormatError(format!(
-                "Unmatched '}}' in format string \"{}\" (use '}}}}' for a literal brace)",
-                format
-            )));
+            return Err(ConfigError::FormatError(
+                "Unmatched '}' in format string (use '}}' for a literal brace)".to_string()
+            ));
         }
     }
 

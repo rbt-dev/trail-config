@@ -14,17 +14,9 @@ const MAX_DEFAULT_DEPTH: usize = 32;
 /// Recursively walks the Value tree and resolves `${VAR}` and `${VAR:-default}`
 /// placeholders in all string values using environment variables.
 ///
-/// **Values only — never keys.** Each key is reinserted unchanged and only its value is
-/// recursed into, so a `${VAR}` written as a key stays the literal text `${VAR}` and is
-/// addressed by that text. This is deliberate: interpolating keys would make the set of
-/// valid config *paths* depend on the environment, so a path that resolves on one machine
-/// would silently miss on another, and an unset variable would turn into a missing key
-/// rather than an error. It is stated here because this function's name implies otherwise.
-///
-/// The match is exhaustive rather than ending in a catch-all. `yaml_serde::Value` is not
-/// `#[non_exhaustive]`, so this way a variant added upstream is a compile error here —
-/// which is what a catch-all cost: `Value::Tagged` landed in it silently, and every
-/// `${VAR}` under a `!Tag` went uninterpolated for as long as that arm existed.
+/// Keys and tags remain literal so paths and enum variants are independent of the
+/// environment. Tagged values are traversed normally, including missing-variable errors.
+/// Keep the match exhaustive so new upstream value variants require explicit handling.
 pub(super) fn resolve_env_vars(value: Value) -> Result<Value, ConfigError> {
     match value {
         Value::String(s) => {
@@ -43,16 +35,7 @@ pub(super) fn resolve_env_vars(value: Value) -> Result<Value, ConfigError> {
                 seq.into_iter().map(resolve_env_vars).collect();
             Ok(Value::Sequence(resolved_seq?))
         },
-        // A tag is how serde spells an enum variant in YAML (`db: !Postgres`), so a
-        // tagged node is an ordinary subtree wearing a label — and every string under it
-        // needs interpolating like any other. Skipping them did not merely leave a
-        // `${VAR}` unsubstituted: it also disabled the one guarantee this function makes,
-        // that a required variable which is not set stops the load. Under a tag, an unset
-        // `${DB_PASSWORD}` silently became the literal text.
-        //
-        // The tag itself is deliberately left alone, by the same reasoning as keys above:
-        // it selects a variant, so interpolating it would make the document's *shape*
-        // depend on the environment.
+        // Preserve the enum tag while resolving its contents.
         Value::Tagged(tagged) => {
             let TaggedValue { tag, value } = *tagged;
             Ok(Value::Tagged(Box::new(TaggedValue { tag, value: resolve_env_vars(value)? })))
@@ -94,8 +77,8 @@ fn resolve_env_string(input: &str, depth: usize) -> Result<String, ConfigError> 
             result.push_str("${");
             rest = tail;
         } else if let Some(after) = rest.strip_prefix("${") {
-            let (spec, tail) = split_placeholder(after, input)?;
-            result.push_str(&resolve_placeholder(spec, input, depth)?);
+            let (spec, tail) = split_placeholder(after)?;
+            result.push_str(&resolve_placeholder(spec, depth)?);
             rest = tail;
         } else {
             // A '$' that does not begin a placeholder
@@ -113,7 +96,7 @@ fn resolve_env_string(input: &str, depth: usize) -> Result<String, ConfigError> 
 /// Counts nesting depth rather than stopping at the first `}`, so a placeholder may
 /// contain a complete `${...}` of its own. Scanning by byte is safe because `$`, `{`
 /// and `}` are ASCII, which never appear inside a multi-byte UTF-8 sequence.
-fn split_placeholder<'a>(after: &'a str, input: &str) -> Result<(&'a str, &'a str), ConfigError> {
+fn split_placeholder(after: &str) -> Result<(&str, &str), ConfigError> {
     let bytes = after.as_bytes();
     let mut depth = 1usize;
     let mut i = 0;
@@ -134,7 +117,7 @@ fn split_placeholder<'a>(after: &'a str, input: &str) -> Result<(&'a str, &'a st
     }
 
     Err(ConfigError::FormatError(
-        format!("Unclosed env var placeholder in: {}", input)
+        "Unclosed env var placeholder".to_string()
     ))
 }
 
@@ -148,7 +131,7 @@ fn split_placeholder<'a>(after: &'a str, input: &str) -> Result<(&'a str, &'a st
 /// A default applies only when the variable is **absent**. Both ways of being *set*
 /// without yielding a usable string — empty, and not valid Unicode — are values rather
 /// than absences, and neither falls back.
-fn resolve_placeholder(spec: &str, input: &str, depth: usize) -> Result<String, ConfigError> {
+fn resolve_placeholder(spec: &str, depth: usize) -> Result<String, ConfigError> {
     let (var_name, default) = match spec.find(":-") {
         Some(pos) => (&spec[..pos], Some(&spec[pos + 2..])),
         None => (spec, None),
@@ -156,18 +139,16 @@ fn resolve_placeholder(spec: &str, input: &str, depth: usize) -> Result<String, 
 
     if var_name.is_empty() {
         return Err(ConfigError::FormatError(
-            format!("Empty env var name in: {}", input)
+            "Empty env var name".to_string()
         ));
     }
 
     // Indirect names (`${${PREFIX}_HOST}`) would otherwise reach `env::var` as a
     // literal and fail with a confusing "not set" error
     if var_name.contains("${") {
-        return Err(ConfigError::FormatError(format!(
-            "Nested placeholder in the variable name of '${{{}}}' in: {} \
-             — nesting is supported in defaults only",
-            spec, input
-        )));
+        return Err(ConfigError::FormatError(
+            "Nested placeholder in the variable name — nesting is supported in defaults only".to_string()
+        ));
     }
 
     match env::var(var_name) {
@@ -175,16 +156,12 @@ fn resolve_placeholder(spec: &str, input: &str, depth: usize) -> Result<String, 
         // applies only when the variable is missing. This differs from shell `:-`.
         Ok(value) => Ok(value),
 
-        // Set, but holding bytes that are not valid Unicode. By the same reasoning as
-        // set-but-empty, this is not an absence — so the default is deliberately *not*
-        // consulted. Folding it in with `NotPresent` produced one of two wrong answers:
-        // an error claiming the variable "is not set" when it demonstrably is, leaving
-        // the operator nowhere to go; or, with a default, silently running the
-        // deployment on the fallback while they believed their setting had taken.
-        Err(env::VarError::NotUnicode(raw)) => Err(ConfigError::FormatError(format!(
-            "Environment variable '{}' is set but is not valid Unicode ({:?}) \
+        // Defaults apply only to absent variables. Reject non-Unicode values without
+        // exposing their contents in diagnostics.
+        Err(env::VarError::NotUnicode(_)) => Err(ConfigError::FormatError(format!(
+            "Environment variable '{}' is set but is not valid Unicode \
              — the default, if any, is not applied because the variable is set",
-            var_name, raw
+            var_name
         ))),
 
         Err(env::VarError::NotPresent) => match default {

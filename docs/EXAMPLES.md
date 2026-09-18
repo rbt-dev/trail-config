@@ -2,7 +2,7 @@
 
 [← Documentation index](README.md)
 
-These four live in [`examples/`](../examples) as programs the compiler checks and
+These five live in [`examples/`](../examples) as programs the compiler checks and
 `cargo run` executes, rather than as snippets on a page that can drift out of date. Each
 one writes its config into a temporary directory first, so it runs from a fresh checkout
 with nothing to set up:
@@ -11,10 +11,11 @@ with nothing to set up:
 cargo run --example web_server
 cargo run --example environments
 cargo run --example db_pool
+cargo run --example validated_reload # scalar conversion and validation before publication
 cargo run --example feature_flags
 ```
 
-`cargo build --examples` compiles all four, and the check scripts do it as part of a
+`cargo build --examples` compiles all five, and the check scripts do it as part of a
 release run.
 
 ## Web server configuration — [`examples/web_server.rs`](../examples/web_server.rs)
@@ -75,6 +76,12 @@ if config.get_bool("features/analytics").unwrap_or(false) { /* ... */ }
 
 for feature in config.list("features/beta") { /* ... */ }
 ```
+
+## Validated reload — [`examples/validated_reload.rs`](../examples/validated_reload.rs)
+
+Converts interpolated numbers and booleans explicitly, then reuses that settings reader
+in `ConfigHandle::with_validator`. Invalid types and domain constraints reject a reload
+without replacing the current snapshot. A later valid update succeeds.
 
 ## Sample configuration file
 

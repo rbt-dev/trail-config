@@ -1,6 +1,21 @@
 # Trail Config
 
-A Rust library for reading config files with path-based access, typed deserialization, environment overlays, deep merging, env variable interpolation, and hot reload support.
+A Rust library for layered configuration files, predictable reloads, and shared snapshots.
+
+## When to choose Trail Config
+
+Trail Config fits applications with a committed base file, an overlay for each deployment
+environment, and optional local overrides. Layer the files once, then reload the same
+sources when settings change. Read individual paths or deserialize settings into Rust types.
+
+For a running service, `ConfigHandle` shares immutable snapshots across threads. A reload
+builds a replacement before publishing it; a failed reload leaves the current snapshot
+active, and readers can keep using snapshots they already hold. Use `with_validator` to
+check application types and domain rules before publication. Your application decides
+when to trigger a reload, such as from a file watcher or an administrative command.
+
+See [Layering](#layering) for the file workflow and [Shared config](docs/SHARED_CONFIG.md)
+for snapshots and validation.
 
 ## Features
 
@@ -43,7 +58,7 @@ let timeout = config.get_int("app/timeout"); // -> Some(30)
 // Or use strict API for explicit error handling
 match config.str_strict("database/host") {
     Ok(host) => println!("Connecting to {}", host),
-    Err(e) => eprintln!("Config error: {}", e),
+    Err(e) => eprintln!("Config error: {}", e.safe_diagnostic()),
 }
 ```
 
@@ -111,13 +126,14 @@ The full guide is in [`docs/`](docs), one file per topic — start at the
 
 ## Examples
 
-Four runnable programs in [`examples/`](examples) — each writes its own config into a
+Five runnable programs in [`examples/`](examples) — each writes its own config into a
 temporary directory, so they run from a fresh checkout with nothing to set up:
 
 ```bash
 cargo run --example web_server      # lenient and strict accessors side by side
 cargo run --example environments    # base + {env} overlay + local overrides
 cargo run --example db_pool         # deserializing a subtree into a struct
+cargo run --example validated_reload # scalar conversion and validation before publication
 cargo run --example feature_flags   # booleans and lists, read leniently
 ```
 

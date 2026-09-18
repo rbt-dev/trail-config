@@ -33,6 +33,6 @@ Start with the [README](../README.md) for installation and a first config.
 | ----- | ------ |
 | [Error handling](ERROR_HANDLING.md) | The `ConfigError` variants, matching on them, what each one means |
 | [Debugging](DEBUGGING.md) | `outline` and `Debug`, and why both elide values |
-| [Examples](EXAMPLES.md) | Four runnable programs in [`examples/`](../examples) |
+| [Examples](EXAMPLES.md) | Five runnable programs in [`examples/`](../examples) |
 
 Working on the crate itself is covered by [CONTRIBUTING.md](../CONTRIBUTING.md).

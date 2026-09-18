@@ -5,6 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.1] - 2026-09-18
+
+### Added
+
+- `ConfigHandle::with_validator` validates the initial config and every replacement before publication, preserving the current snapshot and sources on rejection across `reload`, `reload_from`, and cloned handles. Validators require `Fn + Send + Sync + RefUnwindSafe + 'static`.
+- Explicit interpolation-to-number/boolean conversion guidance and a runnable `validated_reload` example.
+- GitHub Actions CI runs the existing check scripts on Windows and Linux for pushes, pull requests, and manual runs, including the feature matrix, MSRV, and docs.rs-style documentation checks.
+- `ConfigError::safe_diagnostic()` and its `SafeDiagnostic` view omit values and underlying messages from both `Display` and `Debug`, retaining file, requested path/type, and parser location metadata.
+- `DeserializeError::expected_type` records the requested Rust type independently of upstream diagnostic text.
+- An explicit error-logging contract in the error-handling guide and API documentation.
+
+### Changed
+
+- README positioning now leads with file layering, predictable reloads, and shared snapshots. Implementation comments emphasize current invariants; historical bug details remain in the release notes.
+
+### Fixed
+
+- Application-logging examples consistently use `safe_diagnostic()`, including overlay failures, typed access, and reloads. The server-loop example handles startup failures safely, raw-value mismatch reporting omits the value, and the error-handling guide distinguishes propagation from safe reporting.
+- `outline()` marks paths whose key boundaries overlap a multi-character separator as `# not addressable`, including paths that would resolve to a different leaf. Existing lookup and escape rules are unchanged; regression tests cover prefixes, suffixes, Unicode separators, backslashes, and equal-valued leaves.
+- JSON numbers retain their numeric types when downstream dependencies enable `serde_json/arbitrary_precision`. Integers within `i64`/`u64` range remain exact; other numbers use finite `f64`, with overflow rejected. Document order, duplicate-key rejection, and literal marker-like object keys are preserved, with downstream feature regression checks in both verification scripts.
+- Corrected `load_or_create` documentation: exclusive creation prevents overwrites, while empty-file retries are best-effort and may accept valid partial documents. Documented retry eligibility, timing, and write-failure leftovers without changing runtime behavior.
+- Deserialization errors for configurations with overlay chains identify the merged configuration instead of blaming the base file. `DeserializeError` exposes `merged` and leaves `file` unset in this case, including in safe diagnostics.
+- Interpolation errors no longer echo input strings, fallback literals, or non-Unicode environment values. Numeric conversion errors report the path and expected type instead of the number. Malformed format-template errors no longer echo literals.
+
 ## [0.5.0] - 2026-08-08
 
 ### Added

@@ -2,6 +2,49 @@
 
 [← Documentation index](README.md)
 
+## Logging without configuration values
+
+Use `error.safe_diagnostic()` for application logs. Both its `Display` and `Debug`
+omit configuration values and underlying error messages:
+
+```rust
+use trail_config::Config;
+
+let config = Config::load_yaml("port: secret", "/").unwrap();
+if let Err(error) = config.get_as_strict::<u16>("port") {
+    eprintln!("{}", error.safe_diagnostic());
+    // Cannot deserialize port: expected u16
+}
+```
+
+The view retains file names, requested configuration paths, the requested Rust type,
+I/O error kinds, and available parser locations. The requested type is the whole
+target type, not necessarily the nested field that failed. File names and keys are
+treated as public metadata; do not embed secrets in them. Free-form `FormatError`
+messages are omitted because callers can construct them with arbitrary text.
+
+Ordinary `ConfigError` and `ValueError` `Display`/`Debug`, public `source` fields,
+and `std::error::Error::source()` preserve detailed errors and **may expose secrets**.
+Parser errors can include input excerpts; deserializers can echo rejected values or
+produce arbitrary custom messages. Use these details only in a controlled diagnostic
+context. The safe view does not implement `Error` or expose a source chain; log the
+view itself, rather than attaching the original error to an error-reporting system.
+
+Examples that use `?` demonstrate error propagation, not safe reporting. Handle the
+`ConfigError` with `safe_diagnostic()` at your application's logging boundary.
+Returning a raw error from a `main` function that returns `Result`, or calling
+`expect` on a failed result, uses detailed error formatting too. The small runnable
+examples propagate setup errors this way for convenience; use explicit safe error
+handling when adapting them into an application, as in the
+[server loop example](HOT_RELOAD.md#server-loop-example).
+
+Crate-generated interpolation, numeric-conversion, and format-template errors do not
+echo raw values or template literals. Ordinary messages still include metadata such as
+environment-variable names, paths, and separators. `Config`'s redacted `Debug` does
+not make errors, raw values, or accessor results safe to log.
+
+## Error variants
+
 Trail Config uses a custom `ConfigError` enum:
 
 ```rust
@@ -11,7 +54,7 @@ use trail_config::ConfigError;
 // - YamlError { file, source }  - YAML parsing or deserialization errors
 // - JsonError { file, source }  - JSON parse errors (requires `json` feature)
 // - TomlError { file, source }  - TOML parse errors (requires `toml` feature)
-// - DeserializeError { file, path, source }
+// - DeserializeError { file, merged, path, expected_type, source }
 //                               - A document or subtree did not match the requested Rust type
 // - PathNotFound(String)        - Configuration path not found in document
 // - FormatError(String)         - String formatting or configuration errors
@@ -22,6 +65,24 @@ parsed successfully, whatever its format, and the mismatch is between the result
 document and the type you asked for. It names no format — a `.toml` config that fails to
 deserialize used to report a "YAML parse error", which pointed at both the wrong format
 and a phase that had already succeeded.
+
+For a single-file configuration, `DeserializeError.file` names that file. Once an
+overlay chain is registered, `file` is `None` and `merged` is `true`: the error refers
+to the merged configuration, because the library does not track which file supplied
+each value. For example, if an overlay replaces a numeric `port` with a string,
+`safe_diagnostic()` reports `Cannot deserialize port in the merged configuration:
+expected u16`, rather than blaming the base file. Whole-document errors use the same
+attribution, and the rule also applies to errors returned by reload validators.
+
+This is conservative: even an absent optional overlay, or a value untouched by an
+overlay, uses merged attribution. A successful `reload_from` clears the overlay chain
+and restores single-file attribution. A string-loaded config without overlays has
+`file: None, merged: false`. `Config::filename()` still identifies the base file for
+reloading; it is not evidence of an individual value's origin.
+
+Parse and I/O errors still identify the actual file being read. Full per-value
+provenance would need to follow replacements, nested merges, tags, and reloads; this
+diagnostic correction avoids that added state while making the current limits explicit.
 
 Load and parse errors record the offending file (`file` is `None` when parsing from a
 string) and preserve the original underlying error in `source`, which is also returned
@@ -39,8 +100,8 @@ error type directly would make a routine dependency update a breaking change her
 ```rust
 if let Err(ConfigError::YamlError { source, .. }) = Config::load_required("config.yaml", "/", None) {
     match source.location() {
-        Some((line, column)) => eprintln!("bad YAML at {line}:{column}: {source}"),
-        None => eprintln!("bad YAML: {source}"),
+        Some((line, column)) => eprintln!("bad YAML at {line}:{column}"),
+        None => eprintln!("bad YAML"),
     }
 }
 ```
@@ -54,7 +115,7 @@ arm and a struct variant's fields are bound with a trailing `..`:
 match result {
     Err(ConfigError::IoError { file, .. }) => { /* ... */ },
     Err(ConfigError::PathNotFound(path)) => { /* ... */ },
-    Err(e) => eprintln!("{}", e),
+    Err(e) => eprintln!("{}", e.safe_diagnostic()),
     Ok(config) => { /* ... */ },
 }
 ```
@@ -77,13 +138,13 @@ match Config::load_required("config.yaml", "/", None) {
         let host = config.str("database/host");
         println!("Connecting to {}", host);
     },
-    Err(ConfigError::IoError { file, source, .. }) => {
-        eprintln!("Config file error in {}: {}", file.as_deref().unwrap_or("?"), source);
+    Err(e @ ConfigError::IoError { .. }) => {
+        eprintln!("Config file error: {}", e.safe_diagnostic());
     },
-    Err(ConfigError::YamlError { source, .. }) => {
-        eprintln!("Invalid YAML: {}", source);
+    Err(e @ ConfigError::YamlError { .. }) => {
+        eprintln!("Invalid YAML: {}", e.safe_diagnostic());
     },
-    Err(e) => eprintln!("Config error: {}", e),
+    Err(e) => eprintln!("Config error: {}", e.safe_diagnostic()),
 }
 ```
 
@@ -99,29 +160,29 @@ match config.str_strict("database/host") {
     Err(ConfigError::PathNotFound(path)) => {
         eprintln!("Missing required config: {}", path);
     },
-    Err(e) => eprintln!("Config error: {}", e),
+    Err(e) => eprintln!("Config error: {}", e.safe_diagnostic()),
 }
 
 match config.str_strict("database") {
     Ok(value) => println!("Database: {}", value),
-    Err(ConfigError::FormatError(msg)) => {
-        eprintln!("Not a scalar: {}", msg);
+    Err(e @ ConfigError::FormatError(_)) => {
+        eprintln!("Not a scalar: {}", e.safe_diagnostic());
     },
     Err(ConfigError::PathNotFound(path)) => {
         eprintln!("Not found: {}", path);
     },
-    Err(e) => eprintln!("Unexpected error: {}", e),
+    Err(e) => eprintln!("Unexpected error: {}", e.safe_diagnostic()),
 }
 
 match config.get_int_strict("app/port") {
     Ok(port) => println!("Port: {}", port),
-    Err(ConfigError::FormatError(msg)) => {
-        eprintln!("Port value has wrong type: {}", msg);
+    Err(e @ ConfigError::FormatError(_)) => {
+        eprintln!("Port value has wrong type: {}", e.safe_diagnostic());
     },
     Err(ConfigError::PathNotFound(path)) => {
         eprintln!("Port config not found: {}", path);
     },
-    Err(e) => eprintln!("Unexpected error: {}", e),
+    Err(e) => eprintln!("Unexpected error: {}", e.safe_diagnostic()),
 }
 ```
 

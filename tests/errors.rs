@@ -12,6 +12,183 @@ use trail_config::{Config, ConfigError};
 use common::{path_in, temp_dir, write_file};
 
 #[test]
+fn merged_deserialization_does_not_blame_the_base_file() {
+    let dir = temp_dir();
+    let base = write_file(&dir, "valid-base.yaml", "port: 8080");
+    let overlay = write_file(&dir, "invalid-overlay.yaml", "port: dummy-secret");
+    let config = Config::load_required(&base, "/", None).unwrap()
+        .merge_required(&overlay, None).unwrap();
+    for err in [config.get_as_strict::<u16>("port").unwrap_err(),
+                config.deserialize_strict::<std::collections::BTreeMap<String, u16>>().unwrap_err()] {
+        match &err {
+            ConfigError::DeserializeError { file, merged, .. } => {
+                assert_eq!(file, &None);
+                assert!(merged);
+            },
+            other => panic!("unexpected error: {other:?}"),
+        }
+        for message in [err.to_string(), format!("{err:?}"), err.safe_diagnostic().to_string(), format!("{:?}", err.safe_diagnostic())] {
+            assert!(!message.contains("valid-base.yaml"), "{message}");
+        }
+        assert!(err.to_string().contains("merged configuration"));
+        assert!(err.safe_diagnostic().to_string().contains("merged configuration"));
+        assert_safe(&err, "dummy-secret");
+    }
+}
+
+#[test]
+fn attribution_follows_overlay_registration_and_reload_from() {
+    let dir = temp_dir();
+    let base = write_file(&dir, "base.yaml", "port: broken");
+    let missing = path_in(&dir, "optional.yaml");
+    let mut config = Config::load_required(&base, "/", None).unwrap();
+    let check = |config: &Config, is_merged: bool| {
+        match config.get_as_strict::<u16>("port").unwrap_err() {
+            ConfigError::DeserializeError { file, merged, path, expected_type, .. } => {
+                assert_eq!(merged, is_merged);
+                assert_eq!(file.as_deref(), if is_merged { None } else { Some(base.as_str()) });
+                assert_eq!(path.as_deref(), Some("port"));
+                assert_eq!(expected_type, "u16");
+            },
+            other => panic!("unexpected error: {other:?}"),
+        }
+    };
+    check(&config, false);
+    assert!(config.merge_required_in_place(&missing, None).is_err());
+    check(&config, false);
+    config.merge_optional_in_place(&missing, None).unwrap();
+    check(&config, true);
+    config.reload().unwrap();
+    check(&config, true);
+    config.reload_from(&base).unwrap();
+    check(&config, false);
+    let from_string = Config::load_yaml("port: broken", "/").unwrap();
+    assert!(matches!(from_string.get_as_strict::<u16>("port"),
+        Err(ConfigError::DeserializeError { file: None, merged: false, .. })));
+}
+
+#[test]
+fn invalid_overlay_syntax_still_names_the_overlay_file() {
+    let dir = temp_dir();
+    let base = write_file(&dir, "base.yaml", "port: 8080");
+    let overlay = write_file(&dir, "overlay.yaml", "port: [");
+    let error = Config::load_required(&base, "/", None).unwrap()
+        .merge_required(&overlay, None).unwrap_err();
+    assert!(error.safe_diagnostic().to_string().contains("overlay.yaml"));
+    assert!(matches!(error, ConfigError::YamlError { file: Some(file), .. } if file == overlay));
+}
+
+#[test]
+fn reload_validator_reports_merged_attribution_without_publishing() {
+    let dir = temp_dir();
+    let base = write_file(&dir, "base.yaml", "port: 8080");
+    let overlay = write_file(&dir, "overlay.yaml", "port: 9090");
+    let config = Config::load_required(&base, "/", None).unwrap()
+        .merge_required(&overlay, None).unwrap();
+    let handle = trail_config::ConfigHandle::with_validator(config, |candidate| {
+        candidate.get_as_strict::<u16>("port").map(|_| ())
+    }).unwrap();
+    let previous = handle.read();
+    std::fs::write(&overlay, "port: broken").unwrap();
+    let error = handle.reload().unwrap_err();
+    assert!(matches!(error, ConfigError::DeserializeError { file: None, merged: true, .. }));
+    assert!(std::sync::Arc::ptr_eq(&previous, &handle.read()));
+}
+
+fn assert_safe(err: &ConfigError, secret: &str) {
+    let safe = err.safe_diagnostic();
+    assert!(!safe.to_string().contains(secret));
+    assert!(!format!("{safe:?}").contains(secret));
+    assert!(!format!("{safe:#?}").contains(secret));
+}
+
+#[test]
+fn safe_typed_diagnostic_retains_context_without_the_interpolated_value() {
+    let dir = temp_dir();
+    let file = write_file(&dir, "settings.yaml", "port: '${TRAIL_CONFIG_DIAGNOSTIC_UNSET:-dummy-secret}'");
+    let config = Config::load_required(&file, "/", None).unwrap();
+    assert_eq!(config.str("port"), "dummy-secret");
+    let err = config.get_as_strict::<u16>("port").unwrap_err();
+    // Verify the fixture really reaches an upstream diagnostic containing a value.
+    assert!(err.source().unwrap().to_string().contains("dummy-secret"));
+    assert_safe(&err, "dummy-secret");
+    let message = err.safe_diagnostic().to_string();
+    for context in ["settings.yaml", "port", "u16"] {
+        assert!(message.contains(context), "{message}");
+    }
+    let scalar = Config::load_yaml("dummy-secret", "/").unwrap();
+    assert_safe(&scalar.deserialize_strict::<u16>().unwrap_err(), "dummy-secret");
+}
+
+#[test]
+fn safe_diagnostics_omit_custom_deserializer_and_io_messages() {
+    struct Reject;
+    impl<'de> serde::Deserialize<'de> for Reject {
+        fn deserialize<D: serde::Deserializer<'de>>(_: D) -> Result<Self, D::Error> {
+            Err(serde::de::Error::custom("dummy-secret: expected dummy-secret"))
+        }
+    }
+    let config = Config::load_yaml("value: 1", "/").unwrap();
+    let err = config.deserialize_strict::<Reject>().err().unwrap();
+    assert_safe(&err, "dummy-secret");
+    assert!(err.safe_diagnostic().to_string().contains("Reject"));
+    let err = ConfigError::from(std::io::Error::other("dummy-secret"));
+    assert_safe(&err, "dummy-secret");
+    assert_safe(&ConfigError::FormatError("dummy-secret".into()), "dummy-secret");
+}
+
+#[test]
+fn safe_parse_diagnostics_keep_locations() {
+    let err = Config::load_yaml("value: [dummy-secret", "/").unwrap_err();
+    assert_safe(&err, "dummy-secret");
+    assert!(err.safe_diagnostic().to_string().contains("line"));
+    #[cfg(feature = "json")]
+    {
+        let err = Config::load_json("{\"dummy-secret\":", "/").unwrap_err();
+        assert_safe(&err, "dummy-secret");
+        assert!(err.safe_diagnostic().to_string().contains("line"));
+    }
+    #[cfg(feature = "toml")]
+    {
+        let err = Config::load_toml("value = dummy-secret", "/").unwrap_err();
+        assert!(err.to_string().contains("dummy-secret"));
+        assert_safe(&err, "dummy-secret");
+        assert!(err.safe_diagnostic().to_string().contains("bytes"));
+    }
+    let err = Config::load_yaml("a: 1", "/").unwrap().get_strict("missing/path").unwrap_err();
+    assert!(err.safe_diagnostic().to_string().contains("missing/path"));
+}
+
+#[test]
+fn malformed_format_templates_do_not_echo_literals() {
+    let config = Config::load_yaml("a: 1", "/").unwrap();
+    for template in ["dummy-secret{", "dummy-secret}", "{dummy-secret}"] {
+        let err = config.fmt_strict(template, "", &["a"]).unwrap_err();
+        assert!(!err.to_string().contains("dummy-secret"));
+        assert!(!format!("{err:?}").contains("dummy-secret"));
+    }
+}
+
+#[test]
+fn malformed_interpolation_does_not_echo_values() {
+    for value in ["dummy-secret-${", "dummy-secret-${}", "${${NAME}:-dummy-secret}"] {
+        let err = Config::load_yaml(&format!("password: '{value}'"), "/").unwrap_err();
+        assert!(!err.to_string().contains("dummy-secret"));
+        assert!(!format!("{err:?}").contains("dummy-secret"));
+    }
+}
+
+#[test]
+fn numeric_conversion_does_not_echo_values() {
+    let config = Config::load_yaml("secret: 18446744073709551615", "/").unwrap();
+    let err = config.get_int_strict("secret").unwrap_err();
+    assert!(!err.to_string().contains("18446744073709551615"));
+    assert!(!format!("{err:?}").contains("18446744073709551615"));
+    assert!(err.to_string().contains("secret"));
+    assert!(err.to_string().contains("i64"));
+}
+
+#[test]
 fn a_missing_required_file_is_an_io_error_naming_the_file() {
     let dir = temp_dir();
     let missing = path_in(&dir, "absent.yaml");

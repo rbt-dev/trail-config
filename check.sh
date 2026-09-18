@@ -126,6 +126,13 @@ for combination in "${combinations[@]}"; do
     step "test [$name]" test $flags
 done
 
+# A separate consumer enables dependency features without changing the main matrix.
+json_fixture='tests/downstream-json/Cargo.toml'
+step 'downstream JSON [default]' test --manifest-path "$json_fixture"
+step 'downstream JSON [arbitrary precision]' test --manifest-path "$json_fixture" --features arbitrary
+step 'downstream JSON [all dependency features]' test --manifest-path "$json_fixture" --all-features
+step 'downstream JSON clippy' clippy --manifest-path "$json_fixture" --all-targets --all-features -- -D warnings
+
 # Doctests run once: they are feature-independent, and `cargo test` above already ran them
 # for each combination that compiles them. This pins the count in the summary.
 step 'doctests' test --all-features --doc

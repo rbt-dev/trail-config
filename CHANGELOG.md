@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- JSON numbers retain their numeric types when downstream dependencies enable `serde_json/arbitrary_precision`. Integers within `i64`/`u64` range remain exact; other numbers use finite `f64`, with overflow rejected. Document order, duplicate-key rejection, and literal marker-like object keys are preserved, with downstream feature regression checks in both verification scripts.
 - Corrected `load_or_create` documentation: exclusive creation prevents overwrites, while empty-file retries are best-effort and may accept valid partial documents. Documented retry eligibility, timing, and write-failure leftovers without changing runtime behavior.
 - Deserialization errors for configurations with overlay chains identify the merged configuration instead of blaming the base file. `DeserializeError` exposes `merged` and leaves `file` unset in this case, including in safe diagnostics.
 - Interpolation errors no longer echo input strings, fallback literals, or non-Unicode environment values. Numeric conversion errors report the path and expected type instead of the number. Malformed format-template errors no longer echo literals.

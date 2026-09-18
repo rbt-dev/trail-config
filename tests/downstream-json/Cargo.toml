@@ -1,0 +1,15 @@
+[package]
+name = "trail-config-json-regression"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[dependencies]
+trail-config = { path = "../..", features = ["json"] }
+serde_json = "1"
+
+[features]
+arbitrary = ["serde_json/arbitrary_precision"]
+ordered = ["serde_json/preserve_order"]

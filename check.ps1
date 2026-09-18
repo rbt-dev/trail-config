@@ -88,6 +88,13 @@ foreach ($combination in $combinations) {
     Invoke-Step "test [$name]"   (@('test') + $flags)
 }
 
+# A separate consumer enables dependency features without changing the main matrix.
+$jsonFixture = 'tests/downstream-json/Cargo.toml'
+Invoke-Step 'downstream JSON [default]' @('test', '--manifest-path', $jsonFixture)
+Invoke-Step 'downstream JSON [arbitrary precision]' @('test', '--manifest-path', $jsonFixture, '--features', 'arbitrary')
+Invoke-Step 'downstream JSON [all dependency features]' @('test', '--manifest-path', $jsonFixture, '--all-features')
+Invoke-Step 'downstream JSON clippy' @('clippy', '--manifest-path', $jsonFixture, '--all-targets', '--all-features', '--', '-D', 'warnings')
+
 # Doctests run once: they are feature-independent, and `cargo test` above already ran
 # them for each combination that compiles them. This pins the count in the summary.
 Invoke-Step 'doctests' @('test', '--all-features', '--doc')

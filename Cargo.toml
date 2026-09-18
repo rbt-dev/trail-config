@@ -35,12 +35,12 @@ toml = ["dep:toml"]
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
-serde_json = { version = "1", optional = true }
+serde_json = { version = "1", optional = true, features = ["raw_value"] }
 thiserror = "2"
 # Without `preserve_order`, TOML keys arrive alphabetically and document order is gone before this
 # crate sees it, making `outline` and the merge's key-order guarantee untrue for `.toml` alone.
 # Adds no dependency — `indexmap` is already in the tree via `yaml_serde`.
-# JSON solves the same problem without a feature flag; see `src/config/parser/json.rs`.
+# JSON preserves order without `preserve_order`; see `src/config/parser/json.rs`.
 toml = { version = "1.1", optional = true, features = ["preserve_order"] }
 yaml_serde = "0.10"
 

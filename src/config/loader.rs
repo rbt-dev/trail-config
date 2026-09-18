@@ -473,6 +473,11 @@ impl Config {
 
     /// Parses a JSON string into a Config object.
     ///
+    /// Integers within `i64` or `u64` range are exact. Other numbers use finite
+    /// `f64` and may lose precision; numbers that overflow `f64` are rejected.
+    /// This policy also applies when a downstream dependency enables
+    /// `serde_json/arbitrary_precision`; it does not extend this crate's value model.
+    ///
     /// # Errors
     /// Returns `ConfigError::FormatError` if the separator is empty or contains a backslash
     /// Returns `ConfigError::JsonError` if JSON parsing fails

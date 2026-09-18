@@ -98,7 +98,8 @@ Prefer `deserialize_strict` where the config is required, since it says *which* 
 wrong rather than only that something was.
 
 `deserialize_strict` returns `DeserializeError` if the config can't be deserialized into 
-`T`, naming the file and — for `get_as_strict` — the subtree path. `get_as_strict` 
+`T`, naming the single source file (or the merged configuration when overlays are
+registered) and — for `get_as_strict` — the subtree path. `get_as_strict`
 additionally returns `PathNotFound` if the path doesn't exist.
 
 Sample YAML:

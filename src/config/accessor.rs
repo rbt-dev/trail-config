@@ -273,7 +273,8 @@ impl Config {
     ///
     /// # Errors
     /// Returns `ConfigError::PathNotFound` if the path does not exist
-    /// Returns `ConfigError::DeserializeError`, naming the path and the file, if the
+    /// Returns `ConfigError::DeserializeError`, naming the path and the single source
+    ///     file (or the merged configuration when overlays are registered), if the
     ///     value cannot be deserialized into `T`
     ///
     /// # Example
@@ -327,7 +328,8 @@ impl Config {
     /// Deserializes the entire config into a typed struct, returning an error if deserialization fails
     ///
     /// # Errors
-    /// Returns `ConfigError::DeserializeError`, naming the file, if the config cannot be
+    /// Returns `ConfigError::DeserializeError`, naming the single source file or the
+    ///     merged configuration when overlays are registered, if the config cannot be
     ///     deserialized into `T`
     ///
     /// # Example
@@ -356,17 +358,13 @@ impl Config {
         T::deserialize(&self.content).map_err(|e| self.deserialize_error::<T>(None, e))
     }
 
-    /// Builds the error for a failed deserialization, attributing it to this config's
-    /// file and — for [`get_as_strict`](Config::get_as_strict) — the subtree path.
-    ///
-    /// These used to go through `From<yaml_serde::Error>` and surface as `YamlError`,
-    /// rendering as "YAML parse error: …" even for a config loaded from `.toml`.
-    /// Mechanically true — deserialization runs through the `yaml_serde` value model
-    /// whatever the source format — but a caller has to know the crate's internals for
-    /// that to make sense, and nothing was parsed at this point in any case.
+    /// Without per-value provenance, an overlay chain cannot identify the offending
+    /// file. Preserve the requested path, but do not blame the base for merged values.
     fn deserialize_error<T>(&self, path: Option<&str>, source: yaml_serde::Error) -> ConfigError {
+        let merged = !self.overlays.is_empty();
         ConfigError::DeserializeError {
-            file: (!self.filename.is_empty()).then(|| self.filename.clone()),
+            file: (!merged && !self.filename.is_empty()).then(|| self.filename.clone()),
+            merged,
             path: path.map(str::to_string),
             expected_type: std::any::type_name::<T>(),
             source: source.into(),

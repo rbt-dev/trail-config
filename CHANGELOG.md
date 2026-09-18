@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Deserialization errors for configurations with overlay chains identify the merged configuration instead of blaming the base file. `DeserializeError` exposes `merged` and leaves `file` unset in this case, including in safe diagnostics.
 - Interpolation errors no longer echo input strings, fallback literals, or non-Unicode environment values. Numeric conversion errors report the path and expected type instead of the number. Malformed format-template errors no longer echo literals.
 
 ## [0.5.0] - 2026-08-08

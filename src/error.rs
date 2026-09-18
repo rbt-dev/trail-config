@@ -169,11 +169,15 @@ pub enum ConfigError {
     /// and TOML configs too, which is why the underlying error is a [`ValueError`]
     /// regardless of where the document came from — and why that type is named for the
     /// value model rather than for YAML.
-    #[error("Cannot deserialize {}: {source}", fmt_target(.path, .file))]
+    #[error("Cannot deserialize {}: {source}", fmt_target(.path, .file, *.merged))]
     #[non_exhaustive]
     DeserializeError {
-        /// The file the document came from, or `None` for a config parsed from a string.
+        /// The single source file, or `None` for string input or a config with overlays.
+        /// Individual value origins are not tracked through merges.
         file: Option<String>,
+        /// Whether an overlay chain is registered, including absent optional overlays.
+        /// Errors describe the merged configuration rather than guessing a source file.
+        merged: bool,
         /// The path of the subtree being deserialized, or `None` for the whole document.
         path: Option<String>,
         /// The requested Rust type, independent of the underlying error text.
@@ -199,7 +203,13 @@ fn fmt_file(file: &Option<String>) -> String {
 }
 
 /// Names what a deserialization was attempted on: a subtree, a file, both, or neither.
-fn fmt_target(path: &Option<String>, file: &Option<String>) -> String {
+fn fmt_target(path: &Option<String>, file: &Option<String>, merged: bool) -> String {
+    if merged {
+        return match path {
+            Some(path) => format!("{} in the merged configuration", path),
+            None => "the merged configuration".to_string(),
+        };
+    }
     match (path.as_deref(), file.as_deref()) {
         (Some(path), Some(file)) => format!("{} in {}", path, file),
         (Some(path), None) => path.to_string(),
@@ -281,8 +291,8 @@ impl std::fmt::Display for SafeDiagnostic<'_> {
                 }
                 Ok(())
             },
-            ConfigError::DeserializeError { file, path, expected_type, .. } => {
-                write!(f, "Cannot deserialize {}: expected {}", fmt_target(path, file), expected_type)
+            ConfigError::DeserializeError { file, path, merged, expected_type, .. } => {
+                write!(f, "Cannot deserialize {}: expected {}", fmt_target(path, file, *merged), expected_type)
             },
             ConfigError::PathNotFound(path) => write!(f, "Path not found in config: {path}"),
             ConfigError::FormatError(_) => f.write_str("Format error (details omitted)"),

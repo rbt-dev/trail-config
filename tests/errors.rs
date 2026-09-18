@@ -11,6 +11,90 @@ use trail_config::{Config, ConfigError};
 
 use common::{path_in, temp_dir, write_file};
 
+#[test]
+fn merged_deserialization_does_not_blame_the_base_file() {
+    let dir = temp_dir();
+    let base = write_file(&dir, "valid-base.yaml", "port: 8080");
+    let overlay = write_file(&dir, "invalid-overlay.yaml", "port: dummy-secret");
+    let config = Config::load_required(&base, "/", None).unwrap()
+        .merge_required(&overlay, None).unwrap();
+    for err in [config.get_as_strict::<u16>("port").unwrap_err(),
+                config.deserialize_strict::<std::collections::BTreeMap<String, u16>>().unwrap_err()] {
+        match &err {
+            ConfigError::DeserializeError { file, merged, .. } => {
+                assert_eq!(file, &None);
+                assert!(merged);
+            },
+            other => panic!("unexpected error: {other:?}"),
+        }
+        for message in [err.to_string(), format!("{err:?}"), err.safe_diagnostic().to_string(), format!("{:?}", err.safe_diagnostic())] {
+            assert!(!message.contains("valid-base.yaml"), "{message}");
+        }
+        assert!(err.to_string().contains("merged configuration"));
+        assert!(err.safe_diagnostic().to_string().contains("merged configuration"));
+        assert_safe(&err, "dummy-secret");
+    }
+}
+
+#[test]
+fn attribution_follows_overlay_registration_and_reload_from() {
+    let dir = temp_dir();
+    let base = write_file(&dir, "base.yaml", "port: broken");
+    let missing = path_in(&dir, "optional.yaml");
+    let mut config = Config::load_required(&base, "/", None).unwrap();
+    let check = |config: &Config, is_merged: bool| {
+        match config.get_as_strict::<u16>("port").unwrap_err() {
+            ConfigError::DeserializeError { file, merged, path, expected_type, .. } => {
+                assert_eq!(merged, is_merged);
+                assert_eq!(file.as_deref(), if is_merged { None } else { Some(base.as_str()) });
+                assert_eq!(path.as_deref(), Some("port"));
+                assert_eq!(expected_type, "u16");
+            },
+            other => panic!("unexpected error: {other:?}"),
+        }
+    };
+    check(&config, false);
+    assert!(config.merge_required_in_place(&missing, None).is_err());
+    check(&config, false);
+    config.merge_optional_in_place(&missing, None).unwrap();
+    check(&config, true);
+    config.reload().unwrap();
+    check(&config, true);
+    config.reload_from(&base).unwrap();
+    check(&config, false);
+    let from_string = Config::load_yaml("port: broken", "/").unwrap();
+    assert!(matches!(from_string.get_as_strict::<u16>("port"),
+        Err(ConfigError::DeserializeError { file: None, merged: false, .. })));
+}
+
+#[test]
+fn invalid_overlay_syntax_still_names_the_overlay_file() {
+    let dir = temp_dir();
+    let base = write_file(&dir, "base.yaml", "port: 8080");
+    let overlay = write_file(&dir, "overlay.yaml", "port: [");
+    let error = Config::load_required(&base, "/", None).unwrap()
+        .merge_required(&overlay, None).unwrap_err();
+    assert!(error.safe_diagnostic().to_string().contains("overlay.yaml"));
+    assert!(matches!(error, ConfigError::YamlError { file: Some(file), .. } if file == overlay));
+}
+
+#[test]
+fn reload_validator_reports_merged_attribution_without_publishing() {
+    let dir = temp_dir();
+    let base = write_file(&dir, "base.yaml", "port: 8080");
+    let overlay = write_file(&dir, "overlay.yaml", "port: 9090");
+    let config = Config::load_required(&base, "/", None).unwrap()
+        .merge_required(&overlay, None).unwrap();
+    let handle = trail_config::ConfigHandle::with_validator(config, |candidate| {
+        candidate.get_as_strict::<u16>("port").map(|_| ())
+    }).unwrap();
+    let previous = handle.read();
+    std::fs::write(&overlay, "port: broken").unwrap();
+    let error = handle.reload().unwrap_err();
+    assert!(matches!(error, ConfigError::DeserializeError { file: None, merged: true, .. }));
+    assert!(std::sync::Arc::ptr_eq(&previous, &handle.read()));
+}
+
 fn assert_safe(err: &ConfigError, secret: &str) {
     let safe = err.safe_diagnostic();
     assert!(!safe.to_string().contains(secret));

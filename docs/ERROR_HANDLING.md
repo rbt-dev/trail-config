@@ -46,7 +46,7 @@ use trail_config::ConfigError;
 // - YamlError { file, source }  - YAML parsing or deserialization errors
 // - JsonError { file, source }  - JSON parse errors (requires `json` feature)
 // - TomlError { file, source }  - TOML parse errors (requires `toml` feature)
-// - DeserializeError { file, path, expected_type, source }
+// - DeserializeError { file, merged, path, expected_type, source }
 //                               - A document or subtree did not match the requested Rust type
 // - PathNotFound(String)        - Configuration path not found in document
 // - FormatError(String)         - String formatting or configuration errors
@@ -57,6 +57,24 @@ parsed successfully, whatever its format, and the mismatch is between the result
 document and the type you asked for. It names no format — a `.toml` config that fails to
 deserialize used to report a "YAML parse error", which pointed at both the wrong format
 and a phase that had already succeeded.
+
+For a single-file configuration, `DeserializeError.file` names that file. Once an
+overlay chain is registered, `file` is `None` and `merged` is `true`: the error refers
+to the merged configuration, because the library does not track which file supplied
+each value. For example, if an overlay replaces a numeric `port` with a string,
+`safe_diagnostic()` reports `Cannot deserialize port in the merged configuration:
+expected u16`, rather than blaming the base file. Whole-document errors use the same
+attribution, and the rule also applies to errors returned by reload validators.
+
+This is conservative: even an absent optional overlay, or a value untouched by an
+overlay, uses merged attribution. A successful `reload_from` clears the overlay chain
+and restores single-file attribution. A string-loaded config without overlays has
+`file: None, merged: false`. `Config::filename()` still identifies the base file for
+reloading; it is not evidence of an individual value's origin.
+
+Parse and I/O errors still identify the actual file being read. Full per-value
+provenance would need to follow replacements, nested merges, tags, and reloads; this
+diagnostic correction avoids that added state while making the current limits explicit.
 
 Load and parse errors record the offending file (`file` is `None` when parsing from a
 string) and preserve the original underlying error in `source`, which is also returned

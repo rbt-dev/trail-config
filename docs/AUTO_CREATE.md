@@ -4,8 +4,8 @@
 
 Use `load_or_create` to handle first-run scenarios where no config file exists yet.
 If the file is present its content is used as-is; if not, the provided default YAML
-string is written to disk and returned as the active config. Either way the app gets
-a fully usable config.
+string is written to disk and loaded as the active config. Loading can fail if reading,
+writing, parsing, or interpolation fails.
 
 ```rust
 use trail_config::Config;
@@ -32,7 +32,7 @@ is enabled. The created config records its filename, so `reload()` works after a
 first run.
 
 Defaults that do not parse in that format are rejected **before** anything is written,
-so a failed first run leaves no file behind and the next run retries the creation:
+so invalid default syntax leaves no file behind and the next run retries the creation:
 
 ```rust
 // YAML-shaped defaults under a .toml filename
@@ -47,23 +47,44 @@ The file is also created **exclusively**. If a second process wins the race to c
 the first-run scenario this method exists for — `load_or_create` loads that file rather
 than overwriting it with its own defaults.
 
-Creating the file and filling it are two separate syscalls, so the winner leaves a
-zero-length file visible for a moment, and a loser arriving in that gap would read nothing
-and return an **empty** config — no error, defaults discarded, every accessor answering
-`""` / `None` / `[]`. To close that, a config that reads as empty *from a zero-length file*
-is re-read for up to 200 ms before being accepted:
+## Concurrent writes: best-effort retries
+
+Exclusive creation prevents clobbering an existing file. **It does not publish completed
+contents atomically.** Creating and filling the file are separate operations, so another
+reader can observe it empty or partially written. A write failure can leave such a file
+behind; later calls load the existing contents instead of replacing them with defaults.
+
+If the initial read succeeds with a null document, the file is zero-length, and `defaults`
+is nonempty, `load_or_create` retries at most ten times with a 20 ms sleep before each
+re-read. The requested sleeps total 200 ms; I/O and scheduling can add time. This is a
+best-effort heuristic, not a test for write completion. `load_or_create_as` behaves the same way.
 
 | File on disk | `load_or_create` |
 | ------------ | ---------------- |
-| Has content | Loaded at once — the wait never applies |
-| Zero-length, filled within 200 ms | Loads what the winner wrote |
-| Zero-length for the whole 200 ms | Returned as an empty config; the file is not overwritten |
+| Initial read parses to a non-null document | Returned immediately, even if it is a valid partial document |
+| Initial read fails to parse | Parse error returned immediately |
+| Retry observes a non-null document | Returned immediately; the writer may still be writing |
+| Remains zero-length through all retries | Returned as an empty config; the file is not overwritten |
 | Only comments (not zero-length) | Loaded at once as an empty document |
 | `defaults` is `""` | Loaded at once — there is nothing better to wait for |
 
-A deliberately empty config file is therefore still honoured, at the cost of that one wait
-at startup. A file still unparseable after 200 ms is returned as a parse error: by then it
-is broken rather than half-written.
+If retries expire, the most recent config or error is returned. An empty result or a
+parse error does not prove the file is finished or permanently broken.
+
+For example, a writer can pause after writing `first: 1\n` and later append `second: 2\n`.
+The prefix is already valid YAML, so `load_or_create` can return just `first` while the
+writer is paused. That returned snapshot does not acquire `second` when writing finishes;
+a subsequent load or reload is needed. The same limitation applies to other writers,
+including concurrent calls to this library's creation helper.
+
+If complete-file reads are required, coordinate all participating readers and writers
+externally, or have the writer publish a fully written temporary file through a mechanism
+that preserves the required no-overwrite guarantee on your target platforms. Readers
+cannot infer completion from a successful parse or a longer timeout. Application
+validation can reject missing required settings, but cannot detect every valid partial
+document (for example, one missing only optional settings).
+
+## Directories and defaults
 
 Only the file itself is created — **parent directories are not**. Writing to
 `config/app.yaml` when `config/` does not exist returns an `IoError` rather than

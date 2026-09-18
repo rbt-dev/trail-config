@@ -224,7 +224,7 @@ fn load_or_create_does_not_wait_on_a_comment_only_file() {
     use std::time::Instant;
 
     // A comment-only document also parses to nothing, but it is not zero-length, so it is
-    // not what a half-written file looks like and must not pay the wait.
+    // outside the zero-length retry heuristic and does not pay the wait.
     let dir = temp_dir();
     let file = write_file(&dir, "config.yaml", "# nothing here yet\n");
 

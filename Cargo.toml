@@ -1,6 +1,6 @@
 [package]
 name = "trail-config"
-version = "0.5.0"
+version = "0.5.1"
 edition = "2021"
 # Set by the dependency tree, not this crate's own code: indexmap 2.14 (via yaml_serde) and toml 1.1.
 # Dev-dependencies need more (criterion 0.8 wants 1.86), so tests and benches have a higher floor.

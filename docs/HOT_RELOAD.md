@@ -49,3 +49,9 @@ fn main() {
 }
 ```
 
+
+## Application validation
+
+Parsing and interpolation do not validate application types or domain rules. Use
+[`ConfigHandle::with_validator`](SHARED_CONFIG.md#validating-replacements) to check
+the complete replacement before publication and retain the old snapshot on rejection.

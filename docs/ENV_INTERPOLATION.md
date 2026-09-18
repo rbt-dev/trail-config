@@ -39,6 +39,39 @@ assert_eq!(config.str("app/url"), "https://example.com/api");
 | `$VAR` | Not a placeholder — left as-is. |
 | `$` anywhere else | Left as-is (`$100` and `Pa$$w0rd!` pass through unchanged). |
 
+## Numbers and booleans remain strings
+
+Interpolation replaces text inside a string; it does not parse the result as YAML,
+JSON, or TOML. For example, `port: '${PORT:-8080}'` produces the string `"8080"`
+when `PORT` is absent. `get_as_strict::<u16>("port")` and `get_int_strict("port")`
+reject that string. Similarly, an interpolated `"false"` is not a boolean value.
+
+Choose conversions explicitly in your application's settings reader:
+
+```rust
+use trail_config::{Config, ConfigError};
+
+fn read_settings(config: &Config) -> Result<(u16, bool), ConfigError> {
+    let port = config.str_strict("port")?.parse::<u16>()
+        .map_err(|_| ConfigError::FormatError("port must be a u16".into()))?;
+    let debug = config.str_strict("debug")?.parse::<bool>()
+        .map_err(|_| ConfigError::FormatError("debug must be true or false".into()))?;
+    Ok((port, debug))
+}
+```
+
+`str_strict` converts native numeric and boolean scalars to text too, so this recipe
+also accepts `port: 8080` and `debug: false`. Missing paths, nulls, and collections
+are errors. Rust's parsers reject empty or whitespace-padded strings, out-of-range
+`u16` values, and boolean spellings other than `true` or `false`. Add trimming or other
+spellings only if your application wants them. Keep rejected values out of errors.
+
+For derived structs, an alternative is a Serde `deserialize_with` function on the
+specific fields that accept strings. No global automatic conversion is performed.
+Use the same settings reader in a [handle validator](SHARED_CONFIG.md#validating-replacements)
+to reject invalid replacements before publication. The compiled, runnable
+[validated reload example](../examples/validated_reload.rs) demonstrates this recipe.
+
 ## Set is not absent
 
 A default applies only when the variable is **absent**. There are two ways a variable can 
@@ -58,7 +91,7 @@ empty. Use `${VAR:-}` when you want "empty if missing" explicitly.
 not applied:
 
 ```text
-Environment variable 'DB_HOST' is set but is not valid Unicode ("a\u{d800}")
+Environment variable 'DB_HOST' is set but is not valid Unicode
   — the default, if any, is not applied because the variable is set
 ```
 

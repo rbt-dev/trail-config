@@ -54,7 +54,7 @@ handle.reload_from("other_config.yaml")?;
 
 Neither reads nor reloads hold a lock for long. `read()` locks only long enough to clone an
 `Arc` and returns an immutable **snapshot**; `reload()` copies the source list (base filename
-plus the overlay chain), does all file reads and parsing with **no lock held**, and takes the
+plus the overlay chain), does all file reads and parsing with **no reader/writer lock held**, and takes the
 write lock only for a pointer swap. So readers are never blocked on disk I/O, and holding a
 snapshot never blocks a reload. If the reload fails, no swap happens and the existing config
 is left unchanged.
@@ -100,6 +100,46 @@ let snapshot = handle.read();
 let host = snapshot.str("database/host");
 let port = snapshot.get_int("database/port"); // guaranteed to match `host`
 ```
+
+## Validating replacements
+
+Ordinary `ConfigHandle::new` and `Config::reload` validate parsing and interpolation,
+but do not know your application's types or domain rules. Use `with_validator` when
+every published snapshot must satisfy those rules:
+
+```rust
+use trail_config::{Config, ConfigError, ConfigHandle};
+
+let config = Config::load_required("config.yaml", "/", None)?
+    .merge_optional("config.local.yaml", None)?;
+let handle = ConfigHandle::with_validator(config, |candidate| {
+    let port = candidate.get_as_strict::<u16>("app/port")?;
+    if port == 0 {
+        return Err(ConfigError::FormatError("app/port must be nonzero".into()));
+    }
+    Ok(())
+})?;
+handle.reload()?;
+```
+
+The validator runs once at construction and after each successful rebuild, after all
+overlays and interpolation. All clones share it; both `reload` and `reload_from` use
+it. An error is returned unchanged and prevents publication, retaining the exact old
+snapshot, filename, and overlay chain. Existing snapshots also remain stable after
+a successful reload. A parsing or interpolation error stops the rebuild before validation.
+
+Validation is serialized with other reloads and holds no reader/writer lock. Readers
+can continue using the old snapshot while validation runs. Do not call `reload` or
+`reload_from` on this handle or its clones from inside the validator: that would wait
+on its own reload mutex. A panic propagates before publication. Prefer validation
+without external side effects, which the handle cannot undo.
+
+The closure must be `Fn + Send + Sync + 'static`; use `move` to capture owned rules.
+It validates a `Config` and does not cache a typed settings object. Read related fields
+from one snapshot after validation. Interpolated numbers and booleans still require
+[explicit conversion](ENV_INTERPOLATION.md#numbers-and-booleans-remain-strings);
+the [validated reload example](../examples/validated_reload.rs) combines both steps.
+Use `safe_diagnostic()` when logging returned errors.
 
 ## Background reload example
 

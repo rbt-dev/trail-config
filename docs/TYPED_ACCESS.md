@@ -32,6 +32,11 @@ app:
   debug: true
 ```
 
+Interpolated values remain strings. See the [explicit number and boolean conversion
+recipe](ENV_INTERPOLATION.md#numbers-and-booleans-remain-strings). To enforce these
+conversions and domain rules before publishing a reload, use a
+[handle validator](SHARED_CONFIG.md#validating-replacements).
+
 # Struct Deserialization
 
 Use `deserialize` / `deserialize_strict` to map the **entire config** into a typed Rust struct, 

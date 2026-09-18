@@ -111,13 +111,14 @@ The full guide is in [`docs/`](docs), one file per topic — start at the
 
 ## Examples
 
-Four runnable programs in [`examples/`](examples) — each writes its own config into a
+Five runnable programs in [`examples/`](examples) — each writes its own config into a
 temporary directory, so they run from a fresh checkout with nothing to set up:
 
 ```bash
 cargo run --example web_server      # lenient and strict accessors side by side
 cargo run --example environments    # base + {env} overlay + local overrides
 cargo run --example db_pool         # deserializing a subtree into a struct
+cargo run --example validated_reload # scalar conversion and validation before publication
 cargo run --example feature_flags   # booleans and lists, read leniently
 ```
 

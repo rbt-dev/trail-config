@@ -68,7 +68,7 @@ point that can catch a type missing from the public exports or a `$crate` path b
 in the `config!` macro.
 
 `examples/` is a third vantage point, and the only one that runs the crate as a program:
-`cargo build --examples` compiles all four, and each is written to run unattended —
+`cargo build --examples` compiles all five, and each is written to run unattended —
 `cargo run --example web_server` and friends create their own config files in a temporary
 directory rather than expecting anything in the working directory.
 

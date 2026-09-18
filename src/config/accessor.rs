@@ -374,18 +374,8 @@ impl Config {
 
 /// Looks through any `!Tag` wrapping a value.
 ///
-/// A tag names a serde enum variant; it says nothing about how the value is *read*. The
-/// value model already takes this view when indexing — `Value::get("key")` untags before
-/// looking the key up — so `db/host` resolves whether or not `db` is tagged. The readers
-/// below have to agree, or a tagged scalar would resolve as a path and then read back as
-/// `""` from `str` and `None` from every typed accessor.
-///
-/// Looping rather than unwrapping once mirrors the value model, which allows a tag to
-/// wrap a tag.
-///
-/// The tag is only skipped for *reading*. [`Config::get`] and
-/// [`get_as`](Config::get_as) still see the tagged value, because deserializing an enum
-/// is exactly what the tag is for.
+/// Scalar readers skip tags to agree with path lookup. Loop because tags may nest.
+/// [`Config::get`] and [`get_as`](Config::get_as) retain tags for enum deserialization.
 pub(super) fn untagged(mut value: &Value) -> &Value {
     while let Value::Tagged(tagged) = value {
         value = &tagged.value;

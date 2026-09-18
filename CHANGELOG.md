@@ -16,6 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `DeserializeError::expected_type` records the requested Rust type independently of upstream diagnostic text.
 - An explicit error-logging contract in the error-handling guide and API documentation.
 
+### Changed
+
+- README positioning now leads with file layering, predictable reloads, and shared snapshots. Implementation comments emphasize current invariants; historical bug details remain in the release notes.
+
 ### Fixed
 
 - Corrected `load_or_create` documentation: exclusive creation prevents overwrites, while empty-file retries are best-effort and may accept valid partial documents. Documented retry eligibility, timing, and write-failure leftovers without changing runtime behavior.

@@ -133,16 +133,9 @@ fn write_outline(
 
 /// Renders one mapping key into `prefix`, reporting whether a path containing it resolves.
 ///
-/// YAML permits keys this crate's path syntax cannot express, and printing them as though
-/// it could was the bug. An empty key rendered as nothing at all, so `{a: {"": 1}}` printed
-/// `a/` — which `get_leaf` rejects, correctly, for having an empty segment — and at the top
-/// level it printed a bare `<number>`, byte-identical to what a document holding a single
-/// scalar prints. A non-string key printed the literal text `<non-string key>`, so `1:` and
-/// `true:` collapsed onto one line and neither resolved.
-///
-/// Each is now rendered as itself and its line marked, which claims nothing and hides
-/// nothing. An empty key shows as `""` — so does a key genuinely made of two quote
-/// characters, but that one is addressable and carries no marker, which tells them apart.
+/// Render empty and non-string keys distinctly and return false so the caller marks
+/// them as unaddressable. An empty key renders as `""`; the marker distinguishes it
+/// from an addressable string key containing two literal quote characters.
 fn push_key(out: &mut String, key: &Value, separator: &str) -> bool {
     match key {
         Value::String(key) if !key.is_empty() => {

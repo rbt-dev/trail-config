@@ -258,16 +258,13 @@ impl ConfigHandle {
     /// [`reload_from`](ConfigHandle::reload_from): build the next config off to the
     /// side, then swap it in.
     ///
-    /// Both go through here so the locking discipline is written once. Getting it
-    /// subtly different between the two is exactly how the lost update this mutex
-    /// exists to prevent would come back.
+    /// Both operations share the same reload mutex and publication path.
     fn rebuild(
         &self,
         build: impl FnOnce(&mut Config) -> Result<(), ConfigError>,
     ) -> Result<(), ConfigError> {
-        // Held until this method returns, so the read-parse-swap sequence below is
-        // atomic with respect to another reload. Whoever reads the files last is then
-        // also the one who swaps last, which is what makes the newest document win.
+        // Serialize reading, validation, and publication so a slower reload cannot
+        // overwrite a newer one. Readers never acquire this mutex.
         let _reloading = self.reloading.lock().unwrap_or_else(|e| e.into_inner());
 
         // Snapshot the sources: filenames and the overlay chain, not the document.

@@ -348,29 +348,17 @@ impl Config {
         defaults: &str,
     ) -> Result<Config, ConfigError> {
         match Self::load_internal_as(filename, sep, env, format) {
-            // The file was already there. It may still be the *winner's* file caught
-            // between its creation and its contents, which reads as an empty config —
-            // this is the likelier half of the race, since a process arriving a moment
-            // late never reaches the create path below at all.
+            // Existing files can still be mid-creation; apply the empty-file heuristic.
             Ok(config) => Self::settle_empty(config, filename, sep, env, format, defaults),
             Err(ConfigError::IoError { ref source, .. }) if source.kind() == io::ErrorKind::NotFound => {
                 let (file, _) = get_file(filename, env)?;
 
-                // Validate the defaults *before* writing them. Writing first and parsing
-                // second left a broken file on disk when the defaults did not parse in the
-                // file's format — and because the file then existed, this branch never ran
-                // again: every subsequent run read the same broken file and failed
-                // identically, turning a first-run error into a permanent one.
-                //
-                // In `format` when one was pinned, so this checks the defaults against the
-                // parser that will actually read them back rather than against the one the
-                // extension names.
+                // Reject invalid defaults before creating a file, using the same parser
+                // that will read it back, including any explicitly pinned format.
                 parser::parse_in(format, defaults, &file)?;
 
-                // The parsed value is deliberately discarded and the file re-read below,
-                // so the created config is built by exactly the same path as an existing
-                // one — filename recorded, `reload()` working, no second code path to
-                // keep in step.
+                // Re-read through the normal loader to retain source metadata and
+                // keep creation and existing-file loading consistent.
                 match create_new_file(&file, defaults) {
                     // We created *and* filled it, so there is nothing to wait for.
                     Ok(()) => return Self::load_internal_as(filename, sep, env, format),
@@ -429,12 +417,8 @@ impl Config {
     /// Loads a file with an explicitly chosen parser, or by extension when `format` is
     /// `None`.
     ///
-    /// The one path every file constructor takes, so the filename check, the separator
-    /// check and `{env}` resolution cannot differ between them — which is what makes the
-    /// format a *parameter* of the three constructors rather than an axis of new ones.
-    /// `load_json_file` and `load_toml_file`, which this replaces, each bypassed all three
-    /// checks, and skipping the last meant they alone could not take a `config.{env}.json`
-    /// template.
+    /// All file constructors share filename and separator validation, `{env}`
+    /// resolution, and source metadata construction through this path.
     fn load_internal_as(
         filename: &str,
         sep: &str,

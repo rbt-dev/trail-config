@@ -161,18 +161,9 @@ impl Config {
         // working afterwards, exactly as the initial load does.
         let (file, _) = get_file(filename, self.environment.as_deref())?;
 
-        // Read, parse and resolve into a local before touching `self`. Every failure
-        // path returns here, leaving the filename, content and overlay chain as they
-        // were — a partial switch would point `reload()` at the new file while the
-        // old overlays were still registered.
-        //
-        // A pinned format is preserved, like the separator and the environment: it was an
-        // explicit choice by whoever built the config, and the alternative is worse in the
-        // specific way this crate cares about. Dropping it would send a JSON-pinned config
-        // reading a new extensionless file as YAML — which usually *succeeds*, since YAML
-        // is a superset of JSON, and quietly applies the wrong rules. Keeping it means a
-        // genuine format switch fails with a parse error naming the format, which is
-        // visible. Build a new `Config` to change format.
+        // Finish all fallible work before committing content, filename, and overlays
+        // together. Preserve the pinned parser across filename changes; callers must
+        // construct a new Config to choose a different format.
         let content = resolve_env_vars(load_in(self.format, &file)?)?;
 
         self.content = content;

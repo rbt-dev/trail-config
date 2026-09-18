@@ -1,10 +1,11 @@
 use std::fmt;
 use std::mem;
+use std::panic::RefUnwindSafe;
 use std::sync::{Arc, Mutex, RwLock};
 use yaml_serde::Value;
 use crate::{Config, ConfigError};
 
-type Validator = dyn Fn(&Config) -> Result<(), ConfigError> + Send + Sync;
+type Validator = dyn Fn(&Config) -> Result<(), ConfigError> + Send + Sync + RefUnwindSafe;
 
 /// A cloneable handle to a [`Config`] that can be **replaced** at runtime.
 ///
@@ -130,6 +131,12 @@ impl ConfigHandle {
     /// Prefer side-effect-free validation; external side effects cannot be rolled back.
     /// A panic propagates without publishing the candidate.
     ///
+    /// The validator must implement [`RefUnwindSafe`]. Handles with or without a
+    /// validator can be used with [`std::panic::catch_unwind`].
+    /// This is a compile-time constraint on captured state, not a prohibition on
+    /// panicking. Immutable settings, atomics, and standard mutex-protected state
+    /// can be captured. Side effects are still the validator's responsibility.
+    ///
     /// # Errors
     /// Returns the validator's error unchanged if the initial config is rejected.
     /// Custom error messages should omit sensitive values; use
@@ -151,7 +158,7 @@ impl ConfigHandle {
     /// ```
     pub fn with_validator(
         config: Config,
-        validator: impl Fn(&Config) -> Result<(), ConfigError> + Send + Sync + 'static,
+        validator: impl Fn(&Config) -> Result<(), ConfigError> + Send + Sync + RefUnwindSafe + 'static,
     ) -> Result<Self, ConfigError> {
         validator(&config)?;
         Ok(Self { validator: Some(Arc::new(validator)), ..Self::new(config) })

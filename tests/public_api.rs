@@ -14,6 +14,21 @@ use trail_config::{Config, ConfigError, ConfigHandle, Mapping, Number, Sequence,
 const YAML: &str = "app:\n  port: 8080\n  name: myapp\nfeatures:\n  - a\n  - b\n";
 
 #[test]
+fn config_handle_preserves_thread_and_unwind_safety() {
+    fn assert_traits<T: Send + Sync + std::panic::UnwindSafe + std::panic::RefUnwindSafe>() {}
+    assert_traits::<ConfigHandle>();
+
+    let handle = ConfigHandle::new(Config::load_yaml(YAML, "/").unwrap());
+    assert_eq!(std::panic::catch_unwind(|| handle.get_int("app/port")).unwrap(), Some(8080));
+    let owned = handle.clone();
+    assert_eq!(std::panic::catch_unwind(move || {
+        let port = owned.get_int("app/port");
+        drop(owned);
+        port
+    }).unwrap(), Some(8080));
+}
+
+#[test]
 fn get_returns_a_value_the_caller_can_name_and_destructure() {
     let config = Config::load_yaml(YAML, "/").unwrap();
 

@@ -29,7 +29,7 @@ fn validator_panic_preserves_snapshot_and_later_reload_recovers() {
     }).unwrap();
     let before = handle.read();
     fs::write(&file, "port: 0").unwrap();
-    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| handle.reload())).is_err());
+    assert!(std::panic::catch_unwind(|| handle.reload()).is_err());
     assert!(Arc::ptr_eq(&before, &handle.read()));
     fs::write(&file, "port: 9090").unwrap();
     handle.reload().unwrap();

@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `ConfigHandle::with_validator` validates the initial config and every replacement before publication, preserving the current snapshot and sources on rejection across `reload`, `reload_from`, and cloned handles.
+- `ConfigHandle::with_validator` validates the initial config and every replacement before publication, preserving the current snapshot and sources on rejection across `reload`, `reload_from`, and cloned handles. Validators require `Fn + Send + Sync + RefUnwindSafe + 'static`.
 - Explicit interpolation-to-number/boolean conversion guidance and a runnable `validated_reload` example.
 - GitHub Actions CI runs the existing check scripts on Windows and Linux for pushes, pull requests, and manual runs, including the feature matrix, MSRV, and docs.rs-style documentation checks.
 - `ConfigError::safe_diagnostic()` and its `SafeDiagnostic` view omit values and underlying messages from both `Display` and `Debug`, retaining file, requested path/type, and parser location metadata.

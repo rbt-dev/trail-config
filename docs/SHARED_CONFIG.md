@@ -134,7 +134,13 @@ can continue using the old snapshot while validation runs. Do not call `reload` 
 on its own reload mutex. A panic propagates before publication. Prefer validation
 without external side effects, which the handle cannot undo.
 
-The closure must be `Fn + Send + Sync + 'static`; use `move` to capture owned rules.
+The validator closure must be `Fn + Send + Sync + RefUnwindSafe + 'static`.
+`ConfigHandle` supports `std::panic::catch_unwind` with or without a validator.
+Ordinary functions and closures capturing
+immutable settings, atomics, or standard mutex-protected state satisfy this bound.
+It adds no runtime checks and does not prevent panics or roll back side effects.
+
+Use `move` to capture owned rules.
 It validates a `Config` and does not cache a typed settings object. Read related fields
 from one snapshot after validation. Interpolated numbers and booleans still require
 [explicit conversion](ENV_INTERPOLATION.md#numbers-and-booleans-remain-strings);

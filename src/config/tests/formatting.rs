@@ -225,7 +225,8 @@ fn fmt_strict_errors_on_named_placeholder() {
     let result = config.fmt_strict("{name}", "tpl", &["b"]);
     match result {
         Err(ConfigError::FormatError(msg)) => {
-            assert!(msg.contains("name"), "message should name the placeholder: {}", msg);
+            assert!(msg.contains("Unsupported placeholder"), "got: {}", msg);
+            assert!(!msg.contains("name"), "placeholder text may contain a secret: {}", msg);
         },
         other => panic!("Expected FormatError, got {:?}", other),
     }

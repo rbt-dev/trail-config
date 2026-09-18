@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `ConfigError::safe_diagnostic()` and its `SafeDiagnostic` view omit values and underlying messages from both `Display` and `Debug`, retaining file, requested path/type, and parser location metadata.
+- `DeserializeError::expected_type` records the requested Rust type independently of upstream diagnostic text.
+- An explicit error-logging contract in the error-handling guide and API documentation.
+
+### Fixed
+
+- Interpolation errors no longer echo input strings, fallback literals, or non-Unicode environment values. Numeric conversion errors report the path and expected type instead of the number. Malformed format-template errors no longer echo literals.
+
 ## [0.5.0] - 2026-08-08
 
 ### Added

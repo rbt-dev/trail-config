@@ -43,7 +43,7 @@ let timeout = config.get_int("app/timeout"); // -> Some(30)
 // Or use strict API for explicit error handling
 match config.str_strict("database/host") {
     Ok(host) => println!("Connecting to {}", host),
-    Err(e) => eprintln!("Config error: {}", e),
+    Err(e) => eprintln!("Config error: {}", e.safe_diagnostic()),
 }
 ```
 

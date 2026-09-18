@@ -178,7 +178,7 @@ mod handle;
 #[cfg(test)]
 mod test_util;
 
-pub use error::{ConfigError, ValueError};
+pub use error::{ConfigError, SafeDiagnostic, ValueError};
 pub use config::{Config, Format};
 pub use handle::ConfigHandle;
 

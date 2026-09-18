@@ -81,6 +81,11 @@ impl From<yaml_serde::Error> for ValueError {
 /// when the config was parsed from a string) and preserve the underlying
 /// error, available via [`std::error::Error::source`].
 ///
+/// # Logging
+///
+/// `Display`, `Debug`, and underlying sources may contain configuration values,
+/// including secrets. Use [`safe_diagnostic`](Self::safe_diagnostic) for logs.
+///
 /// # Matching on it
 ///
 /// The enum and its struct variants are `#[non_exhaustive]`, so a `match` from
@@ -95,7 +100,7 @@ impl From<yaml_serde::Error> for ValueError {
 ///         eprintln!("could not read {}", file.as_deref().unwrap_or("the config"));
 ///     },
 ///     Err(ConfigError::PathNotFound(path)) => eprintln!("missing: {path}"),
-///     Err(e) => eprintln!("{e}"),
+///     Err(e) => eprintln!("{}", e.safe_diagnostic()),
 /// }
 /// ```
 ///
@@ -171,6 +176,8 @@ pub enum ConfigError {
         file: Option<String>,
         /// The path of the subtree being deserialized, or `None` for the whole document.
         path: Option<String>,
+        /// The requested Rust type, independent of the underlying error text.
+        expected_type: &'static str,
         /// The underlying error from the value model.
         source: ValueError,
     },
@@ -202,6 +209,25 @@ fn fmt_target(path: &Option<String>, file: &Option<String>) -> String {
 }
 
 impl ConfigError {
+    /// Returns a diagnostic that omits values and underlying error messages.
+    ///
+    /// Both `Display` and `Debug` of this view retain file names, requested paths,
+    /// requested Rust types, and available parser locations. Treat those metadata
+    /// as public: secrets embedded in file names or keys are not redacted.
+    /// Free-form `FormatError` messages are omitted, including caller-created ones.
+    /// The view has no error source chain; the original error retains full details.
+    ///
+    /// ```
+    /// # use trail_config::Config;
+    /// let config = Config::load_yaml("port: secret", "/").unwrap();
+    /// let err = config.get_as_strict::<u16>("port").unwrap_err();
+    /// eprintln!("{}", err.safe_diagnostic());
+    /// assert!(!format!("{:?}", err.safe_diagnostic()).contains("secret"));
+    /// ```
+    pub fn safe_diagnostic(&self) -> SafeDiagnostic<'_> {
+        SafeDiagnostic(self)
+    }
+
     pub(crate) fn io_in(file: &str, source: io::Error) -> Self {
         ConfigError::IoError { file: Some(file.to_string()), source }
     }
@@ -222,6 +248,51 @@ impl ConfigError {
     #[cfg(feature = "toml")]
     pub(crate) fn toml_in(file: Option<&str>, source: toml::de::Error) -> Self {
         ConfigError::TomlError { file: file.map(str::to_string), source }
+    }
+}
+
+/// A value-free logging view returned by [`ConfigError::safe_diagnostic`].
+///
+/// File names and configuration paths are retained; see the method's logging contract.
+pub struct SafeDiagnostic<'a>(&'a ConfigError);
+
+impl std::fmt::Display for SafeDiagnostic<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.0 {
+            ConfigError::IoError { file, source } => {
+                write!(f, "IO error{} ({:?})", fmt_file(file), source.kind())
+            },
+            ConfigError::YamlError { file, source } => {
+                write!(f, "YAML parse error{}", fmt_file(file))?;
+                if let Some((line, column)) = source.location() {
+                    write!(f, " at line {line}, column {column}")?;
+                }
+                Ok(())
+            },
+            #[cfg(feature = "json")]
+            ConfigError::JsonError { file, source } => {
+                write!(f, "JSON parse error{} at line {}, column {}", fmt_file(file), source.line(), source.column())
+            },
+            #[cfg(feature = "toml")]
+            ConfigError::TomlError { file, source } => {
+                write!(f, "TOML parse error{}", fmt_file(file))?;
+                if let Some(span) = source.span() {
+                    write!(f, " at bytes {}..{}", span.start, span.end)?;
+                }
+                Ok(())
+            },
+            ConfigError::DeserializeError { file, path, expected_type, .. } => {
+                write!(f, "Cannot deserialize {}: expected {}", fmt_target(path, file), expected_type)
+            },
+            ConfigError::PathNotFound(path) => write!(f, "Path not found in config: {path}"),
+            ConfigError::FormatError(_) => f.write_str("Format error (details omitted)"),
+        }
+    }
+}
+
+impl std::fmt::Debug for SafeDiagnostic<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(self, f)
     }
 }
 

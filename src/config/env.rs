@@ -94,8 +94,8 @@ fn resolve_env_string(input: &str, depth: usize) -> Result<String, ConfigError> 
             result.push_str("${");
             rest = tail;
         } else if let Some(after) = rest.strip_prefix("${") {
-            let (spec, tail) = split_placeholder(after, input)?;
-            result.push_str(&resolve_placeholder(spec, input, depth)?);
+            let (spec, tail) = split_placeholder(after)?;
+            result.push_str(&resolve_placeholder(spec, depth)?);
             rest = tail;
         } else {
             // A '$' that does not begin a placeholder
@@ -113,7 +113,7 @@ fn resolve_env_string(input: &str, depth: usize) -> Result<String, ConfigError> 
 /// Counts nesting depth rather than stopping at the first `}`, so a placeholder may
 /// contain a complete `${...}` of its own. Scanning by byte is safe because `$`, `{`
 /// and `}` are ASCII, which never appear inside a multi-byte UTF-8 sequence.
-fn split_placeholder<'a>(after: &'a str, input: &str) -> Result<(&'a str, &'a str), ConfigError> {
+fn split_placeholder(after: &str) -> Result<(&str, &str), ConfigError> {
     let bytes = after.as_bytes();
     let mut depth = 1usize;
     let mut i = 0;
@@ -134,7 +134,7 @@ fn split_placeholder<'a>(after: &'a str, input: &str) -> Result<(&'a str, &'a st
     }
 
     Err(ConfigError::FormatError(
-        format!("Unclosed env var placeholder in: {}", input)
+        "Unclosed env var placeholder".to_string()
     ))
 }
 
@@ -148,7 +148,7 @@ fn split_placeholder<'a>(after: &'a str, input: &str) -> Result<(&'a str, &'a st
 /// A default applies only when the variable is **absent**. Both ways of being *set*
 /// without yielding a usable string — empty, and not valid Unicode — are values rather
 /// than absences, and neither falls back.
-fn resolve_placeholder(spec: &str, input: &str, depth: usize) -> Result<String, ConfigError> {
+fn resolve_placeholder(spec: &str, depth: usize) -> Result<String, ConfigError> {
     let (var_name, default) = match spec.find(":-") {
         Some(pos) => (&spec[..pos], Some(&spec[pos + 2..])),
         None => (spec, None),
@@ -156,18 +156,16 @@ fn resolve_placeholder(spec: &str, input: &str, depth: usize) -> Result<String, 
 
     if var_name.is_empty() {
         return Err(ConfigError::FormatError(
-            format!("Empty env var name in: {}", input)
+            "Empty env var name".to_string()
         ));
     }
 
     // Indirect names (`${${PREFIX}_HOST}`) would otherwise reach `env::var` as a
     // literal and fail with a confusing "not set" error
     if var_name.contains("${") {
-        return Err(ConfigError::FormatError(format!(
-            "Nested placeholder in the variable name of '${{{}}}' in: {} \
-             — nesting is supported in defaults only",
-            spec, input
-        )));
+        return Err(ConfigError::FormatError(
+            "Nested placeholder in the variable name — nesting is supported in defaults only".to_string()
+        ));
     }
 
     match env::var(var_name) {
@@ -181,10 +179,10 @@ fn resolve_placeholder(spec: &str, input: &str, depth: usize) -> Result<String, 
         // an error claiming the variable "is not set" when it demonstrably is, leaving
         // the operator nowhere to go; or, with a default, silently running the
         // deployment on the fallback while they believed their setting had taken.
-        Err(env::VarError::NotUnicode(raw)) => Err(ConfigError::FormatError(format!(
-            "Environment variable '{}' is set but is not valid Unicode ({:?}) \
+        Err(env::VarError::NotUnicode(_)) => Err(ConfigError::FormatError(format!(
+            "Environment variable '{}' is set but is not valid Unicode \
              — the default, if any, is not applied because the variable is set",
-            var_name, raw
+            var_name
         ))),
 
         Err(env::VarError::NotPresent) => match default {

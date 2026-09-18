@@ -190,7 +190,7 @@ impl Config {
         match untagged(value) {
             Value::Number(num) => {
                 num.as_i64()
-                    .ok_or_else(|| ConfigError::FormatError(format!("Cannot convert {} to i64", num)))
+                    .ok_or_else(|| ConfigError::FormatError(format!("Cannot convert value at {} to i64", path)))
             },
             _ => Err(ConfigError::FormatError(format!("Value at {} is not a number", path)))
         }
@@ -218,7 +218,7 @@ impl Config {
         match untagged(value) {
             Value::Number(num) => {
                 num.as_f64()
-                    .ok_or_else(|| ConfigError::FormatError(format!("Cannot convert {} to f64", num)))
+                    .ok_or_else(|| ConfigError::FormatError(format!("Cannot convert value at {} to f64", path)))
             },
             _ => Err(ConfigError::FormatError(format!("Value at {} is not a number", path)))
         }
@@ -297,7 +297,7 @@ impl Config {
             .ok_or_else(|| ConfigError::PathNotFound(path.to_string()))?;
         // Deserialize straight from the borrowed subtree. `yaml_serde::from_value`
         // takes `Value` by value and would force a deep clone of the subtree first.
-        T::deserialize(value).map_err(|e| self.deserialize_error(Some(path), e))
+        T::deserialize(value).map_err(|e| self.deserialize_error::<T>(Some(path), e))
     }
 
     /// Deserializes the entire config into a typed struct
@@ -353,7 +353,7 @@ impl Config {
     pub fn deserialize_strict<T: serde::de::DeserializeOwned>(&self) -> Result<T, ConfigError> {
         // Borrowed, not cloned — see `get_as_strict`. This matters most here, where
         // the alternative is deep-cloning the entire document on every call.
-        T::deserialize(&self.content).map_err(|e| self.deserialize_error(None, e))
+        T::deserialize(&self.content).map_err(|e| self.deserialize_error::<T>(None, e))
     }
 
     /// Builds the error for a failed deserialization, attributing it to this config's
@@ -364,10 +364,11 @@ impl Config {
     /// Mechanically true — deserialization runs through the `yaml_serde` value model
     /// whatever the source format — but a caller has to know the crate's internals for
     /// that to make sense, and nothing was parsed at this point in any case.
-    fn deserialize_error(&self, path: Option<&str>, source: yaml_serde::Error) -> ConfigError {
+    fn deserialize_error<T>(&self, path: Option<&str>, source: yaml_serde::Error) -> ConfigError {
         ConfigError::DeserializeError {
             file: (!self.filename.is_empty()).then(|| self.filename.clone()),
             path: path.map(str::to_string),
+            expected_type: std::any::type_name::<T>(),
             source: source.into(),
         }
     }

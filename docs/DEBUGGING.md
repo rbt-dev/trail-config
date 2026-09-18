@@ -51,7 +51,14 @@ retries/1: <string>            # not addressable
 ```
 
 The marker covers the whole line, so anything nested under such a key carries it too. 
-Every line *without* one resolves as written.
+Every line *without* one resolves to its corresponding leaf as written.
+
+With multi-character separators, a key suffix may overlap the separator between
+keys. Such paths are also marked: with separator `::`, the path for keys `a:` and
+`b` would be `a:::b`, which resolves to `a` and `:b` instead. A marked spelling can
+therefore resolve to a different leaf; do not use it to access the listed value.
+See [overlapping separators](ESCAPING.md#overlapping-multi-character-separators) for
+an example and how to read the containing mapping.
 
 Values are never printed, only their types, which is what makes the output safe to log or 
 paste into an issue: `${DB_PASSWORD}` is already interpolated by the time a `Config` 

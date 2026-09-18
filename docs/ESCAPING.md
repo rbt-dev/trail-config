@@ -37,6 +37,40 @@ let config = Config::load_yaml(yaml, "::").unwrap();
 let value = config.str("a::b\\::c::d");
 ```
 
+## Overlapping multi-character separators
+
+Escapes cover a **complete** separator or a backslash. They do not escape individual
+characters of a multi-character separator. Some key boundaries therefore cannot be
+represented unambiguously. For example, with separator `::`:
+
+```yaml
+'a:':
+  b: 1
+a:
+  ':b': 2
+```
+
+The spelling `a:::b` resolves to keys `a` and `:b`, returning `2`. It cannot select
+keys `a:` and `b`. `outline()` marks the first entry so it cannot be mistaken for a
+usable path to that value:
+
+```text
+a:::b: <number>  # not addressable
+a:::b: <number>
+```
+
+A marked spelling may resolve to a **different** value. Only unmarked entries are
+paths to their corresponding leaves. Existing lookup and escape rules are unchanged;
+in particular, `\:` does not escape a single colon when the separator is `::`.
+
+Read an addressable parent mapping to access such keys, or choose a separator that
+does not overlap their boundaries:
+
+```rust
+let parent = config.get_as::<trail_config::Value>("a:").unwrap();
+assert_eq!(parent["b"].as_i64(), Some(1));
+```
+
 ## Keys that have no path
 
 Path segments are matched as **strings**, so a key that is not a string cannot be reached

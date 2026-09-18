@@ -3,6 +3,7 @@
 use yaml_serde::Value;
 use super::Config;
 use super::accessor::untagged;
+use super::path::segments;
 
 impl Config {
     /// Lists every path in the document, one per line, with values replaced by their type.
@@ -38,8 +39,8 @@ impl Config {
     ///
     /// # Keys that are not addressable
     ///
-    /// Two kinds of key cannot be written as a path at all: an **empty** key, because
-    /// every path segment must be non-empty, and a **non-string** key (`1:`, `true:`),
+    /// An **empty** key cannot be written as a path, because every path segment must
+    /// be non-empty. A **non-string** key (`1:`, `true:`) also cannot be addressed,
     /// because a path segment is matched as a string. YAML allows both. They are still
     /// listed — a key you cannot reach is exactly what you want to see when a lookup is
     /// failing — but marked, so the output never claims a path that does not resolve:
@@ -53,6 +54,11 @@ impl Config {
     /// The marker covers the whole line, so everything nested under such a key carries it
     /// too. Every line without one resolves as written; that is the property worth
     /// relying on, and it is what the marker exists to keep true.
+    ///
+    /// Multi-character separators can also overlap a key boundary. With separator
+    /// `::`, the keys `a:` then `b` render as `a:::b`, which instead addresses `a`
+    /// then `:b`. Such a line is marked `# not addressable`, even if the printed
+    /// path resolves to a different leaf. Read the containing mapping to access it.
     ///
     /// Sequences are leaves: their elements have no addressable path (`items/0` is a
     /// lookup for a key named `0`), so a sequence prints as its length. An empty mapping
@@ -73,12 +79,12 @@ impl Config {
     /// ```
     pub fn outline(&self) -> String {
         let mut out = String::new();
-        write_outline(&self.content, &mut String::new(), &self.separator, true, &mut out);
+        write_outline(&self.content, &mut String::new(), &mut Vec::new(), &self.separator, true, &mut out);
         out
     }
 }
 
-/// Appended to any line whose path the accessors cannot resolve.
+/// Appended to any line whose path cannot resolve to the intended leaf.
 ///
 /// Marking beats omitting: a key you cannot reach is precisely what you want to see when a
 /// lookup is failing, and dropping it silently leaves you comparing the outline against the
@@ -88,12 +94,13 @@ const NOT_ADDRESSABLE: &str = "  # not addressable";
 /// Walks the document depth-first, appending one line per leaf.
 ///
 /// `prefix` is the path built so far; it is extended and truncated in place rather than
-/// re-joined at every level. `addressable` tracks whether every key on the way here could
-/// be written as a path segment — once one cannot, nothing below it can either, so it only
-/// ever goes from true to false.
-fn write_outline(
-    value: &Value,
+/// re-joined at every level. `keys` keeps the original string segments for checking
+/// the joined spelling. `addressable` tracks whether every key is a non-empty string;
+/// an empty or non-string ancestor makes every descendant unaddressable too.
+fn write_outline<'a>(
+    value: &'a Value,
     prefix: &mut String,
+    keys: &mut Vec<&'a str>,
     separator: &str,
     addressable: bool,
     out: &mut String,
@@ -110,7 +117,12 @@ fn write_outline(
                     prefix.push_str(separator);
                 }
                 let key_addressable = push_key(prefix, key, separator);
-                write_outline(child, prefix, separator, addressable && key_addressable, out);
+                let depth = keys.len();
+                if let Value::String(key) = key {
+                    keys.push(key);
+                }
+                write_outline(child, prefix, keys, separator, addressable && key_addressable, out);
+                keys.truncate(depth);
                 prefix.truncate(base);
             }
         },
@@ -123,7 +135,10 @@ fn write_outline(
                 out.push_str(": ");
             }
             out.push_str(&describe_leaf(leaf));
-            if !addressable {
+            // A key suffix can overlap the joining separator. Check segment identity,
+            // not merely whether the path resolves or whether leaf values are equal.
+            let round_trips = keys.is_empty() || segments(prefix, separator).eq(keys.iter().copied());
+            if !addressable || !round_trips {
                 out.push_str(NOT_ADDRESSABLE);
             }
             out.push('\n');
@@ -131,7 +146,8 @@ fn write_outline(
     }
 }
 
-/// Renders one mapping key into `prefix`, reporting whether a path containing it resolves.
+/// Renders a key, reporting whether it is a non-empty string. The joined spelling
+/// is checked separately at the leaf, where separator boundaries can be validated.
 ///
 /// Render empty and non-string keys distinctly and return false so the caller marks
 /// them as unaddressable. An empty key renders as `""`; the marker distinguishes it

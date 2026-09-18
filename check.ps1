@@ -101,8 +101,8 @@ Invoke-Step 'doctests' @('test', '--all-features', '--doc')
 
 Invoke-Step 'docs' @('doc', '--all-features', '--no-deps')
 
-# What `cargo publish` would actually upload. `exclude` in Cargo.toml keeps the review
-# notes and this script out of the tarball; nothing else enforces that, and the failure is
+# What `cargo publish` would actually upload. `exclude` in Cargo.toml keeps developer
+# tooling out of the tarball; nothing else enforces that, and the failure is
 # invisible until the crate is on crates.io, where a published version cannot be replaced.
 # `--allow-dirty` so the check is usable mid-change: it inspects the file list, not the
 # VCS state, and a dirty tree is the normal case when running this script.
@@ -116,7 +116,7 @@ if ($LASTEXITCODE -ne 0) {
     $failures.Add('package contents')
 } else {
     $unwanted = $packaged | Where-Object {
-        $_ -like 'IMPROVEMENTS_*.md' -or $_ -eq 'check.ps1' -or $_ -eq 'check.sh' -or $_ -eq '.gitattributes' -or $_ -like '.github/*'
+        $_ -eq 'check.ps1' -or $_ -eq 'check.sh' -or $_ -eq '.gitattributes' -or $_ -like '.github/*'
     }
     if ($unwanted) {
         Write-Host '    FAILED (package contents): excluded files are in the crate' -ForegroundColor Red

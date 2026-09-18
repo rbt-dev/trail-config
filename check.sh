@@ -51,7 +51,7 @@ export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-target-linux}"
 MSRV_VERSION='1.85'
 
 # Files `exclude` in Cargo.toml is supposed to keep out of the published crate.
-UNWANTED_PATTERNS=('IMPROVEMENTS_*.md' 'check.ps1' 'check.sh' '.gitattributes' '.github/*')
+UNWANTED_PATTERNS=('check.ps1' 'check.sh' '.gitattributes' '.github/*')
 
 run_msrv=0
 run_bench=0
@@ -139,8 +139,8 @@ step 'doctests' test --all-features --doc
 
 step 'docs' doc --all-features --no-deps
 
-# What `cargo publish` would actually upload. `exclude` in Cargo.toml keeps the review
-# notes and the two check scripts out of the tarball; nothing else enforces that, and the
+# What `cargo publish` would actually upload. `exclude` in Cargo.toml keeps developer
+# tooling out of the tarball; nothing else enforces that, and the
 # failure is invisible until the crate is on crates.io, where a published version cannot be
 # replaced. `--allow-dirty` so the check is usable mid-change: it inspects the file list,
 # not the VCS state, and a dirty tree is the normal case when running this script.

@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Application-logging examples consistently use `safe_diagnostic()`, including overlay failures, typed access, and reloads. The server-loop example handles startup failures safely, raw-value mismatch reporting omits the value, and the error-handling guide distinguishes propagation from safe reporting.
 - `outline()` marks paths whose key boundaries overlap a multi-character separator as `# not addressable`, including paths that would resolve to a different leaf. Existing lookup and escape rules are unchanged; regression tests cover prefixes, suffixes, Unicode separators, backslashes, and equal-valued leaves.
 - JSON numbers retain their numeric types when downstream dependencies enable `serde_json/arbitrary_precision`. Integers within `i64`/`u64` range remain exact; other numbers use finite `f64`, with overflow rejected. Document order, duplicate-key rejection, and literal marker-like object keys are preserved, with downstream feature regression checks in both verification scripts.
 - Corrected `load_or_create` documentation: exclusive creation prevents overwrites, while empty-file retries are best-effort and may accept valid partial documents. Documented retry eligibility, timing, and write-failure leftovers without changing runtime behavior.

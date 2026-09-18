@@ -19,7 +19,7 @@ if let Some(port) = port {
 // Strict - returns error details
 match config.get_int_strict("app/port") {
     Ok(port) => println!("Port: {}", port),
-    Err(e) => eprintln!("Failed to read port: {}", e),
+    Err(e) => eprintln!("Failed to read port: {}", e.safe_diagnostic()),
 }
 ```
 

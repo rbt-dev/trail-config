@@ -158,7 +158,7 @@ thread::spawn(move || {
     loop {
         thread::sleep(Duration::from_secs(30));
         if let Err(e) = reload_handle.reload() {
-            eprintln!("Config reload failed: {}", e);
+            eprintln!("Config reload failed: {}", e.safe_diagnostic());
         }
     }
 });

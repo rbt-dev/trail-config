@@ -30,6 +30,14 @@ produce arbitrary custom messages. Use these details only in a controlled diagno
 context. The safe view does not implement `Error` or expose a source chain; log the
 view itself, rather than attaching the original error to an error-reporting system.
 
+Examples that use `?` demonstrate error propagation, not safe reporting. Handle the
+`ConfigError` with `safe_diagnostic()` at your application's logging boundary.
+Returning a raw error from a `main` function that returns `Result`, or calling
+`expect` on a failed result, uses detailed error formatting too. The small runnable
+examples propagate setup errors this way for convenience; use explicit safe error
+handling when adapting them into an application, as in the
+[server loop example](HOT_RELOAD.md#server-loop-example).
+
 Crate-generated interpolation, numeric-conversion, and format-template errors do not
 echo raw values or template literals. Ordinary messages still include metadata such as
 environment-variable names, paths, and separators. `Config`'s redacted `Debug` does

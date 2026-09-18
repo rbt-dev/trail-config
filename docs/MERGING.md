@@ -42,7 +42,7 @@ let mut config = Config::load_required("config.yaml", "/", None)?;
 
 // Absent is fine and silent; unreadable is reported and the base survives it
 if let Err(e) = config.merge_optional_in_place("config.local.yaml", None) {
-    eprintln!("config.local.yaml is unusable, continuing without it: {e}");
+    eprintln!("config.local.yaml is unusable, continuing without it: {}", e.safe_diagnostic());
 }
 
 let port = config.get_int("app/port"); // the base's value, whichever way that went

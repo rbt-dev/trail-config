@@ -23,24 +23,33 @@ config.reload_from("other_config.yaml")?;
 
 ```rust
 use trail_config::Config;
+use std::process::ExitCode;
 use std::thread;
 use std::time::Duration;
 
-fn main() {
-    let mut config = Config::load_required("config.yaml", "/", None)
-        .expect("Failed to load config")
-        .merge_optional("config.local.yaml", None)
-        .expect("Failed to merge local config");
+fn main() -> ExitCode {
+    let mut config = match Config::load_required("config.yaml", "/", None)
+        .and_then(|config| config.merge_optional("config.local.yaml", None))
+    {
+        Ok(config) => config,
+        Err(error) => {
+            eprintln!("Config startup failed: {}", error.safe_diagnostic());
+            return ExitCode::FAILURE;
+        }
+    };
 
     loop {
         // Check for config updates every 5 seconds
-        if let Ok(_) = config.reload() {
-            println!("✓ Configuration reloaded");
+        match config.reload() {
+            Ok(()) => {
+                println!("✓ Configuration reloaded");
 
-            let timeout = config.get_int("app/timeout").unwrap_or(30);
-            let debug = config.get_bool("app/debug").unwrap_or(false);
+                let timeout = config.get_int("app/timeout").unwrap_or(30);
+                let debug = config.get_bool("app/debug").unwrap_or(false);
 
-            println!("Timeout: {} seconds, Debug: {}", timeout, debug);
+                println!("Timeout: {} seconds, Debug: {}", timeout, debug);
+            }
+            Err(error) => eprintln!("Config reload failed: {}", error.safe_diagnostic()),
         }
 
         // Main application logic here

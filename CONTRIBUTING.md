@@ -28,8 +28,17 @@ it, one per platform, doing the same steps in the same order:
 ./check.sh --docsrs
 ```
 
-**Run both.** This project has no CI, so a check script is the gate — but a script only
-ever runs on the machine you are sitting at, and one machine is one platform. This crate
+The [CI workflow](.github/workflows/ci.yml) runs these scripts on Windows and Linux for
+pushes and pull requests, and can also be started manually. Each job installs stable
+Rust with Clippy, Rust 1.85, and nightly, then enables the MSRV and docs.rs checks. Both
+platforms run all five feature configurations; a failure on one does not cancel the
+other. Benchmarks remain a local, opt-in check.
+
+Keep the MSRV in the workflow and both scripts aligned with `rust-version` in
+`Cargo.toml`. To reproduce CI locally, run `./check.ps1 -Msrv -Docsrs` on Windows and
+`bash ./check.sh --msrv --docsrs` on Linux with those toolchains installed.
+
+**Verify both platforms before a release**, either through CI or locally. This crate
 reads files by path, derives format from extensions and creates files exclusively, so the
 platform axis is where the untested surface is. Between the two: Windows supplies a
 case-insensitive filesystem, Linux supplies the Unix error kinds, a case-sensitive

@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- GitHub Actions CI runs the existing check scripts on Windows and Linux for pushes, pull requests, and manual runs, including the feature matrix, MSRV, and docs.rs-style documentation checks.
 - `ConfigError::safe_diagnostic()` and its `SafeDiagnostic` view omit values and underlying messages from both `Display` and `Debug`, retaining file, requested path/type, and parser location metadata.
 - `DeserializeError::expected_type` records the requested Rust type independently of upstream diagnostic text.
 - An explicit error-logging contract in the error-handling guide and API documentation.

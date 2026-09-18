@@ -3,10 +3,9 @@
 # Runs the full pre-release check on Linux: tests, doctests and clippy across every
 # feature combination. The counterpart to check.ps1, which is the same gate on Windows.
 #
-# Why both exist. This project has no CI, so check.ps1 is the gate — but it can only run
-# on the machine it is invoked from, and that machine is Windows. This crate reads files
-# by path, derives format from extensions and creates files exclusively, so the platform
-# axis is where the untested surface is. Run this under WSL and the two together cover it:
+# CI runs both scripts on their respective platforms. For local verification, run this
+# under Linux or WSL and check.ps1 on Windows. This crate reads files by path, derives
+# format from extensions and creates files exclusively, so both platforms matter:
 # Windows supplies a case-insensitive filesystem, Linux supplies Unix error kinds, a
 # case-sensitive filesystem and Unix path handling. macOS adds essentially nothing on top
 # of those two for this crate.
@@ -52,7 +51,7 @@ export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-target-linux}"
 MSRV_VERSION='1.85'
 
 # Files `exclude` in Cargo.toml is supposed to keep out of the published crate.
-UNWANTED_PATTERNS=('IMPROVEMENTS_*.md' 'check.ps1' 'check.sh')
+UNWANTED_PATTERNS=('IMPROVEMENTS_*.md' 'check.ps1' 'check.sh' '.gitattributes' '.github/*')
 
 run_msrv=0
 run_bench=0

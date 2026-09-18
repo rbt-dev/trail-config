@@ -14,7 +14,7 @@ license = "MIT"
 repository = "https://github.com/rbt-dev/trail-config.git"
 # Developer tooling with nothing to say to a consumer; `docs/` and `examples/` ship on purpose.
 # Checked by the `package contents` step in either check script — a published version is permanent.
-exclude = ["check.ps1", "check.sh", ".gitattributes"]
+exclude = ["check.ps1", "check.sh", ".gitattributes", ".github/"]
 
 [package.metadata.docs.rs]
 # `all-features` builds the gated items; `--cfg docsrs` is what makes their feature labels render.

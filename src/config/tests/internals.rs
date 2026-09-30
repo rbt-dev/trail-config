@@ -81,6 +81,81 @@ fn create_new_file_refuses_to_overwrite() {
     assert_eq!(fs::read_to_string(&file).unwrap(), "app:\n  port: 9090\n");
 }
 
+/// The names in `dir`, sorted — for asserting that no temporary file was left behind.
+fn dir_entries(dir: &std::path::Path) -> Vec<String> {
+    let mut names: Vec<String> = std::fs::read_dir(dir)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    names.sort();
+    names
+}
+
+#[test]
+fn create_new_file_leaves_no_temporary_file_behind() {
+    use crate::config::loader::create_new_file;
+    use crate::test_util::temp_dir;
+
+    let dir = temp_dir();
+    let file = dir.path().join("once.yaml").to_string_lossy().into_owned();
+
+    create_new_file(&file, "app:\n  port: 9090\n").unwrap();
+    assert_eq!(dir_entries(dir.path()), ["once.yaml"]);
+
+    // Losing the race removes the temporary file too, not only winning it
+    create_new_file(&file, "app:\n  port: 8080\n").unwrap_err();
+    assert_eq!(dir_entries(dir.path()), ["once.yaml"]);
+}
+
+#[test]
+fn create_new_file_publishes_only_complete_contents() {
+    use std::{cell::Cell, fs};
+    use crate::config::loader::create_new_file_with;
+    use crate::test_util::temp_dir;
+
+    // Observed at the last moment before publication rather than by racing a reader
+    // against the write, which finishes too fast to be caught reliably. Everything
+    // before this point happens under another name, so a process that dies there, or a
+    // write that fails there, leaves no config behind to be loaded instead of the defaults.
+    const CONTENTS: &str = "app:\n  port: 9090\n";
+    let dir = temp_dir();
+    let file = dir.path().join("once.yaml").to_string_lossy().into_owned();
+    let published = Cell::new(false);
+
+    create_new_file_with(&file, CONTENTS, |temp, target| {
+        assert!(!target.exists(), "the config appeared before it was published");
+        assert_eq!(fs::read_to_string(temp).unwrap(), CONTENTS, "published before the write was complete");
+        published.set(true);
+        fs::hard_link(temp, target)
+    })
+    .unwrap();
+
+    assert!(published.get(), "the file was not published through a link");
+    assert_eq!(fs::read_to_string(&file).unwrap(), CONTENTS);
+    assert_eq!(dir_entries(dir.path()), ["once.yaml"]);
+}
+
+#[test]
+fn create_new_file_writes_in_place_when_links_are_unsupported() {
+    use std::{fs, io};
+    use crate::config::loader::create_new_file_with;
+    use crate::test_util::temp_dir;
+
+    let unsupported = |_: &std::path::Path, _: &std::path::Path| Err(io::Error::from(io::ErrorKind::Unsupported));
+    let dir = temp_dir();
+    let file = dir.path().join("fat.yaml").to_string_lossy().into_owned();
+
+    create_new_file_with(&file, "app:\n  port: 9090\n", unsupported).unwrap();
+    assert_eq!(fs::read_to_string(&file).unwrap(), "app:\n  port: 9090\n");
+    assert_eq!(dir_entries(dir.path()), ["fat.yaml"]);
+
+    // The fallback is still exclusive: it reports the existing file rather than replacing it
+    let err = create_new_file_with(&file, "app:\n  port: 8080\n", unsupported).unwrap_err();
+    assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
+    assert_eq!(fs::read_to_string(&file).unwrap(), "app:\n  port: 9090\n");
+    assert_eq!(dir_entries(dir.path()), ["fat.yaml"]);
+}
+
 #[test]
 fn to_string_test() {
     let parsed: Value = from_str(YAML).unwrap();

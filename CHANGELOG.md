@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.2] - 2026-09-30
+
+### Fixed
+
+- `load_or_create` publishes a created file only once it is complete: the defaults are written and synced under a temporary name in the same directory, then hard-linked into place, which keeps creation exclusive. Readers no longer observe an empty or partially written file, and a write that fails or is interrupted leaves no file behind, so the next run creates it from the defaults instead of loading an empty or truncated config on every run. Filesystems without hard-link support fall back to the previous in-place write.
+
 ## [0.5.1] - 2026-09-18
 
 ### Added

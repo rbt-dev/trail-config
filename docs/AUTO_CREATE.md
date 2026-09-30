@@ -47,12 +47,27 @@ The file is also created **exclusively**. If a second process wins the race to c
 the first-run scenario this method exists for — `load_or_create` loads that file rather
 than overwriting it with its own defaults.
 
-## Concurrent writes: best-effort retries
+## Complete or absent
 
-Exclusive creation prevents clobbering an existing file. **It does not publish completed
-contents atomically.** Creating and filling the file are separate operations, so another
-reader can observe it empty or partially written. A write failure can leave such a file
-behind; later calls load the existing contents instead of replacing them with defaults.
+The defaults are not written into the file directly. They go to a temporary file in the
+same directory, named `.<name>.<pid>-<n>.tmp`, which is synced to disk and then
+hard-linked into place. The link fails rather than replacing a file that already exists,
+so creation stays exclusive, and the file appears with its complete contents or not at all.
+
+That also makes a failed first run recoverable. If the write fails or the process dies
+partway through, there is no `config.yaml` — at most a stray temporary file — and the next
+run creates it from the defaults again. The temporary file is removed as soon as the link
+is made. One is left behind if the process dies during creation or the removal fails, and
+it is safe to delete. A file watcher on the directory will see it come and go.
+
+## Filesystems without hard links: best-effort retries
+
+On filesystems that do not support hard links — FAT, some network shares — the file is
+created and written in place instead. Creating and filling it are then separate
+operations, so another reader can observe it empty or partially written. A write failure
+can leave such a file behind; later calls load the existing contents instead of replacing
+them with defaults. The same applies to a config file written by anything other than
+this library.
 
 If the initial read succeeds with a null document, the file is zero-length, and `defaults`
 is nonempty, `load_or_create` retries at most ten times with a 20 ms sleep before each
@@ -74,12 +89,10 @@ parse error does not prove the file is finished or permanently broken.
 For example, a writer can pause after writing `first: 1\n` and later append `second: 2\n`.
 The prefix is already valid YAML, so `load_or_create` can return just `first` while the
 writer is paused. That returned snapshot does not acquire `second` when writing finishes;
-a subsequent load or reload is needed. The same limitation applies to other writers,
-including concurrent calls to this library's creation helper.
+a subsequent load or reload is needed.
 
-If complete-file reads are required, coordinate all participating readers and writers
-externally, or have the writer publish a fully written temporary file through a mechanism
-that preserves the required no-overwrite guarantee on your target platforms. Readers
+If complete-file reads are required on such a filesystem, or from writers other than
+this library, coordinate all participating readers and writers externally. Readers
 cannot infer completion from a successful parse or a longer timeout. Application
 validation can reject missing required settings, but cannot detect every valid partial
 document (for example, one missing only optional settings).

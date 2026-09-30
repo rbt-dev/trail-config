@@ -1,6 +1,9 @@
 //! Constructors: loading a `Config` from files or strings.
 
-use std::{fs, io, io::Write, thread, time::Duration};
+use std::{fs, io, io::Write, process, thread, time::Duration};
+use std::ffi::OsString;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU32, Ordering};
 use yaml_serde::Value;
 use crate::error::ConfigError;
 use super::Config;
@@ -12,6 +15,14 @@ use super::parser;
 /// can add time. Neither the deadline nor a successful parse proves a write is complete.
 const EMPTY_FILE_RETRIES: usize = 10;
 const EMPTY_FILE_BACKOFF: Duration = Duration::from_millis(20);
+
+/// Numbers the temporary files `create_new_file` writes, so concurrent calls within one
+/// process never pick the same name; the process id in the name separates processes.
+static TEMP_FILE_COUNTER: AtomicU32 = AtomicU32::new(0);
+
+/// How many temporary names `create_new_file` tries before giving up. A name is only
+/// taken when a crashed process with the same id left its temporary file behind.
+const TEMP_FILE_ATTEMPTS: u32 = 16;
 
 /// The total requested sleep time for zero-length-file retries, excluding I/O and scheduling.
 ///
@@ -228,15 +239,23 @@ impl Config {
     ///
     /// # First-run races
     ///
-    /// Exclusive creation prevents overwriting an existing file; it does not publish the
-    /// contents atomically. Other readers can observe the empty file or a partial write.
-    /// A write failure can also leave an empty or partially written file behind.
+    /// The defaults are written to a temporary file in the same directory
+    /// (`.<name>.<pid>-<n>.tmp`), synced, and then hard-linked into place, so the file
+    /// appears complete or not at all. A write failure leaves no file behind, and the
+    /// next run creates it from scratch. The temporary file is removed afterwards; one
+    /// is left behind if the process dies mid-creation or the removal fails, and is safe
+    /// to delete. A file watcher on the directory sees it come and go.
     ///
-    /// When the initial read returns a null document and the file is zero-length, nonempty
-    /// `defaults` enable a **best-effort** retry: at most ten re-reads, each after a 20 ms
-    /// sleep. I/O and scheduling can extend the elapsed time beyond 200 ms. A successfully
-    /// parsed non-null document returns immediately, even if it is only a valid prefix of
-    /// an unfinished write. An initial parse error does not enter this retry loop.
+    /// Where the filesystem does not support hard links (FAT, some network shares), the
+    /// file is created and written in place instead. There, other readers can observe the
+    /// empty file or a partial write, and a write failure can leave either behind.
+    ///
+    /// Files written by other means can be caught mid-write too. When the initial read
+    /// returns a null document and the file is zero-length, nonempty `defaults` enable a
+    /// **best-effort** retry: at most ten re-reads, each after a 20 ms sleep. I/O and
+    /// scheduling can extend the elapsed time beyond 200 ms. A successfully parsed
+    /// non-null document returns immediately, even if it is only a valid prefix of an
+    /// unfinished write. An initial parse error does not enter this retry loop.
     ///
     /// If retries expire, the last config or error is returned. An empty result or parse
     /// error does not establish that the writer has finished. Empty `defaults` skip the
@@ -536,15 +555,84 @@ impl Config {
 ///
 /// `fs::write` truncates, so it would silently clobber a config written by a second process
 /// starting at the same moment — precisely the first-run scenario `load_or_create` exists
-/// for. `create_new` makes the existence check and the creation a single atomic operation,
-/// and turns the loser of the race into an `AlreadyExists` the caller can handle by loading
-/// the winner's file.
+/// for. Here the existence check and the creation are a single atomic operation, and the
+/// loser of the race gets an `AlreadyExists` the caller can handle by loading the winner's
+/// file.
 ///
-/// Contents are written after creation, so readers can observe a partial write.
-/// `Config::settle_empty` only retries some empty reads; it does not close this race.
-/// Stronger publication would need a portable no-clobber mechanism for completed files.
-/// A write error leaves the created file in place, possibly empty or partial.
+/// The contents are written and synced under a temporary name in the same directory first,
+/// then published with a hard link. Linking is the no-clobber rename: it fails with
+/// `AlreadyExists` rather than replacing the target, on Windows and Unix alike. So `file`
+/// appears with its complete contents or not at all, and a failed or interrupted write
+/// leaves no `file` behind for every later run to load in place of the defaults.
+///
+/// Where the filesystem has no hard links (FAT, some network shares), this falls back to
+/// creating `file` and writing it in place. There readers can observe a partial write,
+/// and a write error leaves the created file behind, possibly empty or partial —
+/// `Config::settle_empty` retries some empty reads but does not close that race.
 pub(super) fn create_new_file(file: &str, contents: &str) -> io::Result<()> {
+    create_new_file_with(file, contents, |from, to| fs::hard_link(from, to))
+}
+
+/// [`create_new_file`] with the publishing step supplied, so the fallback taken when the
+/// filesystem cannot link is testable on one that can.
+pub(super) fn create_new_file_with(
+    file: &str,
+    contents: &str,
+    link: impl Fn(&Path, &Path) -> io::Result<()>,
+) -> io::Result<()> {
+    let Some(temp) = write_temp_sibling(file, contents)? else {
+        return write_in_place(file, contents);
+    };
+    let linked = link(&temp, Path::new(file));
+    // Once linked, the temp name is only a second name for the same file. A failed removal
+    // leaves a stray temp file, never a wrong config, so it does not fail the creation.
+    let _ = fs::remove_file(&temp);
+    match linked {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == io::ErrorKind::AlreadyExists => Err(e),
+        Err(_) => write_in_place(file, contents),
+    }
+}
+
+/// Writes `contents` to a fresh temporary file next to `file` and syncs it to disk,
+/// returning its path — or `None` when `file` has no final component to name it after.
+///
+/// It is created in `file`'s directory because a hard link cannot cross filesystems. On
+/// failure the temporary file is removed and the error returned without falling back to
+/// an in-place write, which would fail the same way and leave a partial `file` behind.
+fn write_temp_sibling(file: &str, contents: &str) -> io::Result<Option<PathBuf>> {
+    let path = Path::new(file);
+    let Some(name) = path.file_name() else { return Ok(None) };
+    let pid = process::id();
+
+    for _ in 0..TEMP_FILE_ATTEMPTS {
+        let mut temp_name = OsString::from(".");
+        temp_name.push(name);
+        temp_name.push(format!(".{pid}-{}.tmp", TEMP_FILE_COUNTER.fetch_add(1, Ordering::Relaxed)));
+        let temp = path.with_file_name(temp_name);
+
+        let mut out = match fs::OpenOptions::new().write(true).create_new(true).open(&temp) {
+            Ok(out) => out,
+            // Left behind by a crashed process that had the same id: take the next name.
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(e),
+        };
+        if let Err(e) = out.write_all(contents.as_bytes()).and_then(|()| out.sync_all()) {
+            drop(out);
+            let _ = fs::remove_file(&temp);
+            return Err(e);
+        }
+        return Ok(Some(temp));
+    }
+
+    Err(io::Error::other(format!(
+        "no free temporary file name next to {file} after {TEMP_FILE_ATTEMPTS} attempts"
+    )))
+}
+
+/// Creates `file` exclusively and writes `contents` into it — the publication used where
+/// hard links are unavailable. Readers can observe the file before it is complete.
+fn write_in_place(file: &str, contents: &str) -> io::Result<()> {
     fs::OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -554,7 +642,7 @@ pub(super) fn create_new_file(file: &str, contents: &str) -> io::Result<()> {
 
 /// Reports whether `file` exists and holds no bytes at all.
 ///
-/// The precise shape a lost `create_new` race leaves behind, and narrower than "parses to
+/// The shape an in-place write shows before its first bytes land, and narrower than "parses to
 /// nothing": a document of only comments also parses to `Value::Null` but is not
 /// zero-length, so it is accepted at once rather than waited on. An unreadable file
 /// answers `false` — whatever is wrong with it, a wait will not fix it, and the caller

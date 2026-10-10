@@ -161,7 +161,7 @@
 //! [merging](https://github.com/rbt-dev/trail-config/blob/main/docs/MERGING.md),
 //! [environment variables](https://github.com/rbt-dev/trail-config/blob/main/docs/ENV_INTERPOLATION.md)
 //! and [error handling](https://github.com/rbt-dev/trail-config/blob/main/docs/ERROR_HANDLING.md),
-//! and [`examples/`](https://github.com/rbt-dev/trail-config/tree/main/examples) holds four
+//! and [`examples/`](https://github.com/rbt-dev/trail-config/tree/main/examples) holds
 //! runnable programs.
 
 #![warn(missing_docs)]

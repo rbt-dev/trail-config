@@ -7,8 +7,10 @@ the overlay take precedence over the base; nested mappings are merged recursivel
 keys are preserved. Sequences are replaced wholesale. The base config's separator is preserved.
 
 Key order follows the base document: an overridden key keeps its position and genuinely-new 
-overlay keys are appended, at every level of nesting. The merged order therefore does not 
-depend on the order of the overlays. This is invisible through the scalar accessors but 
+overlay keys are appended, at every level of nesting. So the keys the base already has 
+keep their order however the overlays list or override them; only new keys follow the 
+overlays, appended in the order they first appear — overlay by overlay, and within each 
+overlay in its own order. This is invisible through the scalar accessors but 
 visible to anything order-preserving — deserializing into a `Mapping`, an `IndexMap` or a 
 `Vec<(K, V)>`, and any re-serialization you do downstream.
 

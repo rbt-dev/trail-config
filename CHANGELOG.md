@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - YAML merge keys (`<<: *anchor`, `<<: [*a, *b]`) are resolved; previously merged-in keys read as missing. Explicit keys win, and merged keys take the position `<<` held. An invalid merge value is a `YamlError`. **Behaviour change:** `<<` is no longer an ordinary key in YAML (JSON and TOML are unaffected).
+- `reload` and `reload_from` wait up to ~200 ms for a zero-length file to be written, instead of reloading a file caught mid-save as empty. **Behaviour change:** a base file that stays empty fails the reload with an `IoError` and keeps the current config. An empty overlay is still a no-op. HOT_RELOAD.md covers atomic writes and validators for half-written files.
 
 ## [0.5.2] - 2026-09-30
 

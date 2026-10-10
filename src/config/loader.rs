@@ -13,8 +13,9 @@ use super::parser;
 /// Best-effort retries after reading a null document from a zero-length file with
 /// nonempty defaults. Ten 20 ms sleeps request 200 ms of delay; I/O and scheduling
 /// can add time. Neither the deadline nor a successful parse proves a write is complete.
-const EMPTY_FILE_RETRIES: usize = 10;
-const EMPTY_FILE_BACKOFF: Duration = Duration::from_millis(20);
+/// `reload` and `reload_from` wait out a zero-length file with the same window.
+pub(in crate::config) const EMPTY_FILE_RETRIES: usize = 10;
+pub(in crate::config) const EMPTY_FILE_BACKOFF: Duration = Duration::from_millis(20);
 
 /// Numbers the temporary files `create_new_file` writes, so concurrent calls within one
 /// process never pick the same name; the process id in the name separates processes.

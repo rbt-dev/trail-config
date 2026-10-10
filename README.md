@@ -126,8 +126,9 @@ The full guide is in [`docs/`](docs), one file per topic — start at the
 
 ## Examples
 
-Five runnable programs in [`examples/`](examples) — each writes its own config into a
-temporary directory, so they run from a fresh checkout with nothing to set up:
+Runnable programs in [`examples/`](examples). Each brings its own config, written into a
+temporary directory or parsed from a string, so they run from a fresh checkout with
+nothing to set up:
 
 ```bash
 cargo run --example web_server      # lenient and strict accessors side by side
@@ -135,6 +136,7 @@ cargo run --example environments    # base + {env} overlay + local overrides
 cargo run --example db_pool         # deserializing a subtree into a struct
 cargo run --example validated_reload # scalar conversion and validation before publication
 cargo run --example feature_flags   # booleans and lists, read leniently
+cargo run --example merge_keys      # shared defaults with YAML anchors and <<
 ```
 
 ## Contributing

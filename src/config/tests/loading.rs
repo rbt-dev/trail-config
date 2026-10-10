@@ -281,6 +281,126 @@ fn load_or_create_does_not_wait_on_a_file_with_content() {
     );
 }
 
+// The retry is gated on the file being zero-length, not on what it parses to: YAML
+// reads an empty file as null, TOML as an empty table, JSON as a parse error. Gating on
+// YAML's null left TOML returning an empty config at once and JSON an error.
+
+/// Stages a zero-length `name` that a writer fills a tenth of the way into the retry
+/// window, and returns what `load_or_create_as` made of it.
+#[cfg(any(feature = "json", feature = "toml"))]
+fn load_or_create_mid_write(
+    name: &str,
+    format: Option<crate::Format>,
+    defaults: &str,
+    written: &'static str,
+) -> Result<Config, ConfigError> {
+    use crate::config::loader::EMPTY_FILE_WINDOW;
+    use std::{fs, thread};
+
+    let dir = temp_dir();
+    let path = dir.path().join(name);
+    fs::write(&path, "").unwrap();
+    let file = path.to_string_lossy().into_owned();
+
+    let writer = {
+        let path = path.clone();
+        thread::spawn(move || {
+            thread::sleep(EMPTY_FILE_WINDOW / 10);
+            fs::write(&path, written).unwrap();
+        })
+    };
+    let outcome = match format {
+        Some(format) => Config::load_or_create_as(&file, "/", None, format, defaults),
+        None => Config::load_or_create(&file, "/", None, defaults),
+    };
+    writer.join().unwrap();
+    outcome
+}
+
+/// Loads a zero-length `name` that nothing ever fills, returning the outcome and how
+/// long it took.
+#[cfg(any(feature = "json", feature = "toml"))]
+fn load_or_create_stays_empty(name: &str, defaults: &str) -> (Result<Config, ConfigError>, std::time::Duration) {
+    let dir = temp_dir();
+    let file = write_file(&dir, name, "");
+    let started = std::time::Instant::now();
+    let outcome = Config::load_or_create(&file, "/", None, defaults);
+    (outcome, started.elapsed())
+}
+
+#[test]
+#[cfg(feature = "toml")]
+fn load_or_create_waits_out_a_toml_file_that_is_still_being_written() {
+    let config = load_or_create_mid_write(
+        "config.toml", None, "[app]\nport = 8080\n", "[app]\nport = 9090\n",
+    ).unwrap();
+    assert_eq!(config.get_int("app/port"), Some(9090));
+}
+
+#[test]
+#[cfg(feature = "json")]
+fn load_or_create_waits_out_a_json_file_that_is_still_being_written() {
+    let config = load_or_create_mid_write(
+        "config.json", None, r#"{"app": {"port": 8080}}"#, r#"{"app": {"port": 9090}}"#,
+    ).unwrap();
+    assert_eq!(config.get_int("app/port"), Some(9090));
+}
+
+/// The format comes from `load_or_create_as`, not the extension, and the wait follows it.
+#[test]
+#[cfg(feature = "toml")]
+fn load_or_create_as_waits_out_a_file_that_is_still_being_written() {
+    let config = load_or_create_mid_write(
+        "settings.conf", Some(crate::Format::Toml), "[app]\nport = 8080\n", "[app]\nport = 9090\n",
+    ).unwrap();
+    assert_eq!(config.get_int("app/port"), Some(9090));
+}
+
+#[test]
+#[cfg(feature = "toml")]
+fn load_or_create_accepts_a_toml_file_that_stays_empty() {
+    use crate::config::loader::EMPTY_FILE_WINDOW;
+
+    let (outcome, elapsed) = load_or_create_stays_empty("config.toml", "[app]\nport = 8080\n");
+    let config = outcome.unwrap();
+    assert_eq!(config.get_int("app/port"), None, "the empty file wins, not the defaults");
+    assert!(elapsed >= EMPTY_FILE_WINDOW / 2, "it was waited on — took {elapsed:?}");
+}
+
+/// After the wait an empty JSON file is still not a JSON document, so the parse error
+/// stands — but only once the writer has had its chance.
+#[test]
+#[cfg(feature = "json")]
+fn load_or_create_reports_a_json_file_that_stays_empty_after_waiting() {
+    use crate::config::loader::EMPTY_FILE_WINDOW;
+
+    let (outcome, elapsed) = load_or_create_stays_empty("config.json", r#"{"app": {"port": 8080}}"#);
+    assert!(matches!(outcome, Err(ConfigError::JsonError { .. })), "got {outcome:?}");
+    assert!(elapsed >= EMPTY_FILE_WINDOW / 2, "it was waited on — took {elapsed:?}");
+}
+
+/// A parse error from a file with content is a broken file, not an empty one, and is
+/// reported at once.
+#[test]
+#[cfg(feature = "json")]
+fn load_or_create_does_not_wait_on_a_json_file_that_fails_to_parse() {
+    use crate::config::loader::EMPTY_FILE_WINDOW;
+    use std::time::Instant;
+
+    let dir = temp_dir();
+    let file = write_file(&dir, "config.json", r#"{"app": "#);
+
+    let started = Instant::now();
+    let outcome = Config::load_or_create(&file, "/", None, r#"{"app": {"port": 8080}}"#);
+
+    assert!(matches!(outcome, Err(ConfigError::JsonError { .. })), "got {outcome:?}");
+    assert!(
+        started.elapsed() < EMPTY_FILE_WINDOW / 2,
+        "the settle wait should not apply here — took {:?}",
+        started.elapsed(),
+    );
+}
+
 #[test]
 fn load_or_create_supports_reload() {
     use std::fs;

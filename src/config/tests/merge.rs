@@ -319,6 +319,22 @@ fn merge_key_order_does_not_depend_on_overlay_order() {
     assert_eq!(key_order(&one), key_order(&two));
 }
 
+/// The other half of the rule in MERGING.md: keys the base lacks *do* follow the
+/// overlays, appended in the order they first appear across the chain.
+#[test]
+fn new_keys_are_appended_in_overlay_order() {
+    let dir = temp_dir();
+    let x = write_file(&dir, "x.yaml", "x: 1\nb: 9\n");
+    let y = write_file(&dir, "y.yaml", "y: 1\na: 9\n");
+    let base = || Config::load_yaml("a: 1\nb: 2\n", "/").unwrap();
+
+    let xy = base().merge_required(&x, None).unwrap().merge_required(&y, None).unwrap();
+    let yx = base().merge_required(&y, None).unwrap().merge_required(&x, None).unwrap();
+
+    assert_eq!(key_order(&xy), ["a", "b", "x", "y"]);
+    assert_eq!(key_order(&yx), ["a", "b", "y", "x"]);
+}
+
 #[test]
 fn merge_records_an_environment_the_base_did_not_carry() {
     // The natural layered shape: the base file is not environment-specific, the

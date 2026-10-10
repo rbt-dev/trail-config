@@ -371,3 +371,159 @@ fn reload_from_rejects_empty_filename() {
     assert_eq!(config.str("app/port"), "8080");
     assert_eq!(config.filename(), test_file);
 }
+
+// Files caught mid-save. An editor that truncates a file and then writes it leaves a
+// zero-length file in between, and an empty document is a valid one: an empty base used
+// to reload as an empty config, and an empty overlay as a no-op, both reporting `Ok`.
+
+/// Truncates `path`, then has a writer fill it a tenth of the way into the retry window,
+/// leaving nine tenths of margin for a slow machine to schedule the thread late.
+fn refill_during_window(path: &str, content: &'static str) -> std::thread::JoinHandle<()> {
+    use crate::config::loader::EMPTY_FILE_WINDOW;
+
+    fs::write(path, "").unwrap();
+    let path = path.to_string();
+    std::thread::spawn(move || {
+        std::thread::sleep(EMPTY_FILE_WINDOW / 10);
+        fs::write(&path, content).unwrap();
+    })
+}
+
+fn assert_empty_file_error(result: Result<(), ConfigError>, file: &str) {
+    match result {
+        Err(ConfigError::IoError { file: Some(named), source, .. }) => {
+            assert_eq!(named, file);
+            assert_eq!(source.kind(), std::io::ErrorKind::UnexpectedEof);
+        },
+        other => panic!("expected an IoError for the empty file, got {other:?}"),
+    }
+}
+
+#[test]
+fn reload_waits_out_a_base_caught_mid_save() {
+    let dir = temp_dir();
+    let base = write_file(&dir, "config.yaml", "db:\n  host: old\n");
+    let mut config = Config::load_required(&base, "/", None).unwrap();
+
+    let writer = refill_during_window(&base, "db:\n  host: new\n  port: 5432\n");
+    config.reload().unwrap();
+    writer.join().unwrap();
+
+    assert_eq!(config.str("db/host"), "new");
+    assert_eq!(config.get_int("db/port"), Some(5432));
+}
+
+#[test]
+fn reload_rejects_a_base_that_stays_empty() {
+    use crate::config::loader::EMPTY_FILE_WINDOW;
+    use std::time::Instant;
+
+    let dir = temp_dir();
+    let base = write_file(&dir, "config.yaml", "db:\n  host: prod-db\n  port: 5432\n");
+    let local = write_file(&dir, "config.local.yaml", "db:\n  host: override-db\n");
+    let mut config = Config::load_required(&base, "/", None).unwrap()
+        .merge_optional(&local, None).unwrap();
+
+    // The review's worst case: the whole base silently gone, only the overlay's keys left
+    fs::write(&base, "").unwrap();
+    let started = Instant::now();
+    assert_empty_file_error(config.reload(), &base);
+
+    assert!(started.elapsed() >= EMPTY_FILE_WINDOW / 2, "gave up without waiting");
+    assert_eq!(config.str("db/host"), "override-db");
+    assert_eq!(config.get_int("db/port"), Some(5432));
+}
+
+/// Only zero bytes counts as empty: a file with any content, even just a comment, is
+/// read at once and reloads as before.
+#[test]
+fn reload_accepts_a_comment_only_base_without_waiting() {
+    use crate::config::loader::EMPTY_FILE_WINDOW;
+    use std::time::Instant;
+
+    let dir = temp_dir();
+    let base = write_file(&dir, "config.yaml", "db:\n  host: prod-db\n");
+    let mut config = Config::load_required(&base, "/", None).unwrap();
+
+    fs::write(&base, "# nothing configured\n").unwrap();
+    let started = Instant::now();
+    config.reload().unwrap();
+
+    assert!(started.elapsed() < EMPTY_FILE_WINDOW / 2, "waited on a non-empty file");
+    assert!(!config.contains("db/host"));
+}
+
+#[test]
+fn reload_waits_out_an_overlay_caught_mid_save() {
+    let dir = temp_dir();
+    let base = write_file(&dir, "config.yaml", "db:\n  host: prod-db\n");
+    let local = write_file(&dir, "config.local.yaml", "db:\n  host: override-db\n");
+    let mut config = Config::load_required(&base, "/", None).unwrap()
+        .merge_optional(&local, None).unwrap();
+
+    let writer = refill_during_window(&local, "db:\n  host: newer-override\n");
+    config.reload().unwrap();
+    writer.join().unwrap();
+
+    assert_eq!(config.str("db/host"), "newer-override");
+}
+
+/// An overlay that stays empty keeps its documented meaning: a no-op. Unlike an empty
+/// base it describes a valid configuration, so it is waited on but never rejected.
+#[test]
+fn reload_treats_an_overlay_that_stays_empty_as_a_no_op() {
+    let dir = temp_dir();
+    let base = write_file(&dir, "config.yaml", "db:\n  host: prod-db\n");
+    let local = write_file(&dir, "config.local.yaml", "db:\n  host: override-db\n");
+    let mut config = Config::load_required(&base, "/", None).unwrap()
+        .merge_required(&local, None).unwrap();
+
+    fs::write(&local, "").unwrap();
+    config.reload().unwrap();
+    assert_eq!(config.str("db/host"), "prod-db");
+}
+
+#[test]
+fn reload_from_rejects_a_file_that_stays_empty() {
+    let dir = temp_dir();
+    let base = write_file(&dir, "config.yaml", "app:\n  port: 8080\n");
+    let local = write_file(&dir, "config.local.yaml", "app:\n  debug: true\n");
+    let other = write_file(&dir, "other.yaml", "");
+    let mut config = Config::load_required(&base, "/", None).unwrap()
+        .merge_required(&local, None).unwrap();
+
+    assert_empty_file_error(config.reload_from(&other), &other);
+
+    // Nothing was committed: same file, same content, overlays kept
+    assert_eq!(config.filename(), base);
+    assert_eq!(config.str("app/port"), "8080");
+    fs::write(&local, "app:\n  debug: false\n").unwrap();
+    config.reload().unwrap();
+    assert_eq!(config.str("app/debug"), "false");
+}
+
+#[test]
+fn reload_from_waits_out_a_file_caught_mid_save() {
+    let dir = temp_dir();
+    let base = write_file(&dir, "config.yaml", "app:\n  port: 8080\n");
+    let other = write_file(&dir, "other.yaml", "app:\n  port: 1\n");
+    let mut config = Config::load_required(&base, "/", None).unwrap();
+
+    let writer = refill_during_window(&other, "app:\n  port: 9090\n");
+    config.reload_from(&other).unwrap();
+    writer.join().unwrap();
+
+    assert_eq!(config.str("app/port"), "9090");
+    assert_eq!(config.filename(), other);
+}
+
+#[test]
+fn a_handle_keeps_serving_its_config_when_the_base_stays_empty() {
+    let dir = temp_dir();
+    let base = write_file(&dir, "config.yaml", "db:\n  host: prod-db\n");
+    let handle = crate::ConfigHandle::new(Config::load_required(&base, "/", None).unwrap());
+
+    fs::write(&base, "").unwrap();
+    assert_empty_file_error(handle.reload(), &base);
+    assert_eq!(handle.str("db/host"), "prod-db");
+}

@@ -128,6 +128,10 @@ it. An error is returned unchanged and prevents publication, retaining the exact
 snapshot, filename, and overlay chain. Existing snapshots also remain stable after
 a successful reload. A parsing or interpolation error stops the rebuild before validation.
 
+A validator is also the guard against a file that was reloaded while half written but
+still parses: requiring the keys the application cannot run without rejects it. See
+[Files caught mid-save](HOT_RELOAD.md#files-caught-mid-save).
+
 Validation is serialized with other reloads and holds no reader/writer lock. Readers
 can continue using the old snapshot while validation runs. Do not call `reload` or
 `reload_from` on this handle or its clones from inside the validator: that would wait

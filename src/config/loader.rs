@@ -10,11 +10,11 @@ use super::Config;
 use super::env::resolve_env_vars;
 use super::parser;
 
-/// Best-effort retries after reading a null document from a zero-length file with
-/// nonempty defaults. Ten 20 ms sleeps request 200 ms of delay; I/O and scheduling
+/// Best-effort retries after reading a zero-length file with nonempty defaults. Ten 20 ms sleeps request 200 ms of delay; I/O and scheduling
 /// can add time. Neither the deadline nor a successful parse proves a write is complete.
-const EMPTY_FILE_RETRIES: usize = 10;
-const EMPTY_FILE_BACKOFF: Duration = Duration::from_millis(20);
+/// `reload` and `reload_from` wait out a zero-length file with the same window.
+pub(in crate::config) const EMPTY_FILE_RETRIES: usize = 10;
+pub(in crate::config) const EMPTY_FILE_BACKOFF: Duration = Duration::from_millis(20);
 
 /// Numbers the temporary files `create_new_file` writes, so concurrent calls within one
 /// process never pick the same name; the process id in the name separates processes.
@@ -250,12 +250,12 @@ impl Config {
     /// file is created and written in place instead. There, other readers can observe the
     /// empty file or a partial write, and a write failure can leave either behind.
     ///
-    /// Files written by other means can be caught mid-write too. When the initial read
-    /// returns a null document and the file is zero-length, nonempty `defaults` enable a
-    /// **best-effort** retry: at most ten re-reads, each after a 20 ms sleep. I/O and
-    /// scheduling can extend the elapsed time beyond 200 ms. A successfully parsed
-    /// non-null document returns immediately, even if it is only a valid prefix of an
-    /// unfinished write. An initial parse error does not enter this retry loop.
+    /// Files written by other means can be caught mid-write too. When the file is
+    /// zero-length, nonempty `defaults` enable a **best-effort** retry, in every format:
+    /// at most ten re-reads, each after a 20 ms sleep. I/O and scheduling can extend the
+    /// elapsed time beyond 200 ms. A successfully parsed non-empty document returns
+    /// immediately, even if it is only a valid prefix of an unfinished write. A parse
+    /// error from a file that is not zero-length does not enter this retry loop.
     ///
     /// If retries expire, the last config or error is returned. An empty result or parse
     /// error does not establish that the writer has finished. Empty `defaults` skip the
@@ -367,8 +367,6 @@ impl Config {
         defaults: &str,
     ) -> Result<Config, ConfigError> {
         match Self::load_internal_as(filename, sep, env, format) {
-            // Existing files can still be mid-creation; apply the empty-file heuristic.
-            Ok(config) => Self::settle_empty(config, filename, sep, env, format, defaults),
             Err(ConfigError::IoError { ref source, .. }) if source.kind() == io::ErrorKind::NotFound => {
                 let (file, _) = get_file(filename, env)?;
 
@@ -389,43 +387,61 @@ impl Config {
                     Err(e) => return Err(ConfigError::io_in(&file, e)),
                 }
 
-                let config = Self::load_internal_as(filename, sep, env, format)?;
-                Self::settle_empty(config, filename, sep, env, format, defaults)
+                let outcome = Self::load_internal_as(filename, sep, env, format);
+                Self::settle_empty(outcome, filename, sep, env, format, defaults)
             },
-            Err(e) => Err(e),
+            // Existing files can still be mid-creation; apply the empty-file heuristic.
+            outcome => Self::settle_empty(outcome, filename, sep, env, format, defaults),
         }
     }
 
-    /// Retries a null document from a zero-length file in case a concurrent writer
-    /// makes progress. This is a heuristic, not a write-completion protocol.
+    /// Retries the read of a zero-length file in case a concurrent writer makes progress.
+    /// This is a heuristic, not a write-completion protocol.
     ///
-    /// A non-null document, empty defaults, or nonzero file length bypass the retry.
-    /// During retries, a successfully parsed non-null document returns immediately;
-    /// that can be an incomplete but valid prefix. All other outcomes are retried,
-    /// with the most recent config or error returned when attempts run out.
+    /// Eligibility is the file being zero-length, whatever the format, because each parser
+    /// reads an empty file differently: YAML as a null document, TOML as an empty table,
+    /// and JSON as a parse error. Gating on YAML's null left the other two returning at
+    /// once — TOML with an empty config, JSON with an error — where YAML waited.
+    ///
+    /// A non-empty document, any error other than a parse error, empty defaults, or a
+    /// nonzero file length bypass the retry. During retries, a non-empty document returns
+    /// immediately; that can be an incomplete but valid prefix. All other outcomes are
+    /// retried, with the most recent config or error returned when attempts run out.
     fn settle_empty(
-        config: Config,
+        outcome: Result<Config, ConfigError>,
         filename: &str,
         sep: &str,
         env: Option<&str>,
         format: Option<parser::Format>,
         defaults: &str,
     ) -> Result<Config, ConfigError> {
-        if !matches!(config.content, Value::Null)
-            || defaults.is_empty()
-            || !is_zero_length(&config.filename)
-        {
-            return Ok(config);
+        let eligible = match &outcome {
+            Ok(config) => is_empty_document(&config.content),
+            Err(ConfigError::YamlError { .. }) => true,
+            #[cfg(feature = "json")]
+            Err(ConfigError::JsonError { .. }) => true,
+            #[cfg(feature = "toml")]
+            Err(ConfigError::TomlError { .. }) => true,
+            Err(_) => false,
+        };
+        if !eligible || defaults.is_empty() {
+            return outcome;
+        }
+        // Resolved again because an error carries no `Config` to read it from. It cannot
+        // fail here: the load that produced `outcome` resolved the same name already.
+        match get_file(filename, env) {
+            Ok((file, _)) if is_zero_length(&file) => {},
+            _ => return outcome,
         }
 
         // Holds whatever the most recent attempt saw, so the wait ending in a parse error
         // reports that rather than the empty config it started from.
-        let mut latest = Ok(config);
+        let mut latest = outcome;
 
         for _ in 0..EMPTY_FILE_RETRIES {
             thread::sleep(EMPTY_FILE_BACKOFF);
             match Self::load_internal_as(filename, sep, env, format) {
-                Ok(config) if !matches!(config.content, Value::Null) => return Ok(config),
+                Ok(config) if !is_empty_document(&config.content) => return Ok(config),
                 outcome => latest = outcome,
             }
         }
@@ -649,6 +665,16 @@ fn write_in_place(file: &str, contents: &str) -> io::Result<()> {
 /// already has the parse or I/O error that says so.
 fn is_zero_length(file: &str) -> bool {
     fs::metadata(file).map(|meta| meta.len() == 0).unwrap_or(false)
+}
+
+/// Reports whether `content` is what an empty file parses to: YAML's null document or
+/// TOML's empty table. (JSON rejects an empty file, so it has no such document.)
+fn is_empty_document(content: &Value) -> bool {
+    match content {
+        Value::Null => true,
+        Value::Mapping(mapping) => mapping.is_empty(),
+        _ => false,
+    }
 }
 
 /// Rejects a path separator that cannot work: empty, or containing a backslash.

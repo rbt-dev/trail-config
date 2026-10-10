@@ -2,10 +2,10 @@
 
 [← Documentation index](README.md)
 
-These five live in [`examples/`](../examples) as programs the compiler checks and
+These live in [`examples/`](../examples) as programs the compiler checks and
 `cargo run` executes, rather than as snippets on a page that can drift out of date. Each
-one writes its config into a temporary directory first, so it runs from a fresh checkout
-with nothing to set up:
+one brings its own config, written into a temporary directory or parsed from a string, so
+it runs from a fresh checkout with nothing to set up:
 
 ```bash
 cargo run --example web_server
@@ -13,9 +13,10 @@ cargo run --example environments
 cargo run --example db_pool
 cargo run --example validated_reload # scalar conversion and validation before publication
 cargo run --example feature_flags
+cargo run --example merge_keys
 ```
 
-`cargo build --examples` compiles all five, and the check scripts do it as part of a
+`cargo build --examples` compiles all of them, and the check scripts do it as part of a
 release run.
 
 ## Web server configuration — [`examples/web_server.rs`](../examples/web_server.rs)
@@ -82,6 +83,23 @@ for feature in config.list("features/beta") { /* ... */ }
 Converts interpolated numbers and booleans explicitly, then reuses that settings reader
 in `ConfigHandle::with_validator`. Invalid types and domain constraints reject a reload
 without replacing the current snapshot. A later valid update succeeds.
+
+## Shared defaults with merge keys — [`examples/merge_keys.rs`](../examples/merge_keys.rs)
+
+A `database.yml`-style file that defines its defaults once under an anchor and merges
+them into each environment with `<<`. Merged keys read like keys written in place, and
+explicit keys win over merged ones:
+
+```yaml
+defaults: &defaults
+  host: localhost
+  port: 5432
+production:
+  <<: *defaults
+  host: db.internal   # production/host = db.internal, production/port = 5432
+```
+
+See [YAML merge keys](MERGING.md#yaml-merge-keys) for the precedence and key-order rules.
 
 ## Sample configuration file
 

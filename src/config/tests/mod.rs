@@ -12,6 +12,7 @@ mod key_order;
 mod loading;
 mod macros;
 mod merge;
+mod merge_keys;
 mod outline;
 mod reload;
 mod structs;

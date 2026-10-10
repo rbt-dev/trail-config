@@ -7,8 +7,10 @@ the overlay take precedence over the base; nested mappings are merged recursivel
 keys are preserved. Sequences are replaced wholesale. The base config's separator is preserved.
 
 Key order follows the base document: an overridden key keeps its position and genuinely-new 
-overlay keys are appended, at every level of nesting. The merged order therefore does not 
-depend on the order of the overlays. This is invisible through the scalar accessors but 
+overlay keys are appended, at every level of nesting. So the keys the base already has 
+keep their order however the overlays list or override them; only new keys follow the 
+overlays, appended in the order they first appear — overlay by overlay, and within each 
+overlay in its own order. This is invisible through the scalar accessors but 
 visible to anything order-preserving — deserializing into a `Mapping`, an `IndexMap` or a 
 `Vec<(K, V)>`, and any re-serialization you do downstream.
 
@@ -80,6 +82,39 @@ the base named.
 Everywhere else a tag is transparent: `db/host` resolves whether or not `db` is tagged,
 `str` on a tagged scalar returns the scalar, and `outline` lists a tagged mapping's keys.
 Only `get` and `get_as` still see the tag, because selecting the variant is what it is for.
+
+## YAML merge keys
+
+Within a single YAML document, `<<` merges an anchored mapping into another — the idiom
+docker-compose, GitLab CI and Rails' `database.yml` use for shared defaults:
+
+```yaml
+defaults: &defaults
+  host: db.internal
+  port: 5432
+development:
+  <<: *defaults        # development/host = db.internal, development/port = 5432
+  database: dev
+production:
+  <<: *defaults
+  host: prod-db        # explicit keys win over merged ones
+```
+
+Merge keys are resolved as the document is parsed, so every accessor, `outline` and
+deserializing see the merged mapping, with no `<<` key left in it. Each file is resolved on
+its own before any overlay merging, which means an overlay can use `<<` internally but
+cannot reach an anchor defined in the base.
+
+- **Precedence:** explicit keys win, wherever they appear relative to `<<`. In
+  `<<: [*a, *b]`, `a` wins over `b`.
+- **Key order:** merged keys take the position `<<` held, in the order their source lists
+  them. Explicit keys keep their own positions.
+- **Chains:** an anchored mapping may itself use `<<`; the merge resolves all the way down.
+- **Errors:** a `<<` whose value is not a mapping or a sequence of mappings is a
+  `YamlError` naming the key path, never the value.
+
+YAML only: in JSON and TOML, `<<` is an ordinary key. In YAML, a quoted `"<<"` key is
+treated as a merge key too, because the parsed document no longer records the quotes.
 
 ## Clearing a value with null
 

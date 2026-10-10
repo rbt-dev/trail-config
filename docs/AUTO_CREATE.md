@@ -69,17 +69,18 @@ can leave such a file behind; later calls load the existing contents instead of 
 them with defaults. The same applies to a config file written by anything other than
 this library.
 
-If the initial read succeeds with a null document, the file is zero-length, and `defaults`
-is nonempty, `load_or_create` retries at most ten times with a 20 ms sleep before each
-re-read. The requested sleeps total 200 ms; I/O and scheduling can add time. This is a
+If the file is zero-length and `defaults` is nonempty, `load_or_create` retries at most
+ten times with a 20 ms sleep before each re-read. This holds for every format, although
+each reads an empty file differently: YAML as an empty document, TOML as an empty table,
+and JSON as a parse error. The requested sleeps total 200 ms; I/O and scheduling can add time. This is a
 best-effort heuristic, not a test for write completion. `load_or_create_as` behaves the same way.
 
 | File on disk | `load_or_create` |
 | ------------ | ---------------- |
-| Initial read parses to a non-null document | Returned immediately, even if it is a valid partial document |
-| Initial read fails to parse | Parse error returned immediately |
-| Retry observes a non-null document | Returned immediately; the writer may still be writing |
-| Remains zero-length through all retries | Returned as an empty config; the file is not overwritten |
+| Initial read parses to a non-empty document | Returned immediately, even if it is a valid partial document |
+| Not zero-length and fails to parse | Parse error returned immediately |
+| Retry observes a non-empty document | Returned immediately; the writer may still be writing |
+| Remains zero-length through all retries | YAML and TOML: an empty config. JSON: the parse error. The file is not overwritten |
 | Only comments (not zero-length) | Loaded at once as an empty document |
 | `defaults` is `""` | Loaded at once — there is nothing better to wait for |
 

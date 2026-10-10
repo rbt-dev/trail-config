@@ -81,6 +81,39 @@ Everywhere else a tag is transparent: `db/host` resolves whether or not `db` is 
 `str` on a tagged scalar returns the scalar, and `outline` lists a tagged mapping's keys.
 Only `get` and `get_as` still see the tag, because selecting the variant is what it is for.
 
+## YAML merge keys
+
+Within a single YAML document, `<<` merges an anchored mapping into another — the idiom
+docker-compose, GitLab CI and Rails' `database.yml` use for shared defaults:
+
+```yaml
+defaults: &defaults
+  host: db.internal
+  port: 5432
+development:
+  <<: *defaults        # development/host = db.internal, development/port = 5432
+  database: dev
+production:
+  <<: *defaults
+  host: prod-db        # explicit keys win over merged ones
+```
+
+Merge keys are resolved as the document is parsed, so every accessor, `outline` and
+deserializing see the merged mapping, with no `<<` key left in it. Each file is resolved on
+its own before any overlay merging, which means an overlay can use `<<` internally but
+cannot reach an anchor defined in the base.
+
+- **Precedence:** explicit keys win, wherever they appear relative to `<<`. In
+  `<<: [*a, *b]`, `a` wins over `b`.
+- **Key order:** merged keys take the position `<<` held, in the order their source lists
+  them. Explicit keys keep their own positions.
+- **Chains:** an anchored mapping may itself use `<<`; the merge resolves all the way down.
+- **Errors:** a `<<` whose value is not a mapping or a sequence of mappings is a
+  `YamlError` naming the key path, never the value.
+
+YAML only: in JSON and TOML, `<<` is an ordinary key. In YAML, a quoted `"<<"` key is
+treated as a merge key too, because the parsed document no longer records the quotes.
+
 ## Clearing a value with null
 
 An overlay value takes precedence whatever it is, including null — so setting a key to null 
